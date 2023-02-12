@@ -1,6 +1,6 @@
-use tokio::{net::TcpListener};
-use tokio::time::{sleep, Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::time::{sleep, Duration};
 
 #[tokio::main]
 async fn main() {
@@ -13,13 +13,20 @@ async fn main() {
     tokio::spawn(async move {
         let (mut reader, mut writer) = socket.split();
 
-        let mut buffer = [0; 1024];
-        let n = reader.read(&mut buffer).await.unwrap();
+        loop {
+            let mut buffer = [0; 1024];
+            let n = reader.read(&mut buffer).await.unwrap();
 
-        println!("Read {} bytes", n);
+            if n == 0 {
+                println!("Reached end of data {}", address);
+                break;
+            } else {
+                println!("Read {} bytes: {:?}", n, &buffer[..n]);
+            }
 
-        writer.write_all(&buffer[..n]).await.unwrap();
-        println!("Wrote {} bytes", n);
+            writer.write_all(&buffer[..n]).await.unwrap();
+            println!("Wrote {} bytes", n);
+        }
 
         drop(socket);
         println!("Closed remote connection {}", address);
