@@ -3,8 +3,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 async fn handle_accepted_connection(mut socket: TcpStream, address: SocketAddr) {
-    let (mut reader, mut writer) = socket.split();
     let mut buffer = [0; 1024];
+    let (mut reader, mut writer) = socket.split();
 
     loop {
         println!("{}: waiting for data", address);
@@ -35,13 +35,21 @@ async fn handle_accepted_connection(mut socket: TcpStream, address: SocketAddr) 
 
 #[tokio::main]
 async fn main() {
-    let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
-    println!("Listening on {}", listener.local_addr().unwrap());
+    let address = "127.0.0.1:8080";
+    let listener = match TcpListener::bind(address).await {
+        Ok(listener) => {
+            println!("Listening on {}", address);
+            listener
+        },
+        Err(error) => {
+            panic!("{}: local port couldn't be bound - {}", address, error);
+        }
+    };
 
     loop {
         match listener.accept().await {
             Err(error) => {
-                println!("{}: something bad happened - {}", listener.local_addr().unwrap(), error);
+                println!("{}: something bad happened - {}", address, error);
             },
             Ok((socket, address)) => {
                 println!("{0}: accepting new connection ...", address);
