@@ -1,37 +1,53 @@
+use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::time::{sleep, Duration};
+use tokio::net::{TcpListener, TcpStream};
+
+async fn handle_accepted_connection(mut socket: TcpStream, address: SocketAddr) {
+    let (mut reader, mut writer) = socket.split();
+    let mut buffer = [0; 1024];
+
+    loop {
+        println!("{}: waiting for data", address);
+        match reader.read(&mut buffer).await {
+            Err(error) => {
+                println!("{}: something bad happened - {}", address, error);
+            }
+            Ok(count) if count == 0 => {
+                break println!("{0}: end of stream", address);
+            }
+            Ok(count) => {
+                println!("{}: read {} bytes", address, count);
+                match writer.write_all(&buffer[..count]).await {
+                    Err(error) => {
+                        println!("{}: Something happened: {}", address, error);
+                    }
+                    Ok(_) => {
+                        println!("{}: Wrote {} bytes", address, count);
+                    }
+                }
+            }
+        }
+    }
+
+    drop(socket);
+    println!("{}: remote connection closed", address);
+}
 
 #[tokio::main]
 async fn main() {
     let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
     println!("Listening on {}", listener.local_addr().unwrap());
 
-    let (mut socket, address) = listener.accept().await.unwrap();
-    println!("Accepted connection on {}", address);
-
-    tokio::spawn(async move {
-        let (mut reader, mut writer) = socket.split();
-
-        loop {
-            let mut buffer = [0; 1024];
-            let n = reader.read(&mut buffer).await.unwrap();
-
-            if n == 0 {
-                println!("Reached end of data {}", address);
-                break;
-            } else {
-                println!("Read {} bytes: {:?}", n, &buffer[..n]);
+    loop {
+        match listener.accept().await {
+            Err(error) => {
+                println!("{}: something bad happened - {}", listener.local_addr().unwrap(), error);
+            },
+            Ok((socket, address)) => {
+                println!("{0}: accepting new connection ...", address);
+                tokio::spawn(async move { handle_accepted_connection(socket, address).await });
+                println!("{0}: accepting new connection completed", address);
             }
-
-            writer.write_all(&buffer[..n]).await.unwrap();
-            println!("Wrote {} bytes", n);
         }
-
-        drop(socket);
-        println!("Closed remote connection {}", address);
-    });
-
-    sleep(Duration::from_secs(60)).await;
-    drop(listener);
+    }
 }
