@@ -1,15 +1,30 @@
-use tokio::time::{sleep, timeout, Duration};
+use tokio::{net::TcpListener};
+use tokio::time::{sleep, Duration};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::main]
 async fn main() {
-    let task = tokio::spawn(async {
-        println!("Hello from the executor.");
-        sleep(Duration::from_secs(5)).await;
-        "success"
+    let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    println!("Listening on {}", listener.local_addr().unwrap());
+
+    let (mut socket, address) = listener.accept().await.unwrap();
+    println!("Accepted connection on {}", address);
+
+    tokio::spawn(async move {
+        let (mut reader, mut writer) = socket.split();
+
+        let mut buffer = [0; 1024];
+        let n = reader.read(&mut buffer).await.unwrap();
+
+        println!("Read {} bytes", n);
+
+        writer.write_all(&buffer[..n]).await.unwrap();
+        println!("Wrote {} bytes", n);
+
+        drop(socket);
+        println!("Closed remote connection {}", address);
     });
 
-    match timeout(Duration::from_secs(10), task).await {
-        Ok(result) => println!("completed: {}", result.unwrap()),
-        Err(_) => println!("failed: timed out!"),
-    };
+    sleep(Duration::from_secs(60)).await;
+    drop(listener);
 }
