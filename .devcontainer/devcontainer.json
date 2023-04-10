@@ -1,8 +1,15 @@
 {
 	"name": "Rust",
 	"image": "mcr.microsoft.com/devcontainers/rust:0-1-bullseye",
-	"extensions": [
-		"swellaby.vscode-rust-test-adapter",
-		"ms-vscode.test-adapter-converter"
-	]
+	"containerEnv": {
+		"CARGO_TARGET_DIR": "/tmp/cargo"
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"swellaby.vscode-rust-test-adapter",
+				"ms-vscode.test-adapter-converter"
+			]
+		}
+	}
 }
