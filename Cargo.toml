@@ -1,14 +1,8 @@
 [package]
-name = "databricks-cli"
+name = "http-check"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-base64 = { version = "0.21.0" }
-chrono = { version = "0.4.24" }
-futures = { version = "0.3.28" }
-serde = { version = "1.0.159" }
-structopt = { version = "0.3.26", features = ["paw"] }
-surf = { version = "2.3.2" }
-thiserror = { version = "1.0.40" }
+hyper = { version = "0.14.25", features = ["full"] }
 tokio = { version = "1.27.0", features = ["full"] }

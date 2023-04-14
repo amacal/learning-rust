@@ -1,6 +1,9 @@
 {
 	"name": "Rust",
 	"image": "mcr.microsoft.com/devcontainers/rust:0-1-bullseye",
+	"runArgs": [
+        "--network=host"
+    ],
 	"containerEnv": {
 		"CARGO_TARGET_DIR": "/tmp/cargo"
 	},
