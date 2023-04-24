@@ -1,6 +1,12 @@
 {
 	"name": "Rust",
-	"image": "mcr.microsoft.com/devcontainers/rust:0-1-bullseye",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "..",
+        "args": {
+            "RUST_VERSION": "0-1-bullseye"
+        }
+    },
 	"containerEnv": {
 		"CARGO_TARGET_DIR": "/tmp/cargo"
 	},
@@ -8,8 +14,17 @@
 		"vscode": {
 			"extensions": [
 				"swellaby.vscode-rust-test-adapter",
-				"ms-vscode.test-adapter-converter"
-			]
+				"ms-vscode.test-adapter-converter",
+				"ms-toolsai.jupyter",
+				"ms-toolsai.vscode-jupyter-slideshow",
+				"ms-toolsai.vscode-jupyter-cell-tags",
+				"ms-toolsai.jupyter-renderers"
+			],
+			"settings": {
+				"rust-analyzer.inlayHints.chainingHints.enable": false,
+				"rust-analyzer.inlayHints.closingBraceHints.enable": false,
+				"editor.rulers": [120]
+			}
 		}
 	}
 }
