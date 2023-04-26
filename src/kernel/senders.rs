@@ -39,6 +39,15 @@ pub struct JupyterExecuteResultSender {
     metadata: std::collections::HashMap<String, serde_json::Value>,
 }
 
+pub struct JupyterDisplayDataSender {
+    header: jupyter::JupyterHeader,
+    parent: jupyter::JupyterHeader,
+    execution_count: Option<u32>,
+    data: std::collections::HashMap<String, serde_json::Value>,
+    metadata: std::collections::HashMap<String, serde_json::Value>,
+    transient: std::collections::HashMap<String, serde_json::Value>,
+}
+
 pub struct JupyterKernelStatusSender {
     header: jupyter::JupyterHeader,
     parent: jupyter::JupyterHeader,
@@ -191,7 +200,7 @@ impl JupyterKernelInfoReplySender {
                     help_links: vec![],
                 };
 
-                debug!("Sending {:?} {:?} ...", &header, &content);
+                debug!("Sending {:?} with {:?} as {:?} ...", &header, &parent, &content);
                 match client.send(channel, &identity, &header, Some(&parent), &content).await {
                     Ok(()) => Ok(()),
                     Err(error) => raise_sending_failed(error),
@@ -251,7 +260,7 @@ impl JupyterExecuteReplySender {
                     execution_count: execution_count,
                 };
 
-                debug!("Sending {:?} {:?} ...", &header, &content);
+                debug!("Sending {:?} with {:?} as {:?} ...", &header, &parent, &content);
                 match client.send(channel, &identity, &header, Some(&parent), &content).await {
                     Ok(()) => Ok(()),
                     Err(error) => raise_sending_failed(error),
@@ -306,7 +315,7 @@ impl JupyterExecuteInputSender {
                 let identity = bytes::Bytes::new();
                 let channel = jupyter::JupyterChannel::IOPub;
 
-                debug!("Sending {:?} {:?} ...", &header, &content);
+                debug!("Sending {:?} with {:?} as {:?} ...", &header, &parent, &content);
                 match client.send(channel, &identity, &header, Some(&parent), &content).await {
                     Ok(()) => Ok(()),
                     Err(error) => raise_sending_failed(error),
@@ -369,13 +378,106 @@ impl JupyterExecuteResultSender {
                 let identity = bytes::Bytes::new();
                 let channel = jupyter::JupyterChannel::IOPub;
 
-                debug!("Sending {:?} {:?} ...", &header, &content);
+                debug!("Sending {:?} with {:?} as {:?} ...", &header, &parent, &content);
                 match client.send(channel, &identity, &header, Some(&parent), &content).await {
                     Ok(()) => Ok(()),
                     Err(error) => raise_sending_failed(error),
                 }
             }
             _ => raise_payload_incomplete("JupyterExecuteResult"),
+        }
+    }
+}
+
+impl JupyterDisplayDataSender {
+    pub fn new(parent: jupyter::JupyterHeader) -> Self {
+        Self {
+            header: parent.reply("display_data"),
+            parent: parent,
+            execution_count: None,
+            data: std::collections::HashMap::new(),
+            metadata: std::collections::HashMap::new(),
+            transient: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn update(parent: jupyter::JupyterHeader) -> Self {
+        Self {
+            header: parent.reply("update_display_data"),
+            parent: parent,
+            execution_count: None,
+            data: std::collections::HashMap::new(),
+            metadata: std::collections::HashMap::new(),
+            transient: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn with_execution_count(self, execution_count: u32) -> Self {
+        Self {
+            header: self.header,
+            parent: self.parent,
+            execution_count: Some(execution_count),
+            data: self.data,
+            metadata: self.metadata,
+            transient: self.transient,
+        }
+    }
+
+    pub fn with_data_string(mut self, mimetype: &str, data: &str) -> Self {
+        self.data
+            .insert(String::from(mimetype), serde_json::Value::String(String::from(data)));
+
+        Self {
+            header: self.header,
+            parent: self.parent,
+            execution_count: self.execution_count,
+            data: self.data,
+            metadata: self.metadata,
+            transient: self.transient,
+        }
+    }
+
+    pub fn with_transient(mut self, key: &str, value: &str) -> Self {
+        self.transient
+            .insert(String::from(key), serde_json::Value::String(String::from(value)));
+
+        Self {
+            header: self.header,
+            parent: self.parent,
+            execution_count: self.execution_count,
+            data: self.data,
+            metadata: self.metadata,
+            transient: self.transient,
+        }
+    }
+
+    pub async fn execute(self, client: &mut jupyter::JupyterClient) -> Result<(), KernelError> {
+        match self {
+            JupyterDisplayDataSender {
+                header,
+                parent,
+                execution_count: Some(execution_count),
+                data,
+                metadata,
+                transient,
+            } => {
+                let content = &jupyter::JupyterDisplayData {
+                    execution_count: execution_count,
+                    data: data,
+                    metadata: metadata,
+                    transient: transient,
+                };
+
+                let identity = bytes::Bytes::new();
+                let channel = jupyter::JupyterChannel::IOPub;
+
+                debug!("Sending {:?} with {:?} as {:?} ...", &header, &parent, &content);
+                match client.send(channel, &identity, &header, Some(&parent), &content).await {
+                    Ok(()) => Ok(()),
+                    Err(error) => raise_sending_failed(error),
+                }
+            }
+            _ => raise_payload_incomplete("JupyterDisplayData"),
         }
     }
 }
@@ -411,7 +513,7 @@ impl JupyterKernelStatusSender {
                 let identity = bytes::Bytes::new();
                 let channel = jupyter::JupyterChannel::IOPub;
 
-                debug!("Sending {:?} {:?} ...", &header, &content);
+                debug!("Sending {:?} with {:?} as {:?} ...", &header, &parent, &content);
                 match client.send(channel, &identity, &header, Some(&parent), &content).await {
                     Ok(()) => Ok(()),
                     Err(error) => raise_sending_failed(error),
@@ -454,7 +556,7 @@ impl JupyterInputRequestSender {
                 let identity = bytes::Bytes::new();
                 let channel = jupyter::JupyterChannel::StdIn;
 
-                debug!("Sending {:?} {:?} ...", &header, &content);
+                debug!("Sending {:?} as {:?} ...", &header, &content);
                 match client.send(channel, &identity, &header, None, &content).await {
                     Ok(()) => Ok(()),
                     Err(error) => raise_sending_failed(error),

@@ -8,8 +8,10 @@ use structopt::StructOpt;
 
 #[derive(structopt::StructOpt, Debug)]
 pub struct KernelStart {
-    #[structopt(help = "The absolute path of the Kernel connection file.")]
+    #[structopt(long = "--path", help = "The absolute path of the Kernel connection file.")]
     pub path: String,
+    #[structopt(long = "--cluster-id", help = "Optional cluster ID.")]
+    pub cluster_id: String,
 }
 
 fn exit_with_error(error: kernel::KernelError) -> ! {
@@ -17,7 +19,7 @@ fn exit_with_error(error: kernel::KernelError) -> ! {
     std::process::exit(-1);
 }
 
-fn initialize_loging() -> () {
+fn initialize_logging() -> () {
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -36,12 +38,12 @@ fn initialize_loging() -> () {
 
 #[tokio::main]
 async fn main() {
-    initialize_loging();
+    initialize_logging();
 
     let args = KernelStart::from_args();
     info!("Args {:?}", args);
 
-    let mut kernel = match kernel::KernelClient::start(&args.path).await {
+    let mut kernel = match kernel::KernelClient::start(&args.path, &args.cluster_id).await {
         Ok(kernel) => kernel,
         Err(error) => exit_with_error(error),
     };

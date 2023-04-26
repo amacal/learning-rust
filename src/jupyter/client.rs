@@ -47,8 +47,6 @@ pub enum JupyterMessage {
 
 pub struct JupyterClient {
     configuration: JupyterConnectionInfo,
-    sender: tokio::sync::mpsc::Sender<(JupyterChannel, zeromq::ZmqMessage)>,
-    receiver: tokio::sync::mpsc::Receiver<(JupyterChannel, zeromq::ZmqMessage)>,
     shell: zeromq::RouterSocket,
     iopub: zeromq::PubSocket,
     control: zeromq::RouterSocket,
@@ -89,12 +87,8 @@ impl JupyterClient {
         JupyterClient::bind(&configuration, JupyterChannel::StdIn, &mut stdin).await?;
         JupyterClient::bind(&configuration, JupyterChannel::Heartbeat, &mut heartbeat).await?;
 
-        let (sender, receiver) = tokio::sync::mpsc::channel(100);
-
         let instance = Self {
             configuration: configuration,
-            sender: sender,
-            receiver: receiver,
             shell: shell,
             iopub: iopub,
             control: control,
@@ -183,8 +177,6 @@ impl JupyterClient {
     }
 
     pub async fn recv(&mut self) -> Result<JupyterMessage, JupyterError> {
-        info!("Receiving ...");
-
         loop {
             tokio::select! {
                 shell = self.shell.recv() => {
@@ -202,12 +194,6 @@ impl JupyterClient {
                 heartbeat = self.heartbeat.recv() => {
                     info!("Channel '{:?}' completed", JupyterChannel::Heartbeat);
                     return self.recv_complete(JupyterChannel::Heartbeat, heartbeat)
-                },
-                outgoing = self.receiver.recv() => {
-                    if let Some((channel, message)) = outgoing {
-                        info!("Outgoing message on {:?}", channel);
-                        self.send_complete(channel, message).await?;
-                    }
                 }
             }
         }
@@ -258,17 +244,6 @@ impl JupyterClient {
             Err(error) => return Err(error),
         };
 
-        match self.sender.send((channel, message)).await {
-            Ok(()) => Ok(()),
-            Err(error) => return raise_queueing_failed(channel, error),
-        }
-    }
-
-    async fn send_complete(
-        &mut self,
-        channel: JupyterChannel,
-        message: zeromq::ZmqMessage,
-    ) -> Result<(), JupyterError> {
         let sending = match channel {
             JupyterChannel::Shell => self.shell.send(message).await,
             JupyterChannel::IOPub => self.iopub.send(message).await,
@@ -278,10 +253,8 @@ impl JupyterClient {
         };
 
         match sending {
-            Ok(t) => info!("Sending to '{:?}' succeeded", channel),
+            Ok(_) => Ok(info!("Sending to '{:?}' succeeded", channel)),
             Err(error) => return raise_connection_socket_failed(channel, error),
-        };
-
-        Ok(())
+        }
     }
 }

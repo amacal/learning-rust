@@ -59,6 +59,14 @@ pub struct JupyterExecuteResult {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct JupyterDisplayData {
+    pub execution_count: u32,
+    pub data: std::collections::HashMap<String, serde_json::Value>,
+    pub metadata: std::collections::HashMap<String, serde_json::Value>,
+    pub transient: std::collections::HashMap<String, serde_json::Value>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct JupyterExecuteReply {
     pub status: String,
     pub execution_count: u32,

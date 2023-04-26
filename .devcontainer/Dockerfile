@@ -9,7 +9,8 @@ RUN mkdir /usr/local/share/jupyter/kernels/learning-rust
 RUN echo '{ \
     "argv": [ \
         "/tmp/cargo/debug/jupyter-kernel", \
-        "{connection_file}" \
+        "--path", "{connection_file}", \
+        "--cluster-id", "1024-181223-ye0dza2w" \
     ], \
     "display_name": "Learning Rust", \
     "language": "python", \

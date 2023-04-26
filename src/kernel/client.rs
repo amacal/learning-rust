@@ -10,9 +10,10 @@ use crate::jupyter;
 use crate::kernel::errors::*;
 use crate::kernel::senders::*;
 
-use log::{debug, info, warn};
+use log::{debug, warn};
 
 pub struct KernelClient {
+    cluster_id: String,
     counter: Arc<Mutex<u32>>,
     sessions: Arc<Mutex<HashMap<String, String>>>,
 
@@ -23,7 +24,7 @@ pub struct KernelClient {
     receiver: mpsc::Receiver<KernelRequest>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KernelRequest {
     channel: jupyter::JupyterChannel,
     sender: bytes::Bytes,
@@ -33,7 +34,7 @@ pub struct KernelRequest {
 }
 
 impl KernelClient {
-    pub async fn start(path: &str) -> Result<Self, KernelError> {
+    pub async fn start(path: &str, cluster_id: &str) -> Result<Self, KernelError> {
         let connection = match jupyter::read_connection(path).await {
             Ok(connection) => connection,
             Err(error) => return raise_connecting_failed(error),
@@ -49,11 +50,12 @@ impl KernelClient {
             Err(error) => return raise_databricks_credentials_failed(error),
         };
 
-        let (sender, mut receiver) = mpsc::channel(100);
+        let (sender, receiver) = mpsc::channel(100);
 
         let instance = Self {
             counter: Arc::new(Mutex::new(0u32)),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            cluster_id: String::from(cluster_id),
             sender: sender,
             receiver: receiver,
             jupyter: jupyter,
@@ -62,23 +64,6 @@ impl KernelClient {
 
         Ok(instance)
     }
-
-    /*
-    fn spawn_databricks_executor(&self, receiver: &mut tokio::sync::mpsc::Receiver<KernelRequest>) {
-            loop {
-                let request = match receiver.recv().await {
-                    None => break,
-                    Some(request) => request,
-                };
-
-                info!("Received {:?}", request);
-
-                };
-            }
-
-            Ok::<(), KernelError>(())
-        }
-    }*/
 
     async fn handle_heartbeat(&self, _: bytes::Bytes) -> Result<(), KernelError> {
         Ok(())
@@ -126,11 +111,6 @@ impl KernelClient {
             *counter
         };
 
-        self.send_status(header.clone())
-            .with_status("busy")
-            .execute(&mut self.jupyter)
-            .await?;
-
         self.send_execute_input(header.clone())
             .with_code(&request.code)
             .with_execution_count(execution_count)
@@ -175,96 +155,112 @@ impl KernelClient {
         Ok(())
     }
 
-    async fn handle_outgoing_request(&mut self, request: KernelRequest) -> Result<(), KernelError> {
-        let context = {
-            let mut sessions = self.sessions.lock().await;
-            match (*sessions).get_key_value(request.header.get_session()) {
-                Some((_, value)) => Ok(value.clone()),
-                None => {
-                    let context = self
-                        .send_context_create()
-                        .with_cluster_id("1024-181223-ye0dza2w")
-                        .with_language("python")
-                        .execute(&self.databricks)
-                        .await;
+    async fn find_context_by_session(&mut self, session: &str) -> Result<String, KernelError> {
+        let mut sessions = self.sessions.lock().await;
 
-                    match context {
-                        Ok(context) => {
-                            (*sessions).insert(String::from(request.header.get_session()), context.id.clone());
-                            Ok(context.id)
-                        }
-                        Err(error) => {
-                            warn!("Cannot create remote context: {:?}", error);
-                            Err(error)
-                        }
-                    }
-                }
+        if let Some((_, value)) = (*sessions).get_key_value(session) {
+            return Ok(value.clone());
+        }
+
+        let context = self
+            .send_context_create()
+            .with_cluster_id(&self.cluster_id)
+            .with_language("python")
+            .execute(&self.databricks)
+            .await;
+
+        match context {
+            Ok(context) => {
+                (*sessions).insert(String::from(session), context.id.clone());
+                Ok(context.id)
             }
-        };
-
-        let (status, mimetype, response) = match context {
-            Ok(context_id) => {
-                let command = self
-                    .send_command_execute()
-                    .with_cluster_id("1024-181223-ye0dza2w")
-                    .with_context_id(&context_id)
-                    .with_language("python")
-                    .with_command(&request.code)
-                    .execute(&self.databricks)
-                    .await;
-
-                let (status, command_id, result) = match command {
-                    Ok(response) => ("ok", Some(response.id), request.code),
-                    Err(error) => {
-                        warn!("Cannot execute remote command: {:?}", error);
-                        ("error", None, error.to_string())
-                    }
-                };
-
-                match (status, command_id) {
-                    ("ok", Some(command_id)) => {
-                        let status = self
-                            .send_command_status()
-                            .with_cluster_id("1024-181223-ye0dza2w")
-                            .with_context_id(&context_id)
-                            .with_command_id(&command_id)
-                            .execute(&self.databricks)
-                            .await;
-
-                        match status {
-                            Ok(response) => match response.results {
-                                None => ("ok", "text/plain", format!("{:?}", response)),
-                                Some(databricks::DatabricksCommandStatusResponseResult {
-                                    summary: Some(summary),
-                                    result_type: _,
-                                    data: _,
-                                    cause: _,
-                                }) => ("error", "text/html", summary),
-                                Some(databricks::DatabricksCommandStatusResponseResult {
-                                    summary: _,
-                                    result_type: _,
-                                    data: Some(data),
-                                    cause: _,
-                                }) => ("ok", "text/plain", data),
-                                Some(result) => ("ok", "text/plain", format!("{:?}", result)),
-                            },
-                            Err(error) => ("erorr", "text/plain", error.to_string()),
-                        }
-                    }
-                    (status, _) => (status, "text/plain", result),
-                }
+            Err(error) => {
+                warn!("Cannot create remote context: {:?}", error);
+                Err(error)
             }
-            Err(error) => ("error", "text/plain", error.to_string()),
-        };
+        }
+    }
 
-        self.send_execute_result(request.header.clone())
+    async fn propagate_error(&mut self, request: &KernelRequest, error: KernelError) -> Result<(), KernelError> {
+        self.send_update_display_data(request.header.clone())
             .with_execution_count(request.execution_count)
-            .with_data_string(mimetype, &response)
+            .with_data_string("text/plain", &error.to_string())
+            .with_transient("display_id", "result")
+            .execute(&mut self.jupyter)
+            .await
+    }
+
+    async fn handle_outgoing_request(&mut self, request: KernelRequest) -> Result<(), KernelError> {
+        let context = match self.find_context_by_session(request.header.get_session()).await {
+            Ok(context) => context,
+            Err(error) => return self.propagate_error(&request, error).await,
+        };
+
+        self.send_status(request.header.clone())
+            .with_status("busy")
             .execute(&mut self.jupyter)
             .await?;
 
+        let execution = self
+            .send_command_execute()
+            .with_cluster_id(&self.cluster_id)
+            .with_context_id(&context)
+            .with_language("python")
+            .with_command(&request.code)
+            .execute(&self.databricks)
+            .await;
+
+        let execution = match execution {
+            Ok(response) => response.id,
+            Err(error) => return self.propagate_error(&request, error).await,
+        };
+
+        self.send_display_data(request.header.clone())
+            .with_execution_count(request.execution_count)
+            .with_data_string("text/plain", "Running")
+            .with_transient("display_id", "result")
+            .execute(&mut self.jupyter)
+            .await?;
+
+        loop {
+            let status = self
+                .send_command_status()
+                .with_cluster_id(&self.cluster_id)
+                .with_context_id(&context)
+                .with_command_id(&execution)
+                .execute(&self.databricks)
+                .await;
+
+            let response = match status {
+                Ok(response) => response,
+                Err(error) => return self.propagate_error(&request, error).await,
+            };
+
+            let (mimetype, status, data) = match (&response.status, &response.results) {
+                (status, Some(result)) if status == "Finished" => match (&result.data, &result.summary) {
+                    (Some(data), _) => ("text/plain", String::from(status), String::from(data)),
+                    (_, Some(summary)) => ("text/html", String::from(status), String::from(summary)),
+                    (None, None) => ("text/plain", String::from(status), format!("{:?}", response)),
+                },
+                (status, _) => ("text/plain", String::from(status), String::from(status)),
+            };
+
+            self.send_update_display_data(request.header.clone())
+                .with_execution_count(request.execution_count)
+                .with_data_string(mimetype, &data)
+                .with_transient("display_id", "result")
+                .execute(&mut self.jupyter)
+                .await?;
+
+            if status != "Running" && status != "Queued" {
+                break;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+
         self.send_execute_reply(request.channel, request.sender.clone(), request.header.clone())
-            .with_status(status)
+            .with_status("ok")
             .with_execution_count(request.execution_count)
             .execute(&mut self.jupyter)
             .await?;
@@ -305,7 +301,7 @@ impl KernelClient {
                         debug!("Received {:?}", request);
                         self.handle_outgoing_request(request).await?;
                     }
-                }
+                },
             }
         }
     }
@@ -334,6 +330,14 @@ impl KernelClient {
 
     fn send_execute_result(&self, parent: jupyter::JupyterHeader) -> JupyterExecuteResultSender {
         JupyterExecuteResultSender::new(parent)
+    }
+
+    fn send_display_data(&self, parent: jupyter::JupyterHeader) -> JupyterDisplayDataSender {
+        JupyterDisplayDataSender::new(parent)
+    }
+
+    fn send_update_display_data(&self, parent: jupyter::JupyterHeader) -> JupyterDisplayDataSender {
+        JupyterDisplayDataSender::update(parent)
     }
 
     fn send_input_request(&self, parent: jupyter::JupyterHeader) -> JupyterInputRequestSender {
