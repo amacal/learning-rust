@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
 use crate::databricks;
@@ -19,9 +17,6 @@ pub struct KernelClient {
 
     jupyter: jupyter::JupyterClient,
     databricks: databricks::DatabricksClient,
-
-    sender: mpsc::Sender<KernelRequest>,
-    receiver: mpsc::Receiver<KernelRequest>,
 }
 
 #[derive(Debug, Clone)]
@@ -50,14 +45,10 @@ impl KernelClient {
             Err(error) => return raise_databricks_credentials_failed(error),
         };
 
-        let (sender, receiver) = mpsc::channel(100);
-
         let instance = Self {
             counter: Arc::new(Mutex::new(0u32)),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             cluster_id: String::from(cluster_id),
-            sender: sender,
-            receiver: receiver,
             jupyter: jupyter,
             databricks: databricks,
         };
@@ -117,17 +108,14 @@ impl KernelClient {
             .execute(&mut self.jupyter)
             .await?;
 
-        self.sender
-            .send(KernelRequest {
-                channel: channel,
-                sender: sender.clone(),
-                header: header.clone(),
-                code: request.code.clone(),
-                execution_count: execution_count,
-            })
-            .await;
-
-        Ok(())
+        self.handle_outgoing_request(KernelRequest {
+            channel: channel,
+            sender: sender.clone(),
+            header: header.clone(),
+            code: request.code.clone(),
+            execution_count: execution_count,
+        })
+        .await
     }
 
     async fn handle_content(
@@ -296,12 +284,6 @@ impl KernelClient {
 
                     return Ok(result);
                 },
-                request = self.receiver.recv() => {
-                    if let Some(request) = request {
-                        debug!("Received {:?}", request);
-                        self.handle_outgoing_request(request).await?;
-                    }
-                },
             }
         }
     }
@@ -338,10 +320,6 @@ impl KernelClient {
 
     fn send_update_display_data(&self, parent: jupyter::JupyterHeader) -> JupyterDisplayDataSender {
         JupyterDisplayDataSender::update(parent)
-    }
-
-    fn send_input_request(&self, parent: jupyter::JupyterHeader) -> JupyterInputRequestSender {
-        JupyterInputRequestSender::new(parent)
     }
 
     fn send_status(&self, parent: jupyter::JupyterHeader) -> JupyterKernelStatusSender {

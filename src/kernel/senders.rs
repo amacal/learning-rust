@@ -54,12 +54,6 @@ pub struct JupyterKernelStatusSender {
     execution_state: Option<String>,
 }
 
-pub struct JupyterInputRequestSender {
-    header: jupyter::JupyterHeader,
-    prompt: Option<String>,
-    password: bool,
-}
-
 pub struct DatabricksContextCreateSender {
     cluster_id: Option<String>,
     language: Option<String>,
@@ -520,49 +514,6 @@ impl JupyterKernelStatusSender {
                 }
             }
             _ => raise_payload_incomplete("JupyterKernelStatusSender"),
-        }
-    }
-}
-
-impl JupyterInputRequestSender {
-    pub fn new(parent: jupyter::JupyterHeader) -> Self {
-        Self {
-            header: parent.reply("input_request"),
-            prompt: None,
-            password: false,
-        }
-    }
-
-    pub fn with_prompt(self, prompt: &str) -> Self {
-        Self {
-            header: self.header,
-            prompt: Some(String::from(prompt)),
-            password: self.password,
-        }
-    }
-
-    pub async fn execute(self, client: &mut jupyter::JupyterClient) -> Result<(), KernelError> {
-        match self {
-            JupyterInputRequestSender {
-                header,
-                prompt: Some(prompt),
-                password,
-            } => {
-                let content = &jupyter::JupyterInputRequest {
-                    prompt: prompt,
-                    password: password,
-                };
-
-                let identity = bytes::Bytes::new();
-                let channel = jupyter::JupyterChannel::StdIn;
-
-                debug!("Sending {:?} as {:?} ...", &header, &content);
-                match client.send(channel, &identity, &header, None, &content).await {
-                    Ok(()) => Ok(()),
-                    Err(error) => raise_sending_failed(error),
-                }
-            }
-            _ => raise_payload_incomplete("JupyterInputRequestSender"),
         }
     }
 }

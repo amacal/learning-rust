@@ -15,11 +15,6 @@ pub enum JupyterError {
         channel: JupyterChannel,
         error: zeromq::ZmqError,
     },
-    #[error("Queuing outgoing message on '{channel:?}' failed: {error}")]
-    QueueingFailed {
-        channel: JupyterChannel,
-        error: tokio::sync::mpsc::error::SendError<(JupyterChannel, zeromq::ZmqMessage)>,
-    },
     #[error("Found {found} number of frames, but {expected} expected")]
     NotEnoughFrames { found: usize, expected: usize },
     #[error("Message is incomplete because '{name}' was not provided")]
@@ -57,16 +52,6 @@ pub fn raise_connection_file_failed<T>(path: &str, reason: String) -> Result<T, 
 
 pub fn raise_connection_socket_failed<T>(channel: JupyterChannel, error: zeromq::ZmqError) -> Result<T, JupyterError> {
     return Err(JupyterError::ConnectionSocketFailed {
-        channel: channel,
-        error: error,
-    });
-}
-
-pub fn raise_queueing_failed<T>(
-    channel: JupyterChannel,
-    error: tokio::sync::mpsc::error::SendError<(JupyterChannel, zeromq::ZmqMessage)>,
-) -> Result<T, JupyterError> {
-    return Err(JupyterError::QueueingFailed {
         channel: channel,
         error: error,
     });
