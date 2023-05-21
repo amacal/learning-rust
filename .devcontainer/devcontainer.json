@@ -7,6 +7,9 @@
 	"containerEnv": {
 		"CARGO_TARGET_DIR": "/tmp/cargo"
 	},
+    "mounts": [
+        "source=D:\\wikipedia,target=/wikipedia,type=bind,consistency=cached"
+    ],
 	"customizations": {
 		"vscode": {
 			"extensions": [
