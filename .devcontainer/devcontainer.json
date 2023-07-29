@@ -1,9 +1,19 @@
 {
 	"name": "Rust",
-	"image": "mcr.microsoft.com/devcontainers/rust:bookworm",
+	"build": {
+		"dockerfile": "dockerfile",
+		"context": ".."
+	},
 	"containerEnv": {
 		"CARGO_TARGET_DIR": "/tmp/cargo"
 	},
+	"runArgs": [
+		"--network=host"
+	],
+	"mounts": [
+		"source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+	],
+	"postStartCommand": "sudo chgrp vscode /var/run/docker.sock",
 	"customizations": {
 		"vscode": {
 			"extensions": [

@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-base64 = { version = "0.21.2" }
-byteorder = { version = "1.4.3" }
-hex = { version = "0.4.3" }
-ring = { version = "0.16.20" }
-thiserror = { version = "1.0.44" }
+testcontainers = { version = "0.14.0", features = ["tokio"] }
 tokio = { version = "1.29.1", features = ["full"] }
+tokio-postgres = { version = "0.7.8" }
