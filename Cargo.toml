@@ -4,12 +4,25 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bitstream-io = { version = "1.7.0" }
 criterion = { version = "0.5.1" }
 
 [[bench]]
-name = "simd"
+name = "cargo"
 harness = false
 
 [[bench]]
-name = "loop"
+name = "current"
+harness = false
+
+[[bench]]
+name = "inline"
+harness = false
+
+[[bench]]
+name = "slice"
+harness = false
+
+[[bench]]
+name = "value"
 harness = false
