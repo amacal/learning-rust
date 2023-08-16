@@ -1,381 +1,395 @@
-use byteorder::{ByteOrder, LittleEndian};
-use futures::stream::{unfold, StreamExt};
-use std::{borrow::Cow, io::SeekFrom, pin::Pin};
+mod bitstream;
 
-use tokio::{
-    fs::File,
-    io::{AsyncRead, AsyncReadExt, AsyncSeekExt, ReadBuf, AsyncWriteExt},
-};
+use std::io::Cursor;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
-#[derive(Debug)]
-pub struct BitmapFileHeader {
-    pub bf_type: u16,
-    pub bf_size: u32,
-    pub bf_reserved1: u16,
-    pub bf_reserved2: u16,
-    pub bf_off_bits: u32,
-}
+use bitstream_io::{BitRead, BitReader};
+use byteorder::{BigEndian, ByteOrder};
+use crc32fast;
 
-impl BitmapFileHeader {
-    pub fn parse(data: &[u8]) -> Self {
-        Self {
-            bf_type: LittleEndian::read_u16(&data[0..2]),
-            bf_size: LittleEndian::read_u32(&data[2..6]),
-            bf_reserved1: LittleEndian::read_u16(&data[6..8]),
-            bf_reserved2: LittleEndian::read_u16(&data[8..10]),
-            bf_off_bits: LittleEndian::read_u32(&data[10..14]),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct BitmapInfoHeader {
-    pub bi_size: u32,
-    pub bi_width: i32,
-    pub bi_height: i32,
-    pub bi_planes: u16,
-    pub bi_bit_count: u16,
-    pub bi_compression: u32,
-    pub bi_size_image: u32,
-    pub bi_x_pels_per_meter: i32,
-    pub bi_y_pels_per_meter: i32,
-    pub bi_clr_used: u32,
-    pub bi_clr_important: u32,
-}
-
-impl BitmapInfoHeader {
-    pub fn parse(data: &[u8]) -> Self {
-        BitmapInfoHeader {
-            bi_size: LittleEndian::read_u32(&data[0..4]),
-            bi_width: LittleEndian::read_i32(&data[4..8]),
-            bi_height: LittleEndian::read_i32(&data[8..12]),
-            bi_planes: LittleEndian::read_u16(&data[12..14]),
-            bi_bit_count: LittleEndian::read_u16(&data[14..16]),
-            bi_compression: LittleEndian::read_u32(&data[16..20]),
-            bi_size_image: LittleEndian::read_u32(&data[20..24]),
-            bi_x_pels_per_meter: LittleEndian::read_i32(&data[24..28]),
-            bi_y_pels_per_meter: LittleEndian::read_i32(&data[28..32]),
-            bi_clr_used: LittleEndian::read_u32(&data[32..36]),
-            bi_clr_important: LittleEndian::read_u32(&data[36..40]),
-        }
-    }
-}
-
-pub async fn extract_metadata(file: &mut File) -> Result<(BitmapFileHeader, BitmapInfoHeader), std::io::Error> {
-    let mut buffer: [u8; 2048] = [0; 2048];
-
-    file.seek(SeekFrom::Start(0)).await?;
-    file.read(&mut buffer).await?;
-
-    let file_header = BitmapFileHeader::parse(&buffer[..]);
-    let info_header = BitmapInfoHeader::parse(&buffer[0x0e..]);
-
-    file.seek(SeekFrom::Start(file_header.bf_off_bits as u64)).await?;
-    Ok((file_header, info_header))
-}
-
-#[derive(Debug)]
-pub enum RlePacket<'a> {
-    Encoded { count: usize, value: u8 },
-    Absolute { data: Cow<'a, [u8]> },
-    EndOfLine,
-    EndOfBitmap,
-}
-
-impl<'a> RlePacket<'a> {
-    fn from<'b>(packet: &RlePacket<'a>) -> RlePacket<'b> {
-        match packet {
-            Self::Encoded { count, value } => RlePacket::Encoded {
-                count: *count,
-                value: *value,
-            },
-            Self::Absolute { data } => RlePacket::Absolute {
-                data: Cow::Owned(data.to_vec()),
-            },
-            Self::EndOfLine => RlePacket::EndOfLine,
-            Self::EndOfBitmap => RlePacket::EndOfBitmap,
-        }
-    }
-
-    pub fn decode<'b>(source: &'b [u8]) -> Option<RlePacket<'b>> {
-        if source.len() < 2 {
-            return None;
-        }
-
-        if source[0] > 0 {
-            return Some(RlePacket::Encoded {
-                count: source[0] as usize,
-                value: source[1],
-            });
-        }
-
-        if source[1] == 0 {
-            return Some(RlePacket::EndOfLine);
-        }
-
-        if source[1] == 1 {
-            return Some(RlePacket::EndOfBitmap);
-        }
-
-        if source[1] > 0 && source.len() >= 2 + source[1] as usize {
-            return Some(RlePacket::Absolute {
-                data: Cow::Borrowed(&source[2..2 + source[1] as usize]),
-            });
-        }
-
-        None
-    }
-
-    pub fn data_size(&self) -> usize {
-        match self {
-            Self::Encoded { count, value: _value } => *count,
-            Self::Absolute { data } => data.len(),
-            _ => 0,
-        }
-    }
-
-    pub fn packet_size(&self) -> usize {
-        match self {
-            Self::Absolute { data } => 2 + data.len() + (data.len() % 2),
-            _ => 2,
-        }
-    }
-
-    pub fn write(&'a self, buf: &mut ReadBuf<'_>) -> Option<usize> {
-        match self {
-            Self::Absolute { data } if buf.remaining() >= data.len() => {
-                match data {
-                    Cow::Borrowed(data) => buf.put_slice(data),
-                    Cow::Owned(data) => buf.put_slice(&data),
-                }
-                Some(data.len())
-            }
-            Self::Encoded { count, value } if buf.remaining() >= *count => {
-                let data = vec![*value; *count];
-                buf.put_slice(&data);
-                Some(*count)
-            }
-            Self::EndOfLine | Self::EndOfBitmap => Some(0),
-            _ => None,
-        }
-    }
-}
+use tokio::fs::File;
+use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 
 #[derive(thiserror::Error, Debug)]
-pub enum RleDecoderError {
+pub enum PngError {
     #[error("IO Failed: {0}")]
     IO(std::io::Error),
+
+    #[error("Invalid Signature")]
+    InvalidSignature,
+
+    #[error("Invalid Header")]
+    InvalidHeader,
+
+    #[error("Invalid Checksum")]
+    InvalidChecksum,
+
+    #[error("Invalid Chunks")]
+    InvalidChunks,
+}
+
+impl From<PngError> for std::io::Error {
+    fn from(err: PngError) -> std::io::Error {
+        match err {
+            PngError::IO(e) => e,
+            _ => std::io::Error::new(std::io::ErrorKind::Other, err),
+        }
+    }
 }
 
 #[derive(Debug)]
-pub struct RleDecoder<TSource: AsyncRead + Sized + Unpin> {
+pub struct PngFile<TSource: AsyncRead + Unpin> {
     source: TSource,
-    file_header: BitmapFileHeader,
-    info_header: BitmapInfoHeader,
+    header: PngHeader,
     buffer: Vec<u8>,
-    position: usize,
-    start: usize,
-    end: usize,
+    buffer_start: usize,
+    buffer_end: usize,
+    buffer_feeding: bool,
+    chunk_hash: crc32fast::Hasher,
+    chunk_position: usize,
+    chunk_length: usize,
+    chunk_verified: bool,
+    chunk_completed: bool,
 }
 
-impl<TSource: AsyncRead + Unpin> RleDecoder<TSource> {
-    async fn fetch(&mut self) -> Result<(), RleDecoderError> {
-        if self.start > self.buffer.len() / 2 {
-            self.buffer.copy_within(self.start..self.end, 0);
-            self.end -= self.start;
-            self.start = 0;
+impl<TSource: AsyncRead + Unpin> PngFile<TSource> {
+    async fn new(mut source: TSource) -> Result<Self, PngError> {
+        let mut buffer = vec![0; 65536];
+        let signature = [137, 80, 78, 71, 13, 10, 26, 10];
+
+        if let Err(error) = source.read_exact(&mut buffer[0..8]).await {
+            return Err(PngError::IO(error));
         }
 
-        self.end += match self.source.read(&mut self.buffer[self.end..]).await {
-            Ok(count) => count,
-            Err(error) => return Err(RleDecoderError::IO(error)),
+        if buffer[0..8] != signature {
+            return Err(PngError::InvalidSignature);
+        }
+
+        let header = Self::read_header(&mut source, &mut buffer).await?;
+        let (length, hash) = Self::skip_chunks(&mut source, &mut buffer).await?;
+
+        Ok(Self {
+            source: source,
+            header: header,
+            buffer: buffer,
+            buffer_start: 0,
+            buffer_end: 0,
+            buffer_feeding: false,
+            chunk_length: length,
+            chunk_position: 0,
+            chunk_verified: false,
+            chunk_completed: false,
+            chunk_hash: hash,
+        })
+    }
+}
+
+impl<TSource: AsyncRead + Unpin> PngFile<TSource> {
+    async fn read_header(source: &mut TSource, buffer: &mut [u8]) -> Result<PngHeader, PngError> {
+        let signature = [0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52];
+        let mut hasher = crc32fast::Hasher::new();
+
+        if let Err(error) = source.read_exact(&mut buffer[0..25]).await {
+            return Err(PngError::IO(error));
+        }
+
+        if &buffer[0..8] != &signature {
+            return Err(PngError::InvalidHeader);
+        }
+
+        let crc_computed = {
+            hasher.update(&buffer[4..21]);
+            hasher.finalize()
         };
 
-        Ok(())
+        if crc_computed != BigEndian::read_u32(&buffer[21..25]) {
+            return Err(PngError::InvalidChecksum);
+        }
+
+        Ok(PngHeader::parse(&buffer[8..21]))
     }
 
-    async fn fill<'a>(&'a mut self, packets: &mut Vec<RlePacket<'a>>) {
+    async fn skip_chunks(source: &mut TSource, buffer: &mut [u8]) -> Result<(usize, crc32fast::Hasher), PngError> {
         loop {
-            let buffer = &self.buffer[self.start..self.end];
-            let packet = RlePacket::decode(buffer);
-
-            if let Some(packet) = packet {
-                self.start += packet.packet_size();
-                self.position += packet.data_size();
-
-                packets.push(packet);
-                continue;
+            if let Err(error) = source.read_exact(&mut buffer[0..8]).await {
+                return Err(PngError::IO(error));
             }
 
-            break;
+            let mut length = BigEndian::read_u32(&buffer[0..4]) as usize;
+            let header = String::from_utf8_lossy(&buffer[4..8]).into_owned();
+
+            if header == "IEND" {
+                return Err(PngError::InvalidChunks);
+            }
+
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&buffer[4..8]);
+
+            if header == "IDAT" {
+                return Ok((length, hasher));
+            }
+
+            while length > 0 {
+                let available = if length < buffer.len() { length } else { buffer.len() };
+                let received = source.read(&mut buffer[0..available]).await;
+
+                let received = match received {
+                    Ok(received) => received,
+                    Err(error) => return Err(PngError::IO(error)),
+                };
+
+                length -= received;
+                hasher.update(&buffer[0..received]);
+            }
+
+            if let Err(error) = source.read_exact(&mut buffer[0..4]).await {
+                return Err(PngError::IO(error));
+            }
+
+            let crc = BigEndian::read_u32(&buffer[0..4]);
+            let crc_computed = hasher.finalize();
+
+            if crc != crc_computed {
+                return Err(PngError::InvalidChecksum);
+            }
         }
     }
 
-    pub async fn next_packets<'a>(&'a mut self) -> Result<Vec<RlePacket<'a>>, RleDecoderError> {
-        let mut packets = Vec::new();
+    fn align_buffer(&mut self) {
+        if self.buffer_start == self.buffer_end {
+            self.buffer_start = 0;
+            self.buffer_end = 0;
+        }
 
-        self.fetch().await?;
-        self.fill(&mut packets).await;
+        if self.buffer_start > self.buffer.len() / 2 {
+            self.buffer.copy_within(self.buffer_start..self.buffer_end, 0);
+            self.buffer_end -= self.buffer_start;
+            self.buffer_start = 0;
+        }
+    }
 
-        Ok(packets)
+    fn verify_chunk(&mut self) -> Result<(), PngError> {
+        let mut hasher = crc32fast::Hasher::new();
+        std::mem::swap(&mut self.chunk_hash, &mut hasher);
+
+        let buffer = &self.buffer[self.buffer_start..self.buffer_end];
+        let crc = BigEndian::read_u32(&buffer[0..4]);
+        let crc_computed = hasher.finalize();
+
+        if crc != crc_computed {
+            return Err(PngError::InvalidChecksum);
+        }
+
+        self.buffer_start += 4;
+        self.chunk_verified = true;
+
+        Ok(())
+    }
+
+    fn open_chunk(&mut self) -> Result<(), PngError> {
+        let buffer = &self.buffer[self.buffer_start..self.buffer_end];
+        let length = BigEndian::read_u32(&buffer[0..4]) as usize;
+        let header = String::from_utf8_lossy(&buffer[4..8]).into_owned();
+
+        match &header[..] {
+            "IDAT" => (),
+            "IEND" => {
+                self.chunk_length = 0;
+                self.chunk_position = 0;
+                self.chunk_completed = true;
+            }
+            _ => return Err(PngError::InvalidChunks),
+        }
+
+        self.chunk_verified = false;
+        self.chunk_position = 0;
+        self.chunk_length = length;
+        self.chunk_hash.update(&buffer[4..8]);
+        self.buffer_start += 8;
+
+        Ok(())
+    }
+
+    fn copy_data<'a>(&mut self, destination: &mut ReadBuf<'a>) {
+        let available = std::cmp::min(
+            std::cmp::min(
+                self.buffer_end - self.buffer_start,
+                self.chunk_length - self.chunk_position,
+            ),
+            destination.remaining(),
+        );
+
+        let buffer_end = self.buffer_start + available;
+        let source = &self.buffer[self.buffer_start..buffer_end];
+
+        self.chunk_hash.update(source);
+
+        destination.initialized_mut()[0..available].clone_from_slice(source);
+        destination.advance(available);
+
+        self.buffer_start += available;
+        self.chunk_position += available;
     }
 }
 
-impl RleDecoder<File> {
-    fn from(source: File, file_header: BitmapFileHeader, info_header: BitmapInfoHeader) -> Self {
+impl<TSource: AsyncRead + Unpin> AsyncRead for PngFile<TSource> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+
+        if this.buffer_feeding == false {
+            this.align_buffer();
+            this.buffer_feeding = true;
+        }
+
+        let mut target = ReadBuf::new(&mut this.buffer[this.buffer_end..]);
+        let source = Pin::new(&mut this.source);
+
+        let count = match source.poll_read(cx, &mut target) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(result) => match result {
+                Err(error) => return Poll::Ready(Err(error)),
+                Ok(_) => target.filled().len(),
+            },
+        };
+
+        this.buffer_feeding = false;
+        this.buffer_end += count;
+
+        if this.chunk_position == this.chunk_length && this.chunk_verified == false && this.chunk_completed == false {
+            this.verify_chunk()?;
+        }
+
+        if this.chunk_position == this.chunk_length && this.chunk_completed == false {
+            this.open_chunk()?;
+        }
+
+        this.copy_data(buf);
+        Poll::Ready(std::io::Result::Ok(()))
+    }
+}
+
+impl PngFile<File> {
+    pub async fn open(path: &str) -> Result<Self, PngError> {
+        let file = match File::open(path).await {
+            Err(error) => return Err(PngError::IO(error)),
+            Ok(file) => file,
+        };
+
+        Ok(PngFile::new(file).await?)
+    }
+}
+
+#[derive(Debug)]
+pub struct PngHeader {
+    width: u32,
+    height: u32,
+    bit_depth: u8,
+    color_type: u8,
+    compression_method: u8,
+    filter_method: u8,
+    interlace_method: u8,
+}
+
+impl PngHeader {
+    pub fn parse(data: &[u8]) -> Self {
         Self {
-            source: source,
-            buffer: vec![0; 65536],
-            file_header: file_header,
-            info_header: info_header,
-            position: 0,
-            start: 0,
-            end: 0,
+            width: BigEndian::read_u32(&data[0..4]),
+            height: BigEndian::read_u32(&data[4..8]),
+            bit_depth: data[8],
+            color_type: data[9],
+            compression_method: data[10],
+            filter_method: data[11],
+            interlace_method: data[12],
         }
     }
+}
 
-    pub async fn file(name: &str) -> Result<Self, std::io::Error> {
-        let mut file = File::open(name).await?;
-        let (file_header, info_header) = extract_metadata(&mut file).await?;
+#[derive(Debug)]
+pub struct Deflate<TSource: AsyncRead + Unpin> {
+    source: TSource,
+    buffer: Vec<u8>,
+    buffer_start: usize,
+    buffer_end: usize,
+    compression_method: u8,
+    compression_info: u8,
+    check_bits: u8,
+    preset_dictionary: u8,
+    compression_level: u8,
+}
 
-        Ok(RleDecoder::from(file, file_header, info_header))
+impl<TSource: AsyncRead + Unpin> Deflate<TSource> {
+    pub async fn new(mut source: TSource) -> Result<Self, PngError> {
+        let mut buffer = vec![0; 1024];
+
+        if let Err(error) = source.read_exact(&mut buffer[0..2]).await {
+            return Err(PngError::IO(error));
+        }
+
+        let mut reader: BitReader<&[u8], bitstream_io::LittleEndian> = BitReader::new(&buffer);
+
+        let compression_method: u8 = reader.read(4).unwrap();
+        let compression_info: u8 = reader.read(4).unwrap();
+        let check_bits: u8 = reader.read(5).unwrap();
+        let preset_dictionary: u8 = reader.read(1).unwrap();
+        let compression_level: u8 = reader.read(2).unwrap();
+
+        Ok(Self {
+            source: source,
+            buffer: buffer,
+            buffer_start: 0,
+            buffer_end: 0,
+            compression_method: compression_method,
+            compression_info: compression_info,
+            check_bits: check_bits,
+            preset_dictionary: preset_dictionary,
+            compression_level: compression_level,
+        })
     }
 
-    pub async fn seek(&mut self, offset: usize) -> Result<(), std::io::Error> {
-        self.source.seek(SeekFrom::Start(offset as u64)).await?;
-        self.position = offset - self.file_header.bf_off_bits as usize;
+    pub async fn next_data(&mut self) -> Result<(), PngError> {
+        let count = match self.source.read(&mut self.buffer).await {
+            Ok(count) => count,
+            Err(error) => return Err(PngError::IO(error)),
+        };
 
-        self.start = 0;
-        self.end = 0;
+        self.buffer_end += count;
+        println!("{}", count);
+        println!("{:?}", &self.buffer[..self.buffer_end]);
+
+        let cursor = Cursor::new(&self.buffer[..]);
+        let mut reader = bitstream_io::BitReader::endian(cursor, bitstream_io::LittleEndian);
+        
+        println!("last {}", reader.read::<u8>(1).unwrap());
+        println!("mode {}", reader.read::<u8>(2).unwrap());
+        
+        println!("hlit {}", reader.read::<u8>(5).unwrap());
+        println!("hdist {}", reader.read::<u8>(5).unwrap());
+        println!("hclen {}", reader.read::<u8>(4).unwrap());
+
+        for i in 0..18 {
+            println!("hclen {} {}", i, reader.read::<u8>(3).unwrap());
+        }
+
+        println!("{}", reader.position_in_bits().unwrap());
 
         Ok(())
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct BitmapRow {
-    pub bitmap_line: usize,
-    pub source_offset: usize,
-    pub target_offset: usize,
-}
-
-pub async fn decode_packets<'a>(
-    decoder: &'a mut RleDecoder<File>,
-) -> Result<Pin<Box<impl futures::Stream<Item = RlePacket>>>, RleDecoderError> {
-    let data = unfold(decoder, |decoder| async {
-        let packets = decoder.next_packets().await.unwrap();
-        let mut cloned = Vec::with_capacity(packets.len());
-
-        for packet in &packets {
-            cloned.push(RlePacket::from(packet));
-        }
-
-        if packets.is_empty() {
-            None
-        } else {
-            Some((cloned, decoder))
-        }
-    });
-
-    Ok(Box::pin(data.flat_map(|packets| futures::stream::iter(packets))))
-}
-
-pub async fn handle_packets(name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut decoder: RleDecoder<File> = RleDecoder::file(name).await?;
-    let mut packets = decode_packets(&mut decoder).await?;
-    let mut packets = packets.as_mut();
-
-    while let Some(packet) = packets.next().await {
-        println!("{:?}", packet);
-    }
-
-    Ok(())
-}
-
-pub async fn decode_rows(decoder: &mut RleDecoder<File>) -> Result<Vec<BitmapRow>, RleDecoderError> {
-    let mut counter = 0;
-    let mut offset = decoder.file_header.bf_off_bits as usize;
-
-    let mut prev = decoder.file_header.bf_off_bits as usize;
-    let mut indices = vec![BitmapRow::default(); decoder.info_header.bi_height as usize];
-
-    let mut streaming = true;
-    let height = decoder.info_header.bi_height as usize;
-    let width = decoder.info_header.bi_width as usize;
-
-    while streaming  {
-        for packet in decoder.next_packets().await? {
-            offset += packet.packet_size();
-
-            if let RlePacket::EndOfLine | RlePacket::EndOfBitmap = packet {
-                counter += 1;
-                indices[height - counter] = BitmapRow {
-                    source_offset: prev,
-                    bitmap_line: height - counter,
-                    target_offset: (height - counter) * width,
-                };
-                prev = offset;
-            }
-
-            if let RlePacket::EndOfBitmap = packet {
-                streaming = false;
-            }
-        }
-    }
-
-    Ok(indices)
-}
-
-pub async fn handle_rows(name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut decoder: RleDecoder<File> = RleDecoder::file(name).await?;
-    let rows = decode_rows(&mut decoder).await?;
-
-    for row in &rows {
-        println!("{:?}", row);
-    }
-
-    Ok(())
-}
-
-pub async fn handle_data(name: &str, outcome: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let mut decoder: RleDecoder<File> = RleDecoder::file(name).await?;
-    let rows = decode_rows(&mut decoder).await?;
-
-    let mut buffer = vec![0; decoder.info_header.bi_width as usize];
-    let mut buffer = ReadBuf::new(&mut buffer);
-
-    let mut streaming;
-    let mut outcome = File::create(outcome).await?;
-
-    for row in &rows {
-        streaming = true;
-        decoder.seek(row.source_offset).await?;
-
-        println!("{:?}", row);
-
-        while streaming {
-            for packet in decoder.next_packets().await? {
-                if let RlePacket::EndOfLine | RlePacket::EndOfBitmap = packet {
-                    streaming = false;
-                    break;
-                }
-
-                packet.write(&mut buffer);
-            }
-        }
-
-        outcome.write_all(buffer.filled()).await?;
-        buffer.clear();
-    }
-
-    Ok(())
+fn rol_u8(value: u8, shift: u8) -> u8 {
+    (value << shift) | (value >> (8 - shift))
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    handle_rows("test.bmp").await?;
-    handle_packets("test.bmp").await?;
-    handle_data("test.bmp", "test.data").await?;
+    //let file = PngFile::open("test.png").await?;
+    //let mut deflate = Deflate::new(file).await?;
+
+    //deflate.next_data().await?;
+
+    println!("{}", rol_u8(1, 41));
+    println!("{}", rol_u8(1, 105));
 
     Ok(())
 }
