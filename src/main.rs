@@ -170,8 +170,8 @@ impl HuffmanTable {
         let mut first: u128 = 0;
         let mut bits = bits;
     
+        let mut count: u128;
         let mut code = 0;
-        let mut count: u128 = 0;
         let mut offset: u128 = 0;
     
         while length < 8 {
