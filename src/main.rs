@@ -1,15 +1,18 @@
 mod bitstream;
+mod huffman;
+mod inflate;
 
-use std::io::Cursor;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use bitstream_io::{BitRead, BitReader};
 use byteorder::{BigEndian, ByteOrder};
 use crc32fast;
 
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
+
+use crate::bitstream::BitStream;
+use crate::inflate::{InflateBlock, InflateSymbol};
 
 #[derive(thiserror::Error, Debug)]
 pub enum PngError {
@@ -25,8 +28,8 @@ pub enum PngError {
     #[error("Invalid Checksum")]
     InvalidChecksum,
 
-    #[error("Invalid Chunks")]
-    InvalidChunks,
+    #[error("Invalid Chunks {0}")]
+    InvalidChunks(String),
 }
 
 impl From<PngError> for std::io::Error {
@@ -120,7 +123,7 @@ impl<TSource: AsyncRead + Unpin> PngFile<TSource> {
             let header = String::from_utf8_lossy(&buffer[4..8]).into_owned();
 
             if header == "IEND" {
-                return Err(PngError::InvalidChunks);
+                return Err(PngError::InvalidChunks(header));
             }
 
             let mut hasher = crc32fast::Hasher::new();
@@ -199,7 +202,7 @@ impl<TSource: AsyncRead + Unpin> PngFile<TSource> {
                 self.chunk_position = 0;
                 self.chunk_completed = true;
             }
-            _ => return Err(PngError::InvalidChunks),
+            _ => return Err(PngError::InvalidChunks(header[..].to_string())),
         }
 
         self.chunk_verified = false;
@@ -320,23 +323,21 @@ pub struct Deflate<TSource: AsyncRead + Unpin> {
 
 impl<TSource: AsyncRead + Unpin> Deflate<TSource> {
     pub async fn new(mut source: TSource) -> Result<Self, PngError> {
-        let mut buffer = vec![0; 1024];
+        let mut buffer = [0, 0];
 
         if let Err(error) = source.read_exact(&mut buffer[0..2]).await {
             return Err(PngError::IO(error));
         }
 
-        let mut reader: BitReader<&[u8], bitstream_io::LittleEndian> = BitReader::new(&buffer);
-
-        let compression_method: u8 = reader.read(4).unwrap();
-        let compression_info: u8 = reader.read(4).unwrap();
-        let check_bits: u8 = reader.read(5).unwrap();
-        let preset_dictionary: u8 = reader.read(1).unwrap();
-        let compression_level: u8 = reader.read(2).unwrap();
+        let compression_method: u8 = buffer[0] & 0x0f;
+        let compression_info: u8 = (buffer[0] & 0xf0) >> 4;
+        let check_bits: u8 = buffer[1] & 0x1f;
+        let preset_dictionary: u8 = (buffer[1] & 0x20) >> 5;
+        let compression_level: u8 = (buffer[1] & 0xc0) >> 6;
 
         Ok(Self {
             source: source,
-            buffer: buffer,
+            buffer: vec![0; 32_728],
             buffer_start: 0,
             buffer_end: 0,
             compression_method: compression_method,
@@ -353,43 +354,48 @@ impl<TSource: AsyncRead + Unpin> Deflate<TSource> {
             Err(error) => return Err(PngError::IO(error)),
         };
 
-        self.buffer_end += count;
-        println!("{}", count);
-        println!("{:?}", &self.buffer[..self.buffer_end]);
+        let mut index = 0;
+        let mut reader = BitStream::try_from(&self.buffer[0..count]).unwrap();
 
-        let cursor = Cursor::new(&self.buffer[..]);
-        let mut reader = bitstream_io::BitReader::endian(cursor, bitstream_io::LittleEndian);
-        
-        println!("last {}", reader.read::<u8>(1).unwrap());
-        println!("mode {}", reader.read::<u8>(2).unwrap());
-        
-        println!("hlit {}", reader.read::<u8>(5).unwrap());
-        println!("hdist {}", reader.read::<u8>(5).unwrap());
-        println!("hclen {}", reader.read::<u8>(4).unwrap());
+        loop {
+            let mut inflate = InflateBlock::open(&mut reader).unwrap();
 
-        for i in 0..18 {
-            println!("hclen {} {}", i, reader.read::<u8>(3).unwrap());
+            while let Some(symbol) = inflate.next() {
+                //println!("{} {} {} {:?}", index, inflate.last, inflate.mode, symbol);
+
+                if let InflateSymbol::EndBlock = symbol {
+                    break;
+                }
+
+                if let Some(available) = inflate.hungry() {
+                    let available = std::cmp::min(available, self.buffer.len());
+
+                    let count = match self.source.read(&mut self.buffer[0..available]).await {
+                        Ok(count) => count,
+                        Err(error) => return Err(PngError::IO(error)),
+                    };
+
+                    inflate.feed(&self.buffer[0..count]);
+                }
+            }
+
+            if inflate.last {
+                break;
+            }
+
+            index += 1;
         }
-
-        println!("{}", reader.position_in_bits().unwrap());
 
         Ok(())
     }
 }
 
-fn rol_u8(value: u8, shift: u8) -> u8 {
-    (value << shift) | (value >> (8 - shift))
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    //let file = PngFile::open("test.png").await?;
-    //let mut deflate = Deflate::new(file).await?;
+    let name = std::env::args().nth(1).unwrap();
+    let file = PngFile::open(&name).await?;
+    let mut deflate = Deflate::new(file).await?;
 
-    //deflate.next_data().await?;
-
-    println!("{}", rol_u8(1, 41));
-    println!("{}", rol_u8(1, 105));
-
+    deflate.next_data().await?;
     Ok(())
 }

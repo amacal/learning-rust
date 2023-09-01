@@ -1,10 +1,15 @@
 [package]
-name = "deflate"
+name = "huffman"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+debug = 1
+
+[rust]
+debuginfo-level = 1
+
 [dependencies]
-bitstream-io = { version = "1.7.0" }
 byteorder = { version = "1.4.3" }
 crc32fast = "1.3.2"
 futures = { version = "0.3.28" }
