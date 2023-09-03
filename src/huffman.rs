@@ -1,9 +1,9 @@
 use crate::bitstream::BitStream;
 
-#[derive(Debug)]
 pub struct HuffmanTable<const MAX_BITS: usize, const MAX_SYMBOLS: usize> {
-    pub counts: [u16; MAX_BITS],
-    pub symbols: [u16; MAX_SYMBOLS],
+    shortest: usize,
+    counts: [u16; MAX_BITS],
+    symbols: [u16; MAX_SYMBOLS],
 }
 
 impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX_SYMBOLS>
@@ -12,6 +12,7 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
         let mut counts = [0; MAX_BITS];
         let mut symbols = [0; MAX_SYMBOLS];
         let mut offsets = [0; MAX_BITS];
+        let mut shortest = 0;
 
         for index in 0..MAX_SYMBOLS {
             if lengths[index] > 0 {
@@ -21,6 +22,10 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
 
         for index in 1..MAX_BITS {
             offsets[index] = offsets[index - 1] + counts[index - 1];
+
+            if shortest == 0 && counts[index] > 0 {
+                shortest = index;
+            }
         }
 
         for index in 0..MAX_SYMBOLS {
@@ -31,6 +36,7 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
         }
 
         Self {
+            shortest: shortest,
             counts: counts,
             symbols: symbols,
         }
@@ -59,14 +65,29 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
         let mut code: u16 = 0;
         let mut offset: u16 = 0;
 
-        for &count in self.counts[1..].iter() {
+        for _ in 1..self.shortest {
+            code |= match bits.next_bit() {
+                Some(bit) => bit as u16,
+                None => return None,
+            };
+
+            code <<= 1;
+        }
+
+        for &count in self.counts[self.shortest..].iter() {
             code |= match bits.next_bit() {
                 Some(bit) => bit as u16,
                 None => return None,
             };
 
             if code < first + count {
-                return Some(self.symbols[offset as usize + (code - first) as usize]);
+                let index = offset as usize + (code - first) as usize;
+                let symbol = match self.symbols.get(index) {
+                    Some(&value) => value,
+                    None => return None,
+                };
+
+                return Some(symbol);
             }
 
             offset += count;

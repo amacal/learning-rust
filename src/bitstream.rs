@@ -1,5 +1,5 @@
 pub struct BitStream {
-    buffer: Vec<u8>,
+    buffer: Box<[u8]>,
     buffer_end: usize,
     current: u8,
     offset: usize,
@@ -10,7 +10,7 @@ pub struct BitStream {
 
 impl BitStream {
     pub fn try_from(data: &[u8]) -> Option<Self> {
-        let mut buffer = vec![0; 65_536];
+        let mut buffer = Box::new([0; 131_072]);
         buffer[0..data.len()].copy_from_slice(data);
 
         let current = match buffer.get(0) {
@@ -81,5 +81,37 @@ impl BitStream {
         }
 
         Some(outcome)
+    }
+
+    pub fn skip_bits(&mut self) -> Option<()> {
+        while self.offset_bit != 0x01 {
+            self.next_bit()?;
+        }
+
+        Some(())
+    }
+
+    pub fn next_bytes(&mut self, count: usize) -> Option<Vec<u8>> {
+        if self.offset_bit != 0x01 {
+            return None;
+        }
+
+        let data = match self.buffer.get(self.offset..self.offset + count) {
+            Some(data) => data,
+            None => return None,
+        };
+
+        let mut target = vec![0; data.len()];
+        target[..].copy_from_slice(data);
+
+        self.offset += data.len();
+        self.total += data.len() as u64;
+
+        self.current = match &self.buffer[0..self.buffer_end].get(self.offset) {
+            None => return None,
+            Some(&value) => value,
+        };
+
+        Some(target)
     }
 }
