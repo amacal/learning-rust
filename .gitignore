@@ -1,5 +1,7 @@
 /target
-STScI-01GYZA4EB3R5E1EZ4NJQPKHVRA.png
-flamegraph.svg
-perf.data
-perf.data.old
+*.png
+*.zlib*
+flamegraph.*
+perf.*
+enwiki*
+lubuntu*

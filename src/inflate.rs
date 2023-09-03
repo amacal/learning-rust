@@ -253,11 +253,11 @@ impl InflateBlock {
 
 impl InflateReader {
     pub fn zlib(bitstream: &mut BitStream) -> Option<Self> {
-        let compression_method = bitstream.next_bits(4).unwrap();
-        let compression_info = bitstream.next_bits(4).unwrap();
-        let check_bits = bitstream.next_bits(5).unwrap();
-        let preset_dictionary = bitstream.next_bit().unwrap();
-        let compression_level = bitstream.next_bits(2).unwrap();
+        let _compression_method = bitstream.next_bits(4).unwrap();
+        let _compression_info = bitstream.next_bits(4).unwrap();
+        let _check_bits = bitstream.next_bits(5).unwrap();
+        let _preset_dictionary = bitstream.next_bit().unwrap();
+        let _compression_level = bitstream.next_bits(2).unwrap();
 
         Some(Self {
             current: None,
