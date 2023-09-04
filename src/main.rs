@@ -14,6 +14,7 @@ fn main() -> CliResult<()> {
     runtime.block_on(async {
         match command {
             Cli::Decompress(command) => command.handle().await,
+            Cli::Block(command) => command.handle().await,
         }
     })
 }

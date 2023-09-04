@@ -1,4 +1,12 @@
+use std::fmt::Display;
+
 use crate::bitstream::BitStream;
+
+#[derive(Default, Clone, Copy)]
+pub struct HuffmanCode {
+    pub bits: u16,
+    pub length: usize,
+}
 
 pub struct HuffmanTable<const MAX_BITS: usize, const MAX_SYMBOLS: usize> {
     shortest: usize,
@@ -6,8 +14,7 @@ pub struct HuffmanTable<const MAX_BITS: usize, const MAX_SYMBOLS: usize> {
     symbols: [u16; MAX_SYMBOLS],
 }
 
-impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX_SYMBOLS>
-{
+impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX_SYMBOLS> {
     pub fn new(lengths: [u16; MAX_SYMBOLS]) -> Self {
         let mut counts = [0; MAX_BITS];
         let mut symbols = [0; MAX_SYMBOLS];
@@ -42,9 +49,10 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
         }
     }
 
-    pub fn list(&self) -> Vec<String> {
-        let mut result = Vec::with_capacity(self.symbols.len());
+    pub fn list(&self) -> [HuffmanCode; MAX_SYMBOLS] {
         let mut bits = 0;
+        let mut offset = 0;
+        let mut codes = [HuffmanCode::default(); MAX_SYMBOLS];
 
         for (length, &count) in self.counts.iter().enumerate() {
             if count > 0 {
@@ -52,15 +60,20 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
             }
 
             for _ in 0..count {
-                result.push(format!("{:0width$b} at {}", bits, length, width=length).to_string());
+                codes[self.symbols[offset] as usize] = HuffmanCode {
+                    bits: bits,
+                    length: length,
+                };
+
                 bits += 1;
+                offset += 1;
             }
         }
 
-        return result
+        return codes;
     }
 
-    pub fn decode(&self, bits: &mut BitStream) -> Option<u16> {
+    pub fn decode<const T: usize>(&self, bits: &mut BitStream<T>) -> Option<u16> {
         let mut first: u16 = 0;
         let mut code: u16 = 0;
         let mut offset: u16 = 0;
@@ -98,5 +111,11 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
         }
 
         None
+    }
+}
+
+impl Display for HuffmanCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:0width$b}", self.bits, width = self.length)
     }
 }

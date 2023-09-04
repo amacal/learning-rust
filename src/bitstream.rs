@@ -1,5 +1,5 @@
-pub struct BitStream {
-    buffer: Box<[u8]>,
+pub struct BitStream<const T: usize> {
+    buffer: Box<[u8; T]>,
     buffer_end: usize,
     current: u8,
     offset: usize,
@@ -8,9 +8,9 @@ pub struct BitStream {
     total: u64,
 }
 
-impl BitStream {
+impl<const T: usize> BitStream<T> {
     pub fn try_from(data: &[u8]) -> Option<Self> {
-        let mut buffer = Box::new([0; 131_072]);
+        let mut buffer = Box::new([0; T]);
         buffer[0..data.len()].copy_from_slice(data);
 
         let current = match buffer.get(0) {
