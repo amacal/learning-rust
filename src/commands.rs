@@ -2,7 +2,7 @@ use structopt::StructOpt;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::bitstream::BitStream;
+use crate::bitstream::{BitStream, self};
 use crate::inflate::{self, InflateEvent, InflateReader, InflateSymbol, InflateWriter};
 
 #[derive(StructOpt, Debug)]
@@ -35,12 +35,19 @@ pub enum CliError {
     #[error("IO Error on file '{0}': {1}")]
     IO(String, std::io::Error),
 
+    #[error("BitStream Error: {0}")]
+    BitStream(bitstream::BitStreamError),
+
     #[error("Inflate Error: {0}")]
     Inflate(inflate::InflateError),
 }
 
 fn raise_io_error<T>(file: &str, error: std::io::Error) -> CliResult<T> {
     Err(CliError::IO(file.to_string(), error))
+}
+
+fn raise_bitstream_error<T>(error: bitstream::BitStreamError) -> CliResult<T> {
+    Err(CliError::BitStream(error))
 }
 
 fn raise_inflate_error<T>(error: inflate::InflateError) -> CliResult<T> {
@@ -66,9 +73,17 @@ impl DecompressCommand {
             Err(error) => return raise_io_error(&self.source, error),
         };
 
-        let mut bitstream: BitStream<131072> = BitStream::try_from(&buffer[0..count]).unwrap();
-        let mut reader = InflateReader::zlib(&mut bitstream).unwrap();
-        let mut writer = InflateWriter::new();
+        let mut writer: InflateWriter<131_072> = InflateWriter::new();
+
+        let mut bitstream: BitStream<131_072> = match BitStream::try_from(&buffer[0..count]) {
+            Ok(bitstream) => bitstream,
+            Err(error) => return raise_bitstream_error(error),
+        };
+
+        let mut reader = match InflateReader::zlib(&mut bitstream) {
+            Ok(reader) => reader,
+            Err(error) => return raise_inflate_error(error),
+        };
 
         loop {
             loop {
@@ -146,8 +161,15 @@ impl BlockCommand {
             Err(error) => return raise_io_error(&self.source, error),
         };
 
-        let mut bitstream: BitStream<131072> = BitStream::try_from(&buffer[0..count]).unwrap();
-        let mut reader = InflateReader::zlib(&mut bitstream).unwrap();
+        let mut bitstream: BitStream<131_072> = match BitStream::try_from(&buffer[0..count]) {
+            Ok(bitstream) => bitstream,
+            Err(error) => return raise_bitstream_error(error),
+        };
+
+        let mut reader = match InflateReader::zlib(&mut bitstream) {
+            Ok(reader) => reader,
+            Err(error) => return raise_inflate_error(error),
+        };
 
         loop {
             loop {

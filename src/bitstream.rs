@@ -8,17 +8,46 @@ pub struct BitStream<const T: usize> {
     total: u64,
 }
 
+pub type BitStreamResult<T> = Result<T, BitStreamError>;
+
+#[derive(thiserror::Error, Debug)]
+pub enum BitStreamError {
+    #[error("Passed {passed} bytes, but stream can only accept {acceptable} bytes.")]
+    TooMuchData { passed: usize, acceptable: usize },
+
+    #[error("Requested {requested} bits, but stream contains only {available} bits.")]
+    NotEnoughData { requested: u16, available: usize },
+}
+
+fn raise_too_much_data<T>(passed: usize, acceptable: usize) -> BitStreamResult<T> {
+    Err(BitStreamError::TooMuchData {
+        passed: passed,
+        acceptable: acceptable,
+    })
+}
+
+fn raise_not_enough_data<T>(requested: u16, available: usize) -> BitStreamResult<T> {
+    Err(BitStreamError::NotEnoughData {
+        requested: requested,
+        available: available,
+    })
+}
+
 impl<const T: usize> BitStream<T> {
-    pub fn try_from(data: &[u8]) -> Option<Self> {
+    pub fn try_from(data: &[u8]) -> BitStreamResult<Self> {
+        if data.len() >= T {
+            return raise_too_much_data(data.len(), T);
+        }
+
         let mut buffer = Box::new([0; T]);
         buffer[0..data.len()].copy_from_slice(data);
 
         let current = match buffer.get(0) {
             Some(&value) => value,
-            None => return None,
+            None => return raise_not_enough_data(0, 1),
         };
 
-        Some(Self {
+        Ok(Self {
             buffer: buffer,
             buffer_end: data.len(),
             current: current,
@@ -83,7 +112,7 @@ impl<const T: usize> BitStream<T> {
         Some(outcome)
     }
 
-    pub fn skip_bits(&mut self) -> Option<()> {
+    pub fn align_to_next_byte(&mut self) -> Option<()> {
         while self.offset_bit != 0x01 {
             self.next_bit()?;
         }

@@ -46,8 +46,8 @@ pub struct InflateReader {
     failed: bool,
 }
 
-pub struct InflateWriter {
-    buffer: Box<[u8]>,
+pub struct InflateWriter<const T: usize> {
+    buffer: Box<[u8; T]>,
     offset: usize,
 }
 
@@ -146,7 +146,7 @@ fn build_length_table<const T: usize>(hlen: usize, reader: &mut BitStream<T>) ->
 }
 
 fn build_dynamic_table<const T: usize, const B: usize>(
-    reader: &mut BitStream<B>,
+    bitstream: &mut BitStream<B>,
     lengths: &HuffmanTable<8, 19>,
     count: usize,
 ) -> InflateResult<HuffmanTable<16, T>> {
@@ -154,22 +154,22 @@ fn build_dynamic_table<const T: usize, const B: usize>(
     let mut symbols = [0; T];
 
     while index < count {
-        let value = match lengths.decode(reader) {
+        let value = match lengths.decode(bitstream) {
             Some(value) => value,
             None => return raise_not_enough_data("decoding value"),
         };
 
         let (repeat, times) = match value {
             0..=15 => (0, 0),
-            16 => match reader.next_bits(2) {
+            16 => match bitstream.next_bits(2) {
                 Some(value) => (symbols[index - 1], 3 + value),
                 None => return raise_not_enough_data("reading zeros"),
             },
-            17 => match reader.next_bits(3) {
+            17 => match bitstream.next_bits(3) {
                 Some(value) => (0, 3 + value),
                 None => return raise_not_enough_data("reading zeros"),
             },
-            18 => match reader.next_bits(7) {
+            18 => match bitstream.next_bits(7) {
                 Some(value) => (0, 11 + value),
                 None => return raise_not_enough_data("reading zeros"),
             },
@@ -191,34 +191,34 @@ fn build_dynamic_table<const T: usize, const B: usize>(
 }
 
 fn build_dynamic_tables<const T: usize>(
-    reader: &mut BitStream<T>,
+    bitstream: &mut BitStream<T>,
 ) -> InflateResult<(HuffmanTable<16, 288>, HuffmanTable<16, 32>)> {
-    let hlit = match reader.next_bits(5) {
+    let hlit = match bitstream.next_bits(5) {
         Some(bits) => 257 + bits as usize,
         None => return raise_not_enough_data("hlit value"),
     };
 
-    let hdist = match reader.next_bits(5) {
+    let hdist = match bitstream.next_bits(5) {
         Some(bits) => 1 + bits as usize,
         None => return raise_not_enough_data("hdist value"),
     };
 
-    let hclen = match reader.next_bits(4) {
+    let hclen = match bitstream.next_bits(4) {
         Some(bits) => 4 + bits as usize,
         None => return raise_not_enough_data("hclen value"),
     };
 
-    let lengths = match build_length_table(hclen, reader) {
+    let lengths = match build_length_table(hclen, bitstream) {
         Some(lengths) => lengths,
         None => return raise_not_enough_data("building lengths table"),
     };
 
-    let literals = match build_dynamic_table(reader, &lengths, hlit) {
+    let literals = match build_dynamic_table(bitstream, &lengths, hlit) {
         Ok(table) => table,
         Err(error) => return raise_invalid_table("literals", error.to_string()),
     };
 
-    let distances = match build_dynamic_table(reader, &lengths, hdist) {
+    let distances = match build_dynamic_table(bitstream, &lengths, hdist) {
         Ok(table) => table,
         Err(error) => return raise_invalid_table("distances", error.to_string()),
     };
@@ -269,14 +269,42 @@ impl InflateBlock {
 }
 
 impl InflateReader {
-    pub fn zlib<const T: usize>(bitstream: &mut BitStream<T>) -> Option<Self> {
-        let _compression_method = bitstream.next_bits(4).unwrap();
-        let _compression_info = bitstream.next_bits(4).unwrap();
-        let _check_bits = bitstream.next_bits(5).unwrap();
-        let _preset_dictionary = bitstream.next_bit().unwrap();
-        let _compression_level = bitstream.next_bits(2).unwrap();
+    pub fn zlib<const T: usize>(bitstream: &mut BitStream<T>) -> InflateResult<Self> {
+        let compression_method = match bitstream.next_bits(4) {
+            Some(value) => value,
+            None => return raise_not_enough_data("zlib, 1st byte, compression method"),
+        };
 
-        Some(Self {
+        if compression_method != 8 {
+            return raise_not_implemented_protocol(
+                format!("only deflate, compression method {}", compression_method).as_str(),
+            );
+        }
+
+        let _compression_info = match bitstream.next_bits(4) {
+            Some(value) => value,
+            None => return raise_not_enough_data("zlib, 1st byte, compression info"),
+        };
+
+        if let None = bitstream.next_bits(5) {
+            return raise_not_enough_data("zlib, 2nd byte, check bits");
+        }
+
+        let preset_dictionary = match bitstream.next_bit() {
+            Some(value) => value,
+            None => return raise_not_enough_data("zlib, 2nd byte, preset dictionary"),
+        };
+
+        if preset_dictionary == 1 {
+            return raise_not_implemented_protocol("preset dictionary is present");
+        }
+
+        let _compression_level = match bitstream.next_bits(2){
+            Some(value) => value,
+            None => return raise_not_enough_data("zlib, 2nd byte, compression level"),
+        };
+
+        Ok(Self {
             offset: 0,
             current: None,
             buffer: None,
@@ -293,7 +321,7 @@ impl InflateReader {
 
         let (literals, distances) = match &current.decoder {
             InflateDecoder::Huffman { huffman } => (Some(huffman.literals.list()), Some(huffman.distances.list())),
-            InflateDecoder::Uncompressed { uncompressed: _ } => (None, None)
+            InflateDecoder::Uncompressed { uncompressed: _ } => (None, None),
         };
 
         Ok(InflateBlockInfo {
@@ -363,11 +391,11 @@ impl InflateReader {
     }
 }
 
-impl InflateWriter {
+impl<const T: usize> InflateWriter<T> {
     pub fn new() -> Self {
         Self {
             offset: 0,
-            buffer: Box::new([0; 131_072]),
+            buffer: Box::new([0; T]),
         }
     }
 
@@ -505,8 +533,8 @@ impl InflateUncompressed {
     }
 
     fn next<const T: usize>(&self, bitstream: &mut BitStream<T>) -> InflateResult<InflateSymbol> {
-        if let None = bitstream.skip_bits() {
-            return raise_not_enough_data("skipping bits");
+        if let None = bitstream.align_to_next_byte() {
+            return raise_not_enough_data("aligning to next byte");
         }
 
         let len = match bitstream.next_bits(16) {
