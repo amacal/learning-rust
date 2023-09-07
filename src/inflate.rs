@@ -1,5 +1,6 @@
+use crate::adler32::Adler32;
 use crate::bitstream::BitStream;
-use crate::huffman::{HuffmanCode, HuffmanTable};
+use crate::huffman::{HuffmanCode, HuffmanError, HuffmanTable};
 
 enum InflateDecoder {
     Huffman { huffman: InflateHuffman },
@@ -47,10 +48,12 @@ pub struct InflateReader {
 }
 
 pub struct InflateWriter<const T: usize> {
+    hash: Adler32,
     buffer: Box<[u8; T]>,
     offset: usize,
 }
 
+#[derive(Debug)]
 pub enum InflateSymbol {
     EndBlock,
     Literal { value: u8 },
@@ -58,6 +61,7 @@ pub enum InflateSymbol {
     Uncompressed { data: Vec<u8> },
 }
 
+#[derive(Debug)]
 pub enum InflateEvent {
     BlockStarted(u32),
     BlockEnded(u32),
@@ -71,6 +75,9 @@ pub enum InflateError {
 
     #[error("Invalid Table: {0} / {1}")]
     InvalidTable(String, String),
+
+    #[error("Decoding failed in '{0}': {1}")]
+    DecodingFailed(String, HuffmanError),
 
     #[error("Invalid State: {0}")]
     InvalidState(String),
@@ -92,6 +99,10 @@ fn raise_invalid_table<T>(table_name: &str, description: String) -> InflateResul
     Err(InflateError::InvalidTable(table_name.to_string(), description))
 }
 
+fn raise_decoding_failed<T>(table_name: &str, error: HuffmanError) -> InflateResult<T> {
+    Err(InflateError::DecodingFailed(table_name.to_string(), error))
+}
+
 fn raise_invalid_state<T>(description: &str) -> InflateResult<T> {
     Err(InflateError::InvalidState(description.to_string()))
 }
@@ -104,7 +115,7 @@ fn raise_end_of_stream<T>() -> InflateResult<T> {
     Err(InflateError::EndOfStream)
 }
 
-fn build_fixed_tables() -> (HuffmanTable<16, 288>, HuffmanTable<16, 32>) {
+fn build_fixed_tables() -> InflateResult<(HuffmanTable<16, 288>, HuffmanTable<16, 32>)> {
     let mut literals = [0; 288];
     let mut distances = [0; 32];
 
@@ -128,21 +139,34 @@ fn build_fixed_tables() -> (HuffmanTable<16, 288>, HuffmanTable<16, 32>) {
         distances[i] = 5;
     }
 
-    (HuffmanTable::new(literals), HuffmanTable::new(distances))
+    let literals = match HuffmanTable::new(literals) {
+        Some(table) => table,
+        None => return raise_invalid_state(format!("wrong lengths {:?}", literals).as_str()),
+    };
+
+    let distances = match HuffmanTable::new(distances) {
+        Some(table) => table,
+        None => return raise_invalid_state("wrong lengths"),
+    };
+
+    Ok((literals, distances))
 }
 
-fn build_length_table<const T: usize>(hlen: usize, reader: &mut BitStream<T>) -> Option<HuffmanTable<8, 19>> {
+fn build_length_table<const T: usize>(hlen: usize, bitstream: &mut BitStream<T>) -> InflateResult<HuffmanTable<8, 19>> {
     let mut lengths: [u16; 19] = [0; 19];
     let mapping = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 
     for i in 0..hlen {
-        lengths[mapping[i]] = match reader.next_bits(3) {
+        lengths[mapping[i]] = match bitstream.next_bits(3) {
             Some(bits) => bits as u16,
-            None => return None,
+            None => return raise_not_enough_data(format!("collecting lengths {}/{}", i, hlen - 1).as_str()),
         };
     }
 
-    Some(HuffmanTable::new(lengths))
+    match HuffmanTable::new(lengths) {
+        Some(table) => Ok(table),
+        None => raise_invalid_state(format!("wrong lengths {:?}", lengths).as_str()),
+    }
 }
 
 fn build_dynamic_table<const T: usize, const B: usize>(
@@ -153,10 +177,14 @@ fn build_dynamic_table<const T: usize, const B: usize>(
     let mut index: usize = 0;
     let mut symbols = [0; T];
 
+    if count > T {
+        return raise_invalid_state(format!("HuffmanTable of size {} cannot accept {} symbols", T, count).as_str());
+    }
+
     while index < count {
         let value = match lengths.decode(bitstream) {
-            Some(value) => value,
-            None => return raise_not_enough_data("decoding value"),
+            Ok(value) => value,
+            Err(error) => return raise_decoding_failed("lengths", error),
         };
 
         let (repeat, times) = match value {
@@ -187,7 +215,10 @@ fn build_dynamic_table<const T: usize, const B: usize>(
         }
     }
 
-    Ok(HuffmanTable::new(symbols))
+    match HuffmanTable::new(symbols) {
+        Some(table) => Ok(table),
+        None => raise_invalid_state(format!("wrong lengths {:?}", symbols).as_str()),
+    }
 }
 
 fn build_dynamic_tables<const T: usize>(
@@ -209,8 +240,8 @@ fn build_dynamic_tables<const T: usize>(
     };
 
     let lengths = match build_length_table(hclen, bitstream) {
-        Some(lengths) => lengths,
-        None => return raise_not_enough_data("building lengths table"),
+        Ok(lengths) => lengths,
+        Err(error) => return raise_invalid_table("lengths", error.to_string()),
     };
 
     let literals = match build_dynamic_table(bitstream, &lengths, hlit) {
@@ -227,13 +258,13 @@ fn build_dynamic_tables<const T: usize>(
 }
 
 impl InflateBlock {
-    pub fn open<const T: usize>(reader: &mut BitStream<T>) -> InflateResult<Self> {
-        let last = match reader.next_bit() {
+    pub fn open<const T: usize>(bitstream: &mut BitStream<T>) -> InflateResult<Self> {
+        let last = match bitstream.next_bit() {
             Some(bit) => bit == 1,
             None => return raise_not_enough_data("last_block bit"),
         };
 
-        let mode = match reader.next_bits(2) {
+        let mode = match bitstream.next_bits(2) {
             Some(bits) => bits as u8,
             None => return raise_not_enough_data("mode bit"),
         };
@@ -243,10 +274,14 @@ impl InflateBlock {
                 uncompressed: InflateUncompressed::new(),
             },
             1 => {
-                let (literals, distances) = build_fixed_tables();
+                let (literals, distances) = match build_fixed_tables() {
+                    Ok((literals, distances)) => (literals, distances),
+                    Err(error) => return Err(error),
+                };
+
                 InflateDecoder::huffman(literals, distances)
             }
-            2 => match build_dynamic_tables(reader) {
+            2 => match build_dynamic_tables(bitstream) {
                 Ok((literals, distances)) => InflateDecoder::huffman(literals, distances),
                 Err(error) => return Err(error),
             },
@@ -260,57 +295,23 @@ impl InflateBlock {
         })
     }
 
-    pub fn next<const T: usize>(&mut self, reader: &mut BitStream<T>) -> InflateResult<InflateSymbol> {
+    pub fn next<const T: usize>(&mut self, bitstream: &mut BitStream<T>) -> InflateResult<InflateSymbol> {
         match &self.decoder {
-            InflateDecoder::Huffman { huffman } => huffman.next(reader),
-            InflateDecoder::Uncompressed { uncompressed } => uncompressed.next(reader),
+            InflateDecoder::Huffman { huffman } => huffman.next(bitstream),
+            InflateDecoder::Uncompressed { uncompressed } => uncompressed.next(bitstream),
         }
     }
 }
 
 impl InflateReader {
-    pub fn zlib<const T: usize>(bitstream: &mut BitStream<T>) -> InflateResult<Self> {
-        let compression_method = match bitstream.next_bits(4) {
-            Some(value) => value,
-            None => return raise_not_enough_data("zlib, 1st byte, compression method"),
-        };
-
-        if compression_method != 8 {
-            return raise_not_implemented_protocol(
-                format!("only deflate, compression method {}", compression_method).as_str(),
-            );
-        }
-
-        let _compression_info = match bitstream.next_bits(4) {
-            Some(value) => value,
-            None => return raise_not_enough_data("zlib, 1st byte, compression info"),
-        };
-
-        if let None = bitstream.next_bits(5) {
-            return raise_not_enough_data("zlib, 2nd byte, check bits");
-        }
-
-        let preset_dictionary = match bitstream.next_bit() {
-            Some(value) => value,
-            None => return raise_not_enough_data("zlib, 2nd byte, preset dictionary"),
-        };
-
-        if preset_dictionary == 1 {
-            return raise_not_implemented_protocol("preset dictionary is present");
-        }
-
-        let _compression_level = match bitstream.next_bits(2){
-            Some(value) => value,
-            None => return raise_not_enough_data("zlib, 2nd byte, compression level"),
-        };
-
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             offset: 0,
             current: None,
             buffer: None,
             completed: false,
             failed: false,
-        })
+        }
     }
 
     pub fn block(&self) -> InflateResult<InflateBlockInfo> {
@@ -342,7 +343,7 @@ impl InflateReader {
     }
 
     pub fn is_completed(&self) -> bool {
-        self.completed
+        self.completed && self.buffer.is_none()
     }
 
     pub fn is_broken(&self) -> bool {
@@ -395,6 +396,7 @@ impl<const T: usize> InflateWriter<T> {
     pub fn new() -> Self {
         Self {
             offset: 0,
+            hash: Adler32::new(),
             buffer: Box::new([0; T]),
         }
     }
@@ -439,14 +441,19 @@ impl<const T: usize> InflateWriter<T> {
         }
     }
 
-    pub fn take(&mut self, buffer: &mut [u8]) -> usize {
+    pub fn collect(&mut self, buffer: &mut [u8]) -> usize {
         let available = std::cmp::min(buffer.len(), self.offset);
         buffer[..available].copy_from_slice(&self.buffer[..available]);
 
         self.buffer.copy_within(available..self.offset, 0);
         self.offset -= available;
 
+        self.hash.update(&buffer[..available]);
         available
+    }
+
+    pub fn checksum(&self) -> u32 {
+        self.hash.finalize()
     }
 }
 
@@ -494,8 +501,8 @@ impl InflateHuffman {
         };
 
         let distance = match self.distances.decode(bitstream) {
-            Some(value) => value,
-            None => return raise_invalid_state("decoding distances"),
+            Ok(value) => value,
+            Err(error) => return raise_decoding_failed("distances", error),
         };
 
         let distance_bits = if distance < 4 { 0 } else { (distance as usize - 2) / 2 };
@@ -515,8 +522,8 @@ impl InflateHuffman {
 
     fn next<const T: usize>(&self, bitstream: &mut BitStream<T>) -> InflateResult<InflateSymbol> {
         let literal = match self.literals.decode(bitstream) {
-            Some(value) => value,
-            None => return raise_invalid_state("decoding literals"),
+            Ok(value) => value,
+            Err(error) => return raise_decoding_failed("literals", error),
         };
 
         match literal {
@@ -533,18 +540,14 @@ impl InflateUncompressed {
     }
 
     fn next<const T: usize>(&self, bitstream: &mut BitStream<T>) -> InflateResult<InflateSymbol> {
-        if let None = bitstream.align_to_next_byte() {
-            return raise_not_enough_data("aligning to next byte");
-        }
-
-        let len = match bitstream.next_bits(16) {
-            Some(value) => value,
-            None => return raise_not_enough_data("len bytes"),
+        let len = match bitstream.next_bytes(2) {
+            Ok(value) => ((value[1] as u16) << 8) + value[0] as u16,
+            Err(error) => return raise_not_enough_data(format!("len bytes: {}", error.to_string()).as_str()),
         };
 
-        let nlen = match bitstream.next_bits(16) {
-            Some(value) => value,
-            None => return raise_not_enough_data("nlen bytes"),
+        let nlen = match bitstream.next_bytes(2) {
+            Ok(value) => ((value[1] as u16) << 8) + value[0] as u16,
+            Err(error) => return raise_not_enough_data(format!("nlen bytes: {}", error.to_string()).as_str()),
         };
 
         if !((len ^ 0xFFFF) == nlen) {
@@ -552,10 +555,96 @@ impl InflateUncompressed {
         }
 
         let symbol = match bitstream.next_bytes(len as usize) {
-            Some(data) => InflateSymbol::Uncompressed { data: data },
-            None => return raise_not_enough_data(format!("requested {} bytes", len).as_str()),
+            Ok(data) => InflateSymbol::Uncompressed { data: data },
+            Err(error) => return raise_not_enough_data(format!("{}", error).as_str()),
         };
 
         Ok(symbol)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bitstream<const T: usize>(data: &[u8]) -> BitStream<T> {
+        let mut bitstream = BitStream::new();
+        bitstream.append(data).unwrap();
+        bitstream
+    }
+
+    #[test]
+    fn lists_few_symbols_using_length_table() {
+        let data = [0b11011001, 0b0000100];
+        let mut bitstream: BitStream<10> = bitstream(&data);
+
+        let table = build_length_table(4, &mut bitstream).unwrap();
+        let codes = table.list();
+
+        assert_eq!(codes[16], HuffmanCode::new(0b0, 1));
+        assert_eq!(codes[17], HuffmanCode::new(0b110, 3));
+        assert_eq!(codes[18], HuffmanCode::new(0b111, 3));
+        assert_eq!(codes[0], HuffmanCode::new(0b10, 2));
+    }
+
+    #[test]
+    fn decodes_few_symbols_using_fixed_huffman_tables() {
+        let (literals, distances) = build_fixed_tables().unwrap();
+
+        let data = [
+            0b00001100, 0b11111101, 0b00010011, 0b11111110, 0b00000011, 0b11101000, 0b00000011, 0b11100011, 0b01010100,
+            0b01111001,
+        ];
+
+        let mut bitstream: BitStream<10> = bitstream(&data);
+
+        assert_eq!(literals.decode(&mut bitstream), Ok(0));
+        assert_eq!(literals.decode(&mut bitstream), Ok(143));
+
+        assert_eq!(literals.decode(&mut bitstream), Ok(144));
+        assert_eq!(literals.decode(&mut bitstream), Ok(255));
+
+        assert_eq!(literals.decode(&mut bitstream), Ok(256));
+        assert_eq!(literals.decode(&mut bitstream), Ok(279));
+
+        assert_eq!(literals.decode(&mut bitstream), Ok(280));
+        assert_eq!(literals.decode(&mut bitstream), Ok(287));
+
+        assert_eq!(distances.decode(&mut bitstream), Ok(5));
+        assert_eq!(distances.decode(&mut bitstream), Ok(10));
+        assert_eq!(distances.decode(&mut bitstream), Ok(15));
+    }
+
+    #[test]
+    fn fails_building_lengths_table() {
+        let data = [0b11011001];
+        let mut bitstream: BitStream<10> = bitstream(&data);
+
+        match build_length_table(4, &mut bitstream) {
+            Ok(_) => assert!(false),
+            Err(error) => match error {
+                InflateError::NotEnoughData(_) => assert!(true),
+                _ => assert!(false),
+            },
+        };
+    }
+
+    #[test]
+    fn fails_building_dynamic_table_due_to_missing_data() {
+        let data = [0b11011000];
+        let mut bitstream: BitStream<10> = bitstream(&data);
+
+        let lengths = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let lengths: HuffmanTable<8, 19> = HuffmanTable::new(lengths).unwrap();
+
+        let result: Result<HuffmanTable<16, 10>, InflateError> = build_dynamic_table(&mut bitstream, &lengths, 10);
+
+        match result {
+            Ok(_) => assert!(false),
+            Err(error) => match error {
+                InflateError::DecodingFailed(_, _) => assert!(true),
+                _ => assert!(false),
+            },
+        };
     }
 }

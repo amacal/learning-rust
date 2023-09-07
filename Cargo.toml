@@ -3,6 +3,9 @@ name = "deflate"
 version = "0.1.0"
 edition = "2021"
 
+[profile.release]
+debug = true
+
 [dependencies]
 structopt = { version = "0.3.26" }
 thiserror = { version = "1.0.48" }

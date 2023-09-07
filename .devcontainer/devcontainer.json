@@ -14,5 +14,6 @@
 				"ms-vscode.test-adapter-converter"
 			]
 		}
-	}
+	},
+	"postAttachCommand": "python3 -c 'import sys, zlib; sys.stdout.buffer.write(zlib.compress(sys.stdin.buffer.read()))' > LICENSE.zlib < LICENSE"
 }
