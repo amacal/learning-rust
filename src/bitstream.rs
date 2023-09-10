@@ -58,12 +58,11 @@ impl<const T: usize> BitStream<T> {
     }
 
     pub fn appendable(&self) -> Option<usize> {
-        // only interested if at least half buffer can be appended
-        if self.bufferable() < (T / 2) {
-            return None;
+        // only appendable if at least half buffer can be appended
+        match self.bufferable() {
+            value if value < T / 2 => None,
+            value => Some(value),
         }
-
-        Some(self.bufferable())
     }
 
     pub fn collect(&mut self, data: Option<&mut [u8]>) -> usize {
@@ -136,7 +135,7 @@ impl<const T: usize> BitStream<T> {
             Some(value) => ((value & self.mask) > 0) as u8,
         };
 
-        // rolling shift left and optionally remove current byte
+        // shift left or remove current byte
         if self.mask == 0x80 {
             self.current = None;
             self.mask = 1;

@@ -31,31 +31,33 @@ pub enum ZlibError {
     Inflate(InflateError),
 }
 
-fn raise_not_enough_data<T>(description: &str) -> ZlibResult<T> {
-    Err(ZlibError::NotEnoughData(description.to_string()))
-}
+impl ZlibError {
+    fn raise_not_enough_data<T>(description: &str) -> ZlibResult<T> {
+        Err(ZlibError::NotEnoughData(description.to_string()))
+    }
 
-fn raise_not_implemented<T>(description: &str) -> ZlibResult<T> {
-    Err(ZlibError::NotImplemented(description.to_string()))
-}
+    fn raise_not_implemented<T>(description: &str) -> ZlibResult<T> {
+        Err(ZlibError::NotImplemented(description.to_string()))
+    }
 
-fn raise_bitstream_error<T>(error: BitStreamError) -> ZlibResult<T> {
-    Err(ZlibError::BitStream(error))
-}
+    fn raise_bitstream_error<T>(error: BitStreamError) -> ZlibResult<T> {
+        Err(ZlibError::BitStream(error))
+    }
 
-fn raise_inflate_error<T>(error: InflateError) -> ZlibResult<T> {
-    Err(ZlibError::Inflate(error))
+    fn raise_inflate_error<T>(error: InflateError) -> ZlibResult<T> {
+        Err(ZlibError::Inflate(error))
+    }
 }
 
 impl<const T: usize> ZlibReader<T> {
     pub fn open(data: &[u8]) -> ZlibResult<Self> {
         if data.len() < 2 {
-            return raise_not_enough_data("zlib archive needs at least two bytes");
+            return ZlibError::raise_not_enough_data("zlib archive needs at least two bytes");
         }
 
         let compression_method = data[0] & 0x0f;
         if compression_method != 8 {
-            return raise_not_implemented(format!("only deflate, compression method {}", compression_method).as_str());
+            return ZlibError::raise_not_implemented(format!("only deflate, compression method {}", compression_method).as_str());
         }
 
         let _compression_info = (data[0] & 0xf0) >> 4;
@@ -63,14 +65,14 @@ impl<const T: usize> ZlibReader<T> {
 
         let preset_dictionary = (data[1] & 0x20) >> 5;
         if preset_dictionary == 1 {
-            return raise_not_implemented("preset dictionary support is not available");
+            return ZlibError::raise_not_implemented("preset dictionary support is not available");
         }
 
         let _compression_level = (data[1] & 0x60) >> 6;
         let mut bitstream: BitStream<T> = BitStream::new();
 
         if let Err(error) = bitstream.append(&data[2..]) {
-            return raise_bitstream_error(error);
+            return ZlibError::raise_bitstream_error(error);
         }
 
         Ok(Self {
@@ -85,7 +87,7 @@ impl<const T: usize> ZlibReader<T> {
         if self.verified.is_none() && self.inflate.is_completed() {
             let bytes = match self.bitstream.next_bytes(4) {
                 Ok(value) => value,
-                Err(error) => return raise_bitstream_error(error),
+                Err(error) => return ZlibError::raise_bitstream_error(error),
             };
 
             let mut checksum = 0;
@@ -100,7 +102,7 @@ impl<const T: usize> ZlibReader<T> {
 
         match self.inflate.next(&mut self.bitstream) {
             Ok(event) => Ok(ZlibEvent::Inflate(event)),
-            Err(error) => raise_inflate_error(error),
+            Err(error) => ZlibError::raise_inflate_error(error),
         }
     }
 
@@ -118,7 +120,7 @@ impl<const T: usize> ZlibReader<T> {
 
         match self.bitstream.append(data) {
             Ok(()) => Ok(()),
-            Err(error) => raise_bitstream_error(error),
+            Err(error) => ZlibError::raise_bitstream_error(error),
         }
     }
 

@@ -9,9 +9,9 @@ pub struct HuffmanCode {
 }
 
 pub struct HuffmanTable<const MAX_BITS: usize, const MAX_SYMBOLS: usize> {
-    shortest: usize,
-    counts: [u16; MAX_BITS],
-    symbols: [u16; MAX_SYMBOLS],
+    shortest: usize,              // the shortest code in the table
+    counts: [u16; MAX_BITS],      // the array of counts per each length
+    symbols: [u16; MAX_SYMBOLS],  // the array of symbols
 }
 
 pub type HuffmanResult<T> = Result<T, HuffmanError>;
@@ -25,12 +25,14 @@ pub enum HuffmanError {
     InvalidSymbol,
 }
 
-fn raise_not_enough_data<T>() -> HuffmanResult<T> {
-    Err(HuffmanError::NotEnoughData)
-}
+impl HuffmanError {
+    fn raise_not_enough_data<T>() -> HuffmanResult<T> {
+        Err(HuffmanError::NotEnoughData)
+    }
 
-fn raise_invalid_symbol<T>() -> HuffmanResult<T> {
-    Err(HuffmanError::InvalidSymbol)
+    fn raise_invalid_symbol<T>() -> HuffmanResult<T> {
+        Err(HuffmanError::InvalidSymbol)
+    }
 }
 
 impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX_SYMBOLS> {
@@ -101,7 +103,7 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
         for _ in 1..self.shortest {
             code |= match bits.next_bit() {
                 Some(bit) => bit as u16,
-                None => return raise_not_enough_data(),
+                None => return HuffmanError::raise_not_enough_data(),
             };
 
             code <<= 1;
@@ -110,14 +112,14 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
         for &count in self.counts[self.shortest..].iter() {
             code |= match bits.next_bit() {
                 Some(bit) => bit as u16,
-                None => return raise_not_enough_data(),
+                None => return HuffmanError::raise_not_enough_data(),
             };
 
             if code < first + count {
                 let index = offset as usize + (code - first) as usize;
                 let symbol = match self.symbols.get(index) {
                     Some(&value) => value,
-                    None => return raise_invalid_symbol(),
+                    None => return HuffmanError::raise_invalid_symbol(),
                 };
 
                 return Ok(symbol);
@@ -130,7 +132,7 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
             code <<= 1;
         }
 
-        raise_invalid_symbol()
+        HuffmanError::raise_invalid_symbol()
     }
 }
 
