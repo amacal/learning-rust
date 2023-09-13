@@ -297,7 +297,7 @@ impl BlockCommand {
             loop {
                 let event = match reader.next() {
                     Ok(ZlibEvent::Inflate(event)) => event,
-                    Ok(_) => continue,
+                    Ok(ZlibEvent::Checksum(_)) => break,
                     Err(error) => return CliError::raise_zlib_error(error),
                 };
 

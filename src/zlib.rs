@@ -2,10 +2,10 @@ use crate::bitstream::{BitStream, BitStreamError};
 use crate::inflate::{InflateBlockInfo, InflateError, InflateEvent, InflateReader, InflateResult};
 
 pub struct ZlibReader<const T: usize> {
-    inflate: InflateReader,
-    bitstream: BitStream<T>,
-    verified: Option<u32>,
-    exhausted: bool,
+    inflate: InflateReader,   // the inner inflate reader of compressed data
+    bitstream: BitStream<T>,  // the bitstream is totally owned by the zlib
+    verified: Option<u32>,    // holds a read Adler-32 checksum 
+    exhausted: bool,          // indicates whether appending stream is over
 }
 
 #[derive(Debug)]
