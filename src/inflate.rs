@@ -1,6 +1,7 @@
 use crate::adler32::Adler32;
 use crate::bitstream::BitStream;
 use crate::huffman::{HuffmanCode, HuffmanError, HuffmanTable};
+use crate::memory::*;
 
 enum InflateDecoder {
     Huffman { huffman: InflateHuffman },
@@ -47,10 +48,10 @@ pub struct InflateReader {
     failed: bool,
 }
 
-pub struct InflateWriter<const T: usize> {
-    hash: Adler32,
-    buffer: Box<[u8; T]>,
-    offset: usize,
+pub struct InflateWriter {
+    hash: Adler32,              // Adler-32 hash of all received data
+    buffer: Box<[u8; 131072]>,  // the rolling buffer of received data
+    offset: usize,              // the amount of used data in the buffer
 }
 
 #[derive(Debug)]
@@ -392,39 +393,41 @@ impl InflateReader {
     }
 }
 
-impl<const T: usize> InflateWriter<T> {
+impl InflateWriter {
     pub fn new() -> Self {
         Self {
             offset: 0,
             hash: Adler32::new(),
-            buffer: Box::new([0; T]),
+            buffer: Box::new([0; 131072]),
         }
     }
 
     pub fn handle(&mut self, symbol: InflateSymbol) -> Option<usize> {
         match symbol {
             InflateSymbol::Literal { value } => {
-                self.buffer[self.offset] = value;
-                self.offset += 1;
+                unsafe {
+                    let target = self.buffer.as_mut_ptr().add(self.offset);
+
+                    *target = value;
+                    self.offset += 1;
+                }
             }
-            InflateSymbol::Match { length, distance } if length <= distance => {
-                let source = self.offset - distance as usize..self.offset;
-                self.buffer.copy_within(source, self.offset);
-                self.offset += length as usize;
+            InflateSymbol::Match { length, distance } if distance >= 16 => {
+                unsafe {
+                    let source = self.buffer.as_ptr().add(self.offset - distance as usize);
+                    let target = self.buffer.as_mut_ptr().add(self.offset);
+            
+                    memcpy_unsafe(source, target, length as usize);
+                    self.offset += length as usize;
+                }
             }
             InflateSymbol::Match { length, distance } => {
-                let mut length = length as usize;
-                let mut distance = distance as usize;
-
-                while length > 0 {
-                    let available = std::cmp::min(distance, length);
-                    let source = self.offset - distance..self.offset - distance + available;
-
-                    self.buffer.copy_within(source, self.offset);
-                    self.offset += available;
-
-                    length -= available;
-                    distance += available;
+                unsafe {
+                    let source = self.buffer.as_ptr().add(self.offset - distance as usize);
+                    let target = self.buffer.as_mut_ptr().add(self.offset);
+            
+                    memcpy_unsafe_overlapped(source, target, length as usize);
+                    self.offset += length as usize;
                 }
             }
             InflateSymbol::Uncompressed { data } => {

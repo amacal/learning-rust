@@ -3,6 +3,7 @@ mod bitstream;
 mod commands;
 mod huffman;
 mod inflate;
+mod memory;
 mod zlib;
 
 use crate::commands::Cli;

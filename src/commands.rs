@@ -97,7 +97,7 @@ impl DecompressAsyncCommand {
             Err(error) => return CliError::raise_io_error(&self.source, error),
         };
 
-        let mut writer: InflateWriter<131_072> = InflateWriter::new();
+        let mut writer: InflateWriter = InflateWriter::new();
         let mut reader: ZlibReader<131_072> = match ZlibReader::open(&buffer[..count]) {
             Ok(reader) => reader,
             Err(error) => return CliError::raise_zlib_error(error),
@@ -192,7 +192,7 @@ impl DecompressSyncCommand {
         };
 
         let mut checksum = None;
-        let mut writer: InflateWriter<131_072> = InflateWriter::new();
+        let mut writer: InflateWriter = InflateWriter::new();
 
         let mut reader: ZlibReader<131_072> = match ZlibReader::open(&buffer[0..count]) {
             Ok(reader) => reader,
