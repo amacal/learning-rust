@@ -30,7 +30,10 @@ fn raise_too_much_data<T>(passed: usize, acceptable: usize) -> BitStreamResult<T
 }
 
 fn raise_not_enough_data<T>(requested: usize, available: usize) -> BitStreamResult<T> {
-    Err(BitStreamError::NotEnoughData { requested: requested, available: available, })
+    Err(BitStreamError::NotEnoughData {
+        requested: requested,
+        available: available,
+    })
 }
 
 fn raise_not_collected_data<T>(collectable: usize) -> BitStreamResult<T> {
@@ -107,23 +110,18 @@ impl<const T: usize> BitStream<T> {
         Ok(())
     }
 
-    fn next(&self) -> Option<u8> {
-        match &self.buffer.get(0..self.boundary) {
-            None => None,
-            Some(slice) => match slice.get(self.processed) {
-                None => None,
-                Some(&value) => Some(value),
-            },
-        }
-    } 
-
     pub fn next_bit(&mut self) -> Option<u8> {
         // when there is no current byte we need to pick new one
         if let None = self.current {
-            self.current = self.next();
+            if self.processed >= self.boundary {
+                self.current = None;
+                return None;
+            }
+            
+            unsafe {
+                let value = *self.buffer.get_unchecked(self.processed);
+                self.current = Some(value);
 
-            // if successful move all pointers
-            if let Some(_) = self.current {
                 self.processed += 1;
                 self.total += 1;
             }
@@ -206,7 +204,6 @@ mod tests {
         assert_eq!(bitstream.boundary, 0);
         assert_eq!(bitstream.buffer.len(), 32);
     }
-
 
     #[test]
     fn appends_too_big_slice() {
@@ -300,9 +297,9 @@ mod tests {
                 BitStreamError::NotEnoughData { requested, available } => {
                     assert_eq!(requested, 3);
                     assert_eq!(available, 2);
-                },
+                }
                 _ => assert!(false),
-            }
+            },
         };
 
         assert_eq!(bitstream.processed, 0);
