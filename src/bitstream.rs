@@ -1,5 +1,10 @@
+use std::arch::x86_64::*;
+
 pub struct BitStream<const T: usize> {
     buffer: Box<[u8; T]>, // buffer to hold the slice of data
+    bits: Box<[u8]>,      // buffer to hold all bits
+    bits_processed: usize,
+    bits_boundary: usize,
     boundary: usize,      // boundary within the buffer
     current: Option<u8>,  // byte currently being processed
     processed: usize,     // offset next byte to be processed
@@ -46,6 +51,9 @@ impl<const T: usize> BitStream<T> {
     pub fn new() -> Self {
         Self {
             buffer: Box::new([0; T]),
+            bits: vec![0; 8 * T].into(),
+            bits_processed: 0,
+            bits_boundary: 0,
             boundary: 0,
             current: None,
             processed: 0,
@@ -102,10 +110,23 @@ impl<const T: usize> BitStream<T> {
 
         self.processed = 0;
         self.collected = 0;
+        self.bits_processed %= 8;
 
         // copy new data just after boundary
         self.buffer[self.boundary..self.boundary + data.len()].copy_from_slice(data);
         self.boundary += data.len();
+
+        unsafe {
+            for i in self.processed..self.boundary {
+                let value = self.buffer.get_unchecked(i);
+                for b in 0..7 {
+                    let bit = value & (1 << b);
+                    let bit = if bit > 0 { 255 } else { 0 }; 
+
+                    *(self.bits.get_unchecked_mut(i * 8 + b)) = bit;
+                }
+            } 
+        }
 
         Ok(())
     }
