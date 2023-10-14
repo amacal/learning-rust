@@ -1,9 +1,9 @@
 use crate::bitstream::{BitStream, BitStreamError};
 use crate::inflate::{InflateBlockInfo, InflateError, InflateEvent, InflateReader, InflateResult};
 
-pub struct ZlibReader<const T: usize> {
+pub struct ZlibReader<TBitstream: BitStream + Sized> {
     inflate: InflateReader,   // the inner inflate reader of compressed data
-    bitstream: BitStream<T>,  // the bitstream is totally owned by the zlib
+    bitstream: TBitstream,    // the bitstream is totally owned by the zlib
     verified: Option<u32>,    // holds a read Adler-32 checksum 
     exhausted: bool,          // indicates whether appending stream is over
 }
@@ -49,8 +49,8 @@ impl ZlibError {
     }
 }
 
-impl<const T: usize> ZlibReader<T> {
-    pub fn open(data: &[u8]) -> ZlibResult<Self> {
+impl<TBitstream: BitStream + Sized> ZlibReader<TBitstream> {
+    pub fn open(mut bitstream: TBitstream, data: &[u8]) -> ZlibResult<Self> {
         if data.len() < 2 {
             return ZlibError::raise_not_enough_data("zlib archive needs at least two bytes");
         }
@@ -69,8 +69,6 @@ impl<const T: usize> ZlibReader<T> {
         }
 
         let _compression_level = (data[1] & 0x60) >> 6;
-        let mut bitstream: BitStream<T> = BitStream::new();
-
         if let Err(error) = bitstream.append(&data[2..]) {
             return ZlibError::raise_bitstream_error(error);
         }

@@ -1,4 +1,4 @@
-pub struct BitStream<const T: usize> {
+pub struct BitStreamS<const T: usize> {
     buffer: Box<[u8; T]>, // buffer to hold the slice of data
     boundary: usize,      // boundary within the buffer
     current: Option<u8>,  // byte currently being processed
@@ -6,6 +6,16 @@ pub struct BitStream<const T: usize> {
     collected: usize,     // offset next byte to be collected
     mask: u8,             // mask next bit to be processed
     total: u64,           // total number of bytes processed
+}
+
+pub trait BitStream {
+    fn appendable(&self) -> Option<usize>;
+    fn collect(&mut self, data: Option<&mut [u8]>) -> usize;
+    fn append(&mut self, data: &[u8]) -> BitStreamResult<()>;
+
+    fn next_bit(&mut self) -> Option<u8>;
+    fn next_bits(&mut self, count: usize) -> Option<u16>;
+    fn next_bytes(&mut self, count: usize) -> BitStreamResult<Vec<u8>>;
 }
 
 pub type BitStreamResult<T> = Result<T, BitStreamError>;
@@ -22,24 +32,26 @@ pub enum BitStreamError {
     NotCollectedData { collectable: usize },
 }
 
-fn raise_too_much_data<T>(passed: usize, acceptable: usize) -> BitStreamResult<T> {
-    Err(BitStreamError::TooMuchData {
-        passed: passed,
-        acceptable: acceptable,
-    })
+impl BitStreamError {
+    fn raise_too_much_data<T>(passed: usize, acceptable: usize) -> BitStreamResult<T> {
+        Err(BitStreamError::TooMuchData {
+            passed: passed,
+            acceptable: acceptable,
+        })
+    }
+
+    fn raise_not_enough_data<T>(requested: usize, available: usize) -> BitStreamResult<T> {
+        Err(BitStreamError::NotEnoughData { requested: requested, available: available, })
+    }
+
+    fn raise_not_collected_data<T>(collectable: usize) -> BitStreamResult<T> {
+        Err(BitStreamError::NotCollectedData {
+            collectable: collectable,
+        })
+    }
 }
 
-fn raise_not_enough_data<T>(requested: usize, available: usize) -> BitStreamResult<T> {
-    Err(BitStreamError::NotEnoughData { requested: requested, available: available, })
-}
-
-fn raise_not_collected_data<T>(collectable: usize) -> BitStreamResult<T> {
-    Err(BitStreamError::NotCollectedData {
-        collectable: collectable,
-    })
-}
-
-impl<const T: usize> BitStream<T> {
+impl<const T: usize> BitStreamS<T> {
     pub fn new() -> Self {
         Self {
             buffer: Box::new([0; T]),
@@ -57,7 +69,19 @@ impl<const T: usize> BitStream<T> {
         T - (self.boundary - self.processed)
     }
 
-    pub fn appendable(&self) -> Option<usize> {
+    fn next(&self) -> Option<u8> {
+        match &self.buffer.get(0..self.boundary) {
+            None => None,
+            Some(slice) => match slice.get(self.processed) {
+                None => None,
+                Some(&value) => Some(value),
+            },
+        }
+    }
+}
+
+impl<const T: usize> BitStream for BitStreamS<T> {
+    fn appendable(&self) -> Option<usize> {
         // only appendable if at least half buffer can be appended
         match self.bufferable() {
             value if value < T / 2 => None,
@@ -65,7 +89,7 @@ impl<const T: usize> BitStream<T> {
         }
     }
 
-    pub fn collect(&mut self, data: Option<&mut [u8]>) -> usize {
+    fn collect(&mut self, data: Option<&mut [u8]>) -> usize {
         // compute actual available bytes
         let available = match &data {
             Some(slice) => std::cmp::min(slice.len(), self.processed - self.collected),
@@ -84,13 +108,13 @@ impl<const T: usize> BitStream<T> {
         available
     }
 
-    pub fn append(&mut self, data: &[u8]) -> BitStreamResult<()> {
+    fn append(&mut self, data: &[u8]) -> BitStreamResult<()> {
         if data.len() > self.bufferable() {
-            return raise_too_much_data(data.len(), self.bufferable());
+            return BitStreamError::raise_too_much_data(data.len(), self.bufferable());
         }
 
         if self.collected != self.processed {
-            return raise_not_collected_data(self.processed - self.collected);
+            return BitStreamError::raise_not_collected_data(self.processed - self.collected);
         }
 
         // move already processed data to the beginning of the buffer
@@ -107,17 +131,7 @@ impl<const T: usize> BitStream<T> {
         Ok(())
     }
 
-    fn next(&self) -> Option<u8> {
-        match &self.buffer.get(0..self.boundary) {
-            None => None,
-            Some(slice) => match slice.get(self.processed) {
-                None => None,
-                Some(&value) => Some(value),
-            },
-        }
-    } 
-
-    pub fn next_bit(&mut self) -> Option<u8> {
+    fn next_bit(&mut self) -> Option<u8> {
         // when there is no current byte we need to pick new one
         if let None = self.current {
             self.current = self.next();
@@ -146,7 +160,7 @@ impl<const T: usize> BitStream<T> {
         Some(bit)
     }
 
-    pub fn next_bits(&mut self, count: usize) -> Option<u16> {
+    fn next_bits(&mut self, count: usize) -> Option<u16> {
         let mut outcome: u16 = 0;
 
         for i in 0..count {
@@ -159,7 +173,7 @@ impl<const T: usize> BitStream<T> {
         Some(outcome)
     }
 
-    pub fn next_bytes(&mut self, count: usize) -> BitStreamResult<Vec<u8>> {
+    fn next_bytes(&mut self, count: usize) -> BitStreamResult<Vec<u8>> {
         self.mask = 0x01;
         self.current = None;
 
@@ -173,7 +187,7 @@ impl<const T: usize> BitStream<T> {
 
         let data = match &data {
             Some(data) => data,
-            None => return raise_not_enough_data(count, self.boundary - self.processed),
+            None => return BitStreamError::raise_not_enough_data(count, self.boundary - self.processed),
         };
 
         let mut target = vec![0; data.len()];
@@ -191,15 +205,15 @@ impl<const T: usize> BitStream<T> {
 mod tests {
     use super::*;
 
-    fn bitstream<const T: usize>(data: &[u8]) -> BitStream<T> {
-        let mut bitstream = BitStream::new();
+    fn bitstream<const T: usize>(data: &[u8]) -> BitStreamS<T> {
+        let mut bitstream = BitStreamS::new();
         bitstream.append(data).unwrap();
         bitstream
     }
 
     #[test]
     fn creates_bitstream() {
-        let bitstream: BitStream<32> = BitStream::new();
+        let bitstream: BitStreamS<32> = BitStreamS::new();
 
         assert_eq!(bitstream.processed, 0);
         assert_eq!(bitstream.total, 0);
@@ -210,7 +224,7 @@ mod tests {
 
     #[test]
     fn appends_too_big_slice() {
-        let mut bitstream: BitStream<2> = BitStream::new();
+        let mut bitstream: BitStreamS<2> = BitStreamS::new();
         let data = [0, 1, 2, 3];
 
         match bitstream.append(data.as_ref()) {
@@ -228,7 +242,7 @@ mod tests {
     #[test]
     fn reads_bit_by_bit() {
         let data = [0x27, 0x00];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bit(), Some(1));
         assert_eq!(bitstream.next_bit(), Some(1));
@@ -244,7 +258,7 @@ mod tests {
     #[test]
     fn reads_bits_in_pairs() {
         let data = [0x27, 0x00];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bits(2), Some(3));
         assert_eq!(bitstream.next_bits(2), Some(1));
@@ -258,7 +272,7 @@ mod tests {
     #[test]
     fn aligns_to_next_byte_3bit() {
         let data = [0x27, 0x31];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bits(2), Some(3));
         assert_eq!(bitstream.next_bytes(1), Ok(vec![0x31]));
@@ -270,7 +284,7 @@ mod tests {
     #[test]
     fn aligns_to_next_byte_0bit() {
         let data = [0x27, 0x31];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bytes(1), Ok(vec![0x27]));
 
@@ -281,7 +295,7 @@ mod tests {
     #[test]
     fn reads_bytes() {
         let data = [0x27, 0x31];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bytes(2), Ok(vec![0x27, 0x31]));
 
@@ -292,7 +306,7 @@ mod tests {
     #[test]
     fn reads_bytes_too_many() {
         let data = [0x27, 0x31];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         match bitstream.next_bytes(3) {
             Ok(_) => assert!(false),
@@ -312,7 +326,7 @@ mod tests {
     #[test]
     fn reads_till_last_bit() {
         let data = [0x27];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bits(8), Some(0x27));
 
@@ -323,7 +337,7 @@ mod tests {
     #[test]
     fn reads_till_last_bit_plus_one() {
         let data = [0x27];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bits(8), Some(0x27));
         assert_eq!(bitstream.next_bit(), None);
@@ -335,7 +349,7 @@ mod tests {
     #[test]
     fn detects_appendable_when_half_consumed() {
         let data = [0; 32];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.appendable(), None);
         assert_eq!(bitstream.next_bytes(15), Ok(vec![0; 15]));
@@ -349,7 +363,7 @@ mod tests {
     #[test]
     fn collects_processed_data() {
         let data = [1, 2, 3, 4];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bits(7), Some(1));
         assert_eq!(bitstream.next_bits(3), Some(4));
@@ -366,7 +380,7 @@ mod tests {
     #[test]
     fn collects_processed_data_to_none() {
         let data = [1, 2, 3, 4];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bits(7), Some(1));
         assert_eq!(bitstream.next_bits(3), Some(4));
@@ -378,7 +392,7 @@ mod tests {
     #[test]
     fn appends_data_fails_when_not_collected() {
         let data = [1, 2, 3, 4];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bits(7), Some(1));
         assert_eq!(bitstream.next_bits(3), Some(4));
@@ -399,7 +413,7 @@ mod tests {
     #[test]
     fn appends_data_succeeds_when_collected() {
         let data = [1, 2, 3, 4];
-        let mut bitstream: BitStream<32> = bitstream(&data);
+        let mut bitstream: BitStreamS<32> = bitstream(&data);
 
         assert_eq!(bitstream.next_bits(7), Some(1));
         assert_eq!(bitstream.next_bits(3), Some(4));

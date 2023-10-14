@@ -152,7 +152,7 @@ fn build_fixed_tables() -> InflateResult<(HuffmanTable<16, 288>, HuffmanTable<16
     Ok((literals, distances))
 }
 
-fn build_length_table<const T: usize>(hlen: usize, bitstream: &mut BitStream<T>) -> InflateResult<HuffmanTable<8, 19>> {
+fn build_length_table(hlen: usize, bitstream: &mut impl BitStream) -> InflateResult<HuffmanTable<8, 19>> {
     let mut lengths: [u16; 19] = [0; 19];
     let mapping = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 
@@ -169,8 +169,8 @@ fn build_length_table<const T: usize>(hlen: usize, bitstream: &mut BitStream<T>)
     }
 }
 
-fn build_dynamic_table<const T: usize, const B: usize>(
-    bitstream: &mut BitStream<B>,
+fn build_dynamic_table<const T: usize>(
+    bitstream: &mut impl BitStream,
     lengths: &HuffmanTable<8, 19>,
     count: usize,
 ) -> InflateResult<HuffmanTable<16, T>> {
@@ -221,8 +221,8 @@ fn build_dynamic_table<const T: usize, const B: usize>(
     }
 }
 
-fn build_dynamic_tables<const T: usize>(
-    bitstream: &mut BitStream<T>,
+fn build_dynamic_tables(
+    bitstream: &mut impl BitStream,
 ) -> InflateResult<(HuffmanTable<16, 288>, HuffmanTable<16, 32>)> {
     let hlit = match bitstream.next_bits(5) {
         Some(bits) => 257 + bits as usize,
@@ -258,7 +258,7 @@ fn build_dynamic_tables<const T: usize>(
 }
 
 impl InflateBlock {
-    pub fn open<const T: usize>(bitstream: &mut BitStream<T>) -> InflateResult<Self> {
+    pub fn open(bitstream: &mut impl BitStream) -> InflateResult<Self> {
         let last = match bitstream.next_bit() {
             Some(bit) => bit == 1,
             None => return raise_not_enough_data("last_block bit"),
@@ -295,7 +295,7 @@ impl InflateBlock {
         })
     }
 
-    pub fn next<const T: usize>(&mut self, bitstream: &mut BitStream<T>) -> InflateResult<InflateSymbol> {
+    pub fn next(&mut self, bitstream: &mut impl BitStream) -> InflateResult<InflateSymbol> {
         match &self.decoder {
             InflateDecoder::Huffman { huffman } => huffman.next(bitstream),
             InflateDecoder::Uncompressed { uncompressed } => uncompressed.next(bitstream),
@@ -350,7 +350,7 @@ impl InflateReader {
         self.failed
     }
 
-    pub fn next<const T: usize>(&mut self, bitstream: &mut BitStream<T>) -> InflateResult<InflateEvent> {
+    pub fn next(&mut self, bitstream: &mut impl BitStream) -> InflateResult<InflateEvent> {
         if let Some(offset) = self.buffer {
             self.buffer = None;
             self.offset += 1;
@@ -491,7 +491,7 @@ impl InflateHuffman {
         }
     }
 
-    fn decode<const T: usize>(&self, bitstream: &mut BitStream<T>, length: u16) -> InflateResult<InflateSymbol> {
+    fn decode(&self, bitstream: &mut impl BitStream, length: u16) -> InflateResult<InflateSymbol> {
         let length_bits = (std::cmp::max(length, 261) as usize - 261) / 4;
         let length_bits = if length_bits == 6 { 0 } else { length_bits };
 
@@ -520,7 +520,7 @@ impl InflateHuffman {
         })
     }
 
-    fn next<const T: usize>(&self, bitstream: &mut BitStream<T>) -> InflateResult<InflateSymbol> {
+    fn next(&self, bitstream: &mut impl BitStream) -> InflateResult<InflateSymbol> {
         let literal = match self.literals.decode(bitstream) {
             Ok(value) => value,
             Err(error) => return raise_decoding_failed("literals", error),
@@ -539,7 +539,7 @@ impl InflateUncompressed {
         Self {}
     }
 
-    fn next<const T: usize>(&self, bitstream: &mut BitStream<T>) -> InflateResult<InflateSymbol> {
+    fn next(&self, bitstream: &mut impl BitStream) -> InflateResult<InflateSymbol> {
         let len = match bitstream.next_bytes(2) {
             Ok(value) => ((value[1] as u16) << 8) + value[0] as u16,
             Err(error) => return raise_not_enough_data(format!("len bytes: {}", error.to_string()).as_str()),
@@ -566,9 +566,10 @@ impl InflateUncompressed {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bitstream::BitStreamS;
 
-    fn bitstream<const T: usize>(data: &[u8]) -> BitStream<T> {
-        let mut bitstream = BitStream::new();
+    fn bitstream<const T: usize>(data: &[u8]) -> BitStreamS<T> {
+        let mut bitstream = BitStreamS::new();
         bitstream.append(data).unwrap();
         bitstream
     }
@@ -576,7 +577,7 @@ mod tests {
     #[test]
     fn lists_few_symbols_using_length_table() {
         let data = [0b11011001, 0b0000100];
-        let mut bitstream: BitStream<10> = bitstream(&data);
+        let mut bitstream: BitStreamS<10> = bitstream(&data);
 
         let table = build_length_table(4, &mut bitstream).unwrap();
         let codes = table.list();
@@ -596,7 +597,7 @@ mod tests {
             0b01111001,
         ];
 
-        let mut bitstream: BitStream<10> = bitstream(&data);
+        let mut bitstream: BitStreamS<10> = bitstream(&data);
 
         assert_eq!(literals.decode(&mut bitstream), Ok(0));
         assert_eq!(literals.decode(&mut bitstream), Ok(143));
@@ -618,7 +619,7 @@ mod tests {
     #[test]
     fn fails_building_lengths_table() {
         let data = [0b11011001];
-        let mut bitstream: BitStream<10> = bitstream(&data);
+        let mut bitstream: BitStreamS<10> = bitstream(&data);
 
         match build_length_table(4, &mut bitstream) {
             Ok(_) => assert!(false),
@@ -632,7 +633,7 @@ mod tests {
     #[test]
     fn fails_building_dynamic_table_due_to_missing_data() {
         let data = [0b11011000];
-        let mut bitstream: BitStream<10> = bitstream(&data);
+        let mut bitstream: BitStreamS<10> = bitstream(&data);
 
         let lengths = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let lengths: HuffmanTable<8, 19> = HuffmanTable::new(lengths).unwrap();

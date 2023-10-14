@@ -6,6 +6,7 @@ use std::io::{Read, Write};
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::bitstream::BitStreamS;
 use crate::inflate::{InflateError, InflateEvent, InflateSymbol, InflateWriter};
 use crate::zlib::{ZlibError, ZlibEvent, ZlibReader};
 
@@ -98,7 +99,9 @@ impl DecompressAsyncCommand {
         };
 
         let mut writer: InflateWriter<131_072> = InflateWriter::new();
-        let mut reader: ZlibReader<131_072> = match ZlibReader::open(&buffer[..count]) {
+        let bitstream: BitStreamS<131_072> = BitStreamS::new();
+
+        let mut reader = match ZlibReader::open(bitstream, &buffer[..count]) {
             Ok(reader) => reader,
             Err(error) => return CliError::raise_zlib_error(error),
         };
@@ -193,8 +196,9 @@ impl DecompressSyncCommand {
 
         let mut checksum = None;
         let mut writer: InflateWriter<131_072> = InflateWriter::new();
+        let bitstream: BitStreamS<131_072> = BitStreamS::new();
 
-        let mut reader: ZlibReader<131_072> = match ZlibReader::open(&buffer[0..count]) {
+        let mut reader = match ZlibReader::open(bitstream, &buffer[0..count]) {
             Ok(reader) => reader,
             Err(error) => return CliError::raise_zlib_error(error),
         };
@@ -277,6 +281,7 @@ impl DecompressSyncCommand {
 impl BlockCommand {
     pub async fn handle(&self) -> CliResult<()> {
         let mut buffer = Box::new([0; 65_536]);
+        let bitstream: BitStreamS<131_072> = BitStreamS::new();
 
         let mut source = match TokioFile::open(&self.source).await {
             Ok(file) => file,
@@ -288,7 +293,7 @@ impl BlockCommand {
             Err(error) => return CliError::raise_io_error(&self.source, error),
         };
 
-        let mut reader: ZlibReader<131_072> = match ZlibReader::open(&buffer[0..count]) {
+        let mut reader = match ZlibReader::open(bitstream, &buffer[0..count]) {
             Ok(reader) => reader,
             Err(error) => return CliError::raise_zlib_error(error),
         };
