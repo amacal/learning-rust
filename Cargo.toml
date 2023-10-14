@@ -5,12 +5,20 @@ edition = "2021"
 
 [dependencies]
 criterion = { version = "0.5.1" }
-packed_simd = { version = "0.3.8" }
+rand = { version = "0.8.5" }
 
 [[bench]]
-name = "simd"
+name = "copy_within"
 harness = false
 
 [[bench]]
-name = "loop"
+name = "byte_by_byte"
+harness = false
+
+[[bench]]
+name = "loop_unrolling"
+harness = false
+
+[[bench]]
+name = "with_simd"
 harness = false
