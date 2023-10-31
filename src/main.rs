@@ -13,6 +13,7 @@ fn main() {
 
     let result = match command {
         Cli::DecompressSync(command) => command.handle(),
+        Cli::BitStream(command) => command.handle(),
         command => {
             let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
 

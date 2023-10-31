@@ -566,10 +566,10 @@ impl InflateUncompressed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bitstream::BitStreamS;
+    use crate::bitstream::BitStreamDefault;
 
-    fn bitstream<const T: usize>(data: &[u8]) -> BitStreamS<T> {
-        let mut bitstream = BitStreamS::new();
+    fn bitstream<const T: usize>(data: &[u8]) -> BitStreamDefault<T> {
+        let mut bitstream = BitStreamDefault::new();
         bitstream.append(data).unwrap();
         bitstream
     }
@@ -577,7 +577,7 @@ mod tests {
     #[test]
     fn lists_few_symbols_using_length_table() {
         let data = [0b11011001, 0b0000100];
-        let mut bitstream: BitStreamS<10> = bitstream(&data);
+        let mut bitstream: BitStreamDefault<10> = bitstream(&data);
 
         let table = build_length_table(4, &mut bitstream).unwrap();
         let codes = table.list();
@@ -597,7 +597,7 @@ mod tests {
             0b01111001,
         ];
 
-        let mut bitstream: BitStreamS<10> = bitstream(&data);
+        let mut bitstream: BitStreamDefault<10> = bitstream(&data);
 
         assert_eq!(literals.decode(&mut bitstream), Ok(0));
         assert_eq!(literals.decode(&mut bitstream), Ok(143));
@@ -619,7 +619,7 @@ mod tests {
     #[test]
     fn fails_building_lengths_table() {
         let data = [0b11011001];
-        let mut bitstream: BitStreamS<10> = bitstream(&data);
+        let mut bitstream: BitStreamDefault<10> = bitstream(&data);
 
         match build_length_table(4, &mut bitstream) {
             Ok(_) => assert!(false),
@@ -633,7 +633,7 @@ mod tests {
     #[test]
     fn fails_building_dynamic_table_due_to_missing_data() {
         let data = [0b11011000];
-        let mut bitstream: BitStreamS<10> = bitstream(&data);
+        let mut bitstream: BitStreamDefault<10> = bitstream(&data);
 
         let lengths = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
         let lengths: HuffmanTable<8, 19> = HuffmanTable::new(lengths).unwrap();

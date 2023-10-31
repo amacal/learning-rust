@@ -1,11 +1,11 @@
 use crate::bitstream::{BitStream, BitStreamError};
 use crate::inflate::{InflateBlockInfo, InflateError, InflateEvent, InflateReader, InflateResult};
 
-pub struct ZlibReader<TBitstream: BitStream + Sized> {
-    inflate: InflateReader,   // the inner inflate reader of compressed data
-    bitstream: TBitstream,    // the bitstream is totally owned by the zlib
-    verified: Option<u32>,    // holds a read Adler-32 checksum 
-    exhausted: bool,          // indicates whether appending stream is over
+pub struct ZlibReader<TBitStream: BitStream + Sized> {
+    inflate: InflateReader, // the inner inflate reader of compressed data
+    bitstream: TBitStream,  // the bitstream is totally owned by the zlib
+    verified: Option<u32>,  // holds a read Adler-32 checksum
+    exhausted: bool,        // indicates whether appending stream is over
 }
 
 #[derive(Debug)]
@@ -24,7 +24,7 @@ pub enum ZlibError {
     #[error("Not Implemented: {0}")]
     NotImplemented(String),
 
-    #[error("Bitstreaming failed: {0}")]
+    #[error("BitStreaming failed: {0}")]
     BitStream(BitStreamError),
 
     #[error("Inflating failed: {0}")]
@@ -49,15 +49,17 @@ impl ZlibError {
     }
 }
 
-impl<TBitstream: BitStream + Sized> ZlibReader<TBitstream> {
-    pub fn open(mut bitstream: TBitstream, data: &[u8]) -> ZlibResult<Self> {
+impl<TBitStream: BitStream + Sized> ZlibReader<TBitStream> {
+    pub fn open(mut bitstream: TBitStream, data: &[u8]) -> ZlibResult<Self> {
         if data.len() < 2 {
             return ZlibError::raise_not_enough_data("zlib archive needs at least two bytes");
         }
 
         let compression_method = data[0] & 0x0f;
         if compression_method != 8 {
-            return ZlibError::raise_not_implemented(format!("only deflate, compression method {}", compression_method).as_str());
+            return ZlibError::raise_not_implemented(
+                format!("only deflate, compression method {}", compression_method).as_str(),
+            );
         }
 
         let _compression_info = (data[0] & 0xf0) >> 4;
@@ -113,7 +115,6 @@ impl<TBitstream: BitStream + Sized> ZlibReader<TBitstream> {
     }
 
     pub fn append(&mut self, data: &[u8]) -> ZlibResult<()> {
-        self.bitstream.collect(None);
         self.exhausted = data.len() == 0;
 
         match self.bitstream.append(data) {

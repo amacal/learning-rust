@@ -154,10 +154,10 @@ impl Display for HuffmanCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bitstream::BitStreamS;
+    use crate::bitstream::BitStreamDefault;
 
-    fn bitstream<const T: usize>(data: &[u8]) -> BitStreamS<T> {
-        let mut bitstream = BitStreamS::new();
+    fn bitstream<const T: usize>(data: &[u8]) -> BitStreamDefault<T> {
+        let mut bitstream = BitStreamDefault::new();
         bitstream.append(data).unwrap();
         bitstream
     }
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn decodes_using_huffman_table() {
         let table: HuffmanTable<4, 5> = HuffmanTable::new([0, 2, 3, 1, 3]).unwrap();
-        let mut bitstream: BitStreamS<2> = bitstream(&[0b11011010, 0b00000001]);
+        let mut bitstream: BitStreamDefault<2> = bitstream(&[0b11011010, 0b00000001]);
 
         assert_eq!(table.decode(&mut bitstream).unwrap(), 3);
         assert_eq!(table.decode(&mut bitstream).unwrap(), 1);
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn decodes_using_huffman_table_failing() {
         let table: HuffmanTable<4, 5> = HuffmanTable::new([0, 2, 3, 1, 0]).unwrap();
-        let mut bitstream: BitStreamS<1> = bitstream(&[0b111]);
+        let mut bitstream: BitStreamDefault<1> = bitstream(&[0b111]);
 
         match table.decode(&mut bitstream) {
             Ok(_) => assert!(false),

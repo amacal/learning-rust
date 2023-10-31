@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::bitstream::BitStreamS;
+use crate::bitstream::{BitStream, BitStreamDefault, BitStreamError, BitStreamOptimized};
 use crate::inflate::{InflateError, InflateEvent, InflateSymbol, InflateWriter};
 use crate::zlib::{ZlibError, ZlibEvent, ZlibReader};
 
@@ -33,6 +33,14 @@ pub struct BlockCommand {
 }
 
 #[derive(StructOpt, Debug)]
+pub struct BitStreamCommand {
+    #[structopt(help = "The BitStream implementation name")]
+    pub implementation: String,
+    #[structopt(help = "The absolute or the relative path of any file")]
+    pub source: String,
+}
+
+#[derive(StructOpt, Debug)]
 pub enum Cli {
     #[structopt(name = "decompress-async", help = "Decompresses zlib file asynchronously")]
     DecompressAsync(DecompressAsyncCommand),
@@ -42,6 +50,9 @@ pub enum Cli {
 
     #[structopt(name = "block", help = "Analyzes deflate blocks")]
     Block(BlockCommand),
+
+    #[structopt(name = "bitstream", help = "Benchmarks bitstream implementation")]
+    BitStream(BitStreamCommand),
 }
 
 pub type CliResult<T> = Result<T, CliError>;
@@ -51,6 +62,9 @@ pub enum CliError {
     #[error("I/O error on file '{0}': {1}")]
     IO(String, std::io::Error),
 
+    #[error("BitStream Error: {0}")]
+    Bitstream(BitStreamError),
+
     #[error("Inflate Error: {0}")]
     Inflate(InflateError),
 
@@ -59,11 +73,18 @@ pub enum CliError {
 
     #[error("Checksum error: {0}")]
     Checksum(String),
+
+    #[error("Wrong benchmark: {0}")]
+    Benchmark(String),
 }
 
 impl CliError {
     fn raise_io_error<T>(file: &str, error: std::io::Error) -> CliResult<T> {
         Err(CliError::IO(file.to_string(), error))
+    }
+
+    fn raise_bitstream_error<T>(error: BitStreamError) -> CliResult<T> {
+        Err(CliError::Bitstream(error))
     }
 
     fn raise_inflate_error<T>(error: InflateError) -> CliResult<T> {
@@ -76,6 +97,10 @@ impl CliError {
 
     fn raise_checksum_error<T>(description: &str) -> CliResult<T> {
         Err(CliError::Checksum(description.to_string()))
+    }
+
+    fn raise_benchmark_error<T>(description: &str) -> CliResult<T> {
+        Err(CliError::Benchmark(description.to_string()))
     }
 }
 
@@ -99,7 +124,7 @@ impl DecompressAsyncCommand {
         };
 
         let mut writer: InflateWriter<131_072> = InflateWriter::new();
-        let bitstream: BitStreamS<131_072> = BitStreamS::new();
+        let bitstream: BitStreamDefault<131_072> = BitStreamDefault::new();
 
         let mut reader = match ZlibReader::open(bitstream, &buffer[..count]) {
             Ok(reader) => reader,
@@ -196,7 +221,7 @@ impl DecompressSyncCommand {
 
         let mut checksum = None;
         let mut writer: InflateWriter<131_072> = InflateWriter::new();
-        let bitstream: BitStreamS<131_072> = BitStreamS::new();
+        let bitstream: BitStreamOptimized<131_072, 1_048_576> = BitStreamOptimized::new();
 
         let mut reader = match ZlibReader::open(bitstream, &buffer[0..count]) {
             Ok(reader) => reader,
@@ -261,7 +286,9 @@ impl DecompressSyncCommand {
 
                 match checksum {
                     None => return CliError::raise_checksum_error("missing checksum"),
-                    Some(value) if value != writer.checksum() => return CliError::raise_checksum_error("wrong checksum"),
+                    Some(value) if value != writer.checksum() => {
+                        return CliError::raise_checksum_error("wrong checksum")
+                    }
                     Some(_) => (),
                 }
 
@@ -278,10 +305,96 @@ impl DecompressSyncCommand {
     }
 }
 
+impl BitStreamCommand {
+    pub fn handle(&self) -> CliResult<()> {
+        match self.implementation.as_str() {
+            "bytewise" => self.benchmark(&mut BitStreamDefault::<131_072>::new()),
+            "bitwise" => self.benchmark(&mut BitStreamOptimized::<131_072, 1_048_576>::new()),
+            _ => CliError::raise_benchmark_error(&self.implementation),
+        }
+    }
+
+    fn benchmark(&self, bitstream: &mut impl BitStream) -> CliResult<()> {
+        let mut buffer = Box::new([0; 65_536]);
+
+        let mut source = match File::open(&self.source) {
+            Ok(file) => file,
+            Err(error) => return CliError::raise_io_error(&self.source, error),
+        };
+
+        let mut bits: usize = 0;
+        let mut bytes = 0;
+        let mut counter: u64 = 0;
+        let mut iterations = 0;
+
+        loop {
+            let completed = if let Some(available) = bitstream.appendable() {
+                let available = std::cmp::min(available, buffer.len());
+                let destination = &mut buffer[0..available];
+
+                let count = match source.read(destination) {
+                    Ok(count) => count,
+                    Err(error) => return CliError::raise_io_error(&self.source, error),
+                };
+
+                if let Err(error) = bitstream.append(&buffer[0..count]) {
+                    return CliError::raise_bitstream_error(error);
+                }
+
+                bytes += count;
+                count == 0
+            } else {
+                false
+            };
+
+            while bitstream.available() >= 16 + 65536 {
+                let count = bitstream.next_bits_unchecked(16);
+
+                bits += 16;
+                iterations += 1;
+
+                for _ in 0..count {
+                    bits += 1;
+                    counter += bitstream.next_bit_unchecked() as u64;
+                }
+            }
+
+            if completed {
+                while bitstream.available() >= 16 {
+                    if let Some(count) = bitstream.next_bits(16) {
+                        bits += 16;
+
+                        if bitstream.available() >= count as usize {
+                            iterations += 1;
+
+                            for _ in 0..count {
+                                bits += 1;
+                                counter += bitstream.next_bit_unchecked() as u64;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                for _ in 0..bitstream.available() {
+                    bits += 1;
+                    counter += bitstream.next_bit_unchecked() as u64;
+                }
+
+                break;
+            }
+        }
+
+        println!("{} / {} / {} / {} / {}", bits, bytes, counter, iterations, bitstream.available());
+        Ok(())
+    }
+}
+
 impl BlockCommand {
     pub async fn handle(&self) -> CliResult<()> {
         let mut buffer = Box::new([0; 65_536]);
-        let bitstream: BitStreamS<131_072> = BitStreamS::new();
+        let bitstream: BitStreamDefault<131_072> = BitStreamDefault::new();
 
         let mut source = match TokioFile::open(&self.source).await {
             Ok(file) => file,
