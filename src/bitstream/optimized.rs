@@ -1,3 +1,5 @@
+use std::arch::x86_64::*;
+
 use crate::bitstream::header::{BitStream, BitStreamError, BitStreamResult};
 
 pub struct BitStreamOptimized<const TBYTES: usize, const TBITS: usize> {
@@ -56,13 +58,57 @@ impl<const TBYTES: usize, const TBITS: usize> BitStream for BitStreamOptimized<T
 
         // copy new data just after boundary and recompute bits
         let bytes_boundary = self.bits_boundary >> 3;
-        let incoming = bytes_boundary..bytes_boundary + data.len();
-
-        self.bytes[incoming.clone()].copy_from_slice(data);
+        self.bytes[bytes_boundary..bytes_boundary + data.len()].copy_from_slice(data);
         self.bits_boundary += data.len() << 3;
 
         unsafe {
-            for index in incoming {
+            let and_mask256 = _mm256_set_epi32(
+                0b1000_0000_1000_0000_1000_0000_1000_0000u32 as i32,
+                0b0100_0000_0100_0000_0100_0000_0100_0000u32 as i32,
+                0b0010_0000_0010_0000_0010_0000_0010_0000u32 as i32,
+                0b0001_0000_0001_0000_0001_0000_0001_0000u32 as i32,
+                0b0000_1000_0000_1000_0000_1000_0000_1000u32 as i32,
+                0b0000_0100_0000_0100_0000_0100_0000_0100u32 as i32,
+                0b0000_0010_0000_0010_0000_0010_0000_0010u32 as i32,
+                0b0000_0001_0000_0001_0000_0001_0000_0001u32 as i32,
+            );
+
+            let shuffle_mask256 = _mm256_setr_epi8(
+                0, 4, 8, 12, 1, 5, 9, 13,
+                2, 6, 10, 14, 3, 7, 11, 15,
+                0, 4, 8, 12, 1, 5, 9, 13,
+                2, 6, 10, 14, 3, 7, 11, 15,
+            );
+
+            let permute_mask256 = _mm256_setr_epi32(
+                0, 4, 1, 5, 2, 6, 3, 7
+            );
+
+            let mut src = self.bytes[bytes_boundary..].as_ptr() as *const i32;
+            let mut dst = self.bits[bytes_boundary << 3..].as_mut_ptr() as *mut __m256i;
+
+            for _ in 0..(data.len() / 4) {
+                let int: i32 = std::ptr::read_unaligned(src);
+                let reg256 = _mm256_set1_epi32(int);
+
+                let and_result = _mm256_and_si256(reg256, and_mask256);
+                let shuffle_result = _mm256_shuffle_epi8(and_result, shuffle_mask256);
+                let permute_result = _mm256_permutevar8x32_epi32(shuffle_result, permute_mask256);
+
+                let cmp_mask = _mm256_cmpeq_epi8(permute_result, _mm256_set1_epi8(0));
+                let add_result = _mm256_add_epi8(cmp_mask, _mm256_set1_epi8(1));
+
+                _mm256_storeu_si256(dst, add_result);
+
+                src = src.add(1);
+                dst = dst.add(1);
+
+                //println!("avx {:?}", &self.bits[bytes_boundary << 3..(bytes_boundary<<3) + 16]);
+            }
+        }
+
+        unsafe {
+            for index in bytes_boundary + (data.len() / 4)..bytes_boundary + data.len() {
                 for offset in 0..8 {
                     let bit = self.bits.get_unchecked_mut((index << 3) + offset);
                     let value = if self.bytes[index] & (1 << offset) != 0 { 1 } else { 0 };
@@ -70,6 +116,8 @@ impl<const TBYTES: usize, const TBITS: usize> BitStream for BitStreamOptimized<T
                     *bit = value;
                 }
             }
+
+            //println!("tst {:?}", &self.bits[bytes_boundary << 3..(bytes_boundary<<3) + 16]);
         }
 
         Ok(())
