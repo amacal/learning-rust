@@ -1,5 +1,3 @@
-#![feature(stdsimd)]
-
 mod adler32;
 mod bitstream;
 mod commands;
