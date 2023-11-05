@@ -2,23 +2,16 @@
 name = "simd"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 criterion = { version = "0.5.1" }
 rand = { version = "0.8.5" }
 
 [[bench]]
-name = "copy_within"
+name = "loop"
 harness = false
 
 [[bench]]
-name = "byte_by_byte"
-harness = false
-
-[[bench]]
-name = "loop_unrolling"
-harness = false
-
-[[bench]]
-name = "with_simd"
+name = "simd"
 harness = false

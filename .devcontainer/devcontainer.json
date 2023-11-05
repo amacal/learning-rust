@@ -1,6 +1,9 @@
 {
 	"name": "Rust",
-	"image": "mcr.microsoft.com/devcontainers/rust:0-1-bullseye",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"context": ".."
+	},
 	"containerEnv": {
 		"CARGO_TARGET_DIR": "/tmp/cargo"
 	},
@@ -11,5 +14,6 @@
 				"ms-vscode.test-adapter-converter"
 			]
 		}
-	}
+	},
+	"postAttachCommand": "nasm -f elf64 test.asm -o test.o && ld test.o -o test && ./test > test.txt"
 }
