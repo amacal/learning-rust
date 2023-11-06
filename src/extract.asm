@@ -41,7 +41,7 @@ extract_bits:
     test            rdx, rdx
     jz              .done
 
-    test            rsi, 3
+    test            rsi, 31
     jz              .simd_check
 
 .scalar_head:
@@ -70,7 +70,7 @@ extract_bits:
     jmp             .scalar_check
 
 .simd_check:
-    cmp             rdx, 4
+    cmp             rdx, 32
     jl              .scalar_tail
 
 .simd_loop:
@@ -82,9 +82,65 @@ extract_bits:
     vpaddb          ymm0, ymm0, ymm5
     vmovdqa         [rdi], ymm0
 
-    add             rsi, 4
-    add             rdi, 32
-    sub             rdx, 4
+    vpbroadcastd    ymm0, dword [rsi + 4]
+    vpand           ymm0, ymm0, ymm1
+    vpshufb         ymm0, ymm0, ymm2
+    vpermd          ymm0, ymm3, ymm0
+    vpcmpeqb        ymm0, ymm0, ymm4
+    vpaddb          ymm0, ymm0, ymm5
+    vmovdqa         [rdi + 32], ymm0
+
+    vpbroadcastd    ymm0, dword [rsi + 8]
+    vpand           ymm0, ymm0, ymm1
+    vpshufb         ymm0, ymm0, ymm2
+    vpermd          ymm0, ymm3, ymm0
+    vpcmpeqb        ymm0, ymm0, ymm4
+    vpaddb          ymm0, ymm0, ymm5
+    vmovdqa         [rdi + 64], ymm0
+
+    vpbroadcastd    ymm0, dword [rsi + 12]
+    vpand           ymm0, ymm0, ymm1
+    vpshufb         ymm0, ymm0, ymm2
+    vpermd          ymm0, ymm3, ymm0
+    vpcmpeqb        ymm0, ymm0, ymm4
+    vpaddb          ymm0, ymm0, ymm5
+    vmovdqa         [rdi + 96], ymm0
+
+    vpbroadcastd    ymm0, dword [rsi + 16]
+    vpand           ymm0, ymm0, ymm1
+    vpshufb         ymm0, ymm0, ymm2
+    vpermd          ymm0, ymm3, ymm0
+    vpcmpeqb        ymm0, ymm0, ymm4
+    vpaddb          ymm0, ymm0, ymm5
+    vmovdqa         [rdi + 128], ymm0
+
+    vpbroadcastd    ymm0, dword [rsi + 20]
+    vpand           ymm0, ymm0, ymm1
+    vpshufb         ymm0, ymm0, ymm2
+    vpermd          ymm0, ymm3, ymm0
+    vpcmpeqb        ymm0, ymm0, ymm4
+    vpaddb          ymm0, ymm0, ymm5
+    vmovdqa         [rdi + 160], ymm0
+
+    vpbroadcastd    ymm0, dword [rsi + 24]
+    vpand           ymm0, ymm0, ymm1
+    vpshufb         ymm0, ymm0, ymm2
+    vpermd          ymm0, ymm3, ymm0
+    vpcmpeqb        ymm0, ymm0, ymm4
+    vpaddb          ymm0, ymm0, ymm5
+    vmovdqa         [rdi + 192], ymm0
+
+    vpbroadcastd    ymm0, dword [rsi + 28]
+    vpand           ymm0, ymm0, ymm1
+    vpshufb         ymm0, ymm0, ymm2
+    vpermd          ymm0, ymm3, ymm0
+    vpcmpeqb        ymm0, ymm0, ymm4
+    vpaddb          ymm0, ymm0, ymm5
+    vmovdqa         [rdi + 224], ymm0
+
+    add             rsi, 32
+    add             rdi, 256
+    sub             rdx, 32
     jmp             .simd_check
 
 .done:
