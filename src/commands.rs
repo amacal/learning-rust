@@ -24,6 +24,9 @@ pub struct DecompressSyncCommand {
     pub source: String,
     #[structopt(help = "The absolute or the relative path of the decompressed zlib file")]
     pub destination: String,
+
+    #[structopt(long, help = "The BitStream implementation name", default_value = "bitwise")]
+    pub bitstream: String,
 }
 
 #[derive(StructOpt, Debug)]
@@ -74,8 +77,8 @@ pub enum CliError {
     #[error("Checksum error: {0}")]
     Checksum(String),
 
-    #[error("Wrong benchmark: {0}")]
-    Benchmark(String),
+    #[error("Wrong option: {0}")]
+    Option(String),
 }
 
 impl CliError {
@@ -99,8 +102,8 @@ impl CliError {
         Err(CliError::Checksum(description.to_string()))
     }
 
-    fn raise_benchmark_error<T>(description: &str) -> CliResult<T> {
-        Err(CliError::Benchmark(description.to_string()))
+    fn raise_option_error<T>(description: &str) -> CliResult<T> {
+        Err(CliError::Option(description.to_string()))
     }
 }
 
@@ -202,6 +205,14 @@ impl DecompressAsyncCommand {
 
 impl DecompressSyncCommand {
     pub fn handle(&self) -> CliResult<()> {
+        match self.bitstream.as_str() {
+            "bytewise" => self.decompress(BitStreamBytewise::<131_072>::new()),
+            "bitwise" => self.decompress(BitStreamBitwise::<131_072, 1_048_576>::new()),
+            _ => CliError::raise_option_error(&self.bitstream),
+        }
+    }
+
+    pub fn decompress(&self, bitstream: impl BitStream) -> CliResult<()> {
         let mut buffer = Box::new([0; 65_536]);
 
         let mut source = match File::open(&self.source) {
@@ -221,7 +232,6 @@ impl DecompressSyncCommand {
 
         let mut checksum = None;
         let mut writer: InflateWriter<131_072> = InflateWriter::new();
-        let bitstream: BitStreamBitwise<131_072, 1_048_576> = BitStreamBitwise::new();
 
         let mut reader = match ZlibReader::open(bitstream, &buffer[0..count]) {
             Ok(reader) => reader,
@@ -310,7 +320,7 @@ impl BitStreamCommand {
         match self.implementation.as_str() {
             "bytewise" => self.benchmark(&mut BitStreamBytewise::<131_072>::new()),
             "bitwise" => self.benchmark(&mut BitStreamBitwise::<131_072, 1_048_576>::new()),
-            _ => CliError::raise_benchmark_error(&self.implementation),
+            _ => CliError::raise_option_error(&self.implementation),
         }
     }
 
