@@ -307,50 +307,6 @@ impl DecompressSyncCommand {
 
 impl BitStreamCommand {
     pub fn handle(&self) -> CliResult<()> {
-/*        let mut output: [u8; 32] = [0; 32];
-
-        unsafe {
-            let src = data.as_ptr() as *const i32;
-            let dst = output.as_mut_ptr() as *mut __m256i;
-
-            let int: i32 = std::ptr::read_unaligned(src);
-            let reg256 = _mm256_set1_epi32(int);
-
-            let and_mask256 = _mm256_set_epi32(
-                0b1000_0000_1000_0000_1000_0000_1000_0000u32 as i32,
-                0b0100_0000_0100_0000_0100_0000_0100_0000u32 as i32,
-                0b0010_0000_0010_0000_0010_0000_0010_0000u32 as i32,
-                0b0001_0000_0001_0000_0001_0000_0001_0000u32 as i32,
-                0b0000_1000_0000_1000_0000_1000_0000_1000u32 as i32,
-                0b0000_0100_0000_0100_0000_0100_0000_0100u32 as i32,
-                0b0000_0010_0000_0010_0000_0010_0000_0010u32 as i32,
-                0b0000_0001_0000_0001_0000_0001_0000_0001u32 as i32,
-            );
-
-            let shuffle_mask256 = _mm256_setr_epi8(
-                0, 4, 8, 12, 1, 5, 9, 13,
-                2, 6, 10, 14, 3, 7, 11, 15,
-                0, 4, 8, 12, 1, 5, 9, 13,
-                2, 6, 10, 14, 3, 7, 11, 15,
-            );
-
-            let permute_mask256 = _mm256_setr_epi32(
-                0, 4, 1, 5, 2, 6, 3, 7
-            );
-
-            let and_result = _mm256_and_si256(reg256, and_mask256);
-            let shuffle_result = _mm256_shuffle_epi8(and_result, shuffle_mask256);
-            let permute_result = _mm256_permutevar8x32_epi32(shuffle_result, permute_mask256);
-
-            let cmp_mask = _mm256_cmpeq_epi8(permute_result, _mm256_set1_epi8(0));
-            let add_result = _mm256_add_epi8(cmp_mask, _mm256_set1_epi8(1));
-
-            _mm256_storeu_si256(dst, add_result);
-            println!("out {:?}", output);
-        }
-
-        return Ok(()); */
-
         match self.implementation.as_str() {
             "bytewise" => self.benchmark(&mut BitStreamDefault::<131_072>::new()),
             "bitwise" => self.benchmark(&mut BitStreamOptimized::<131_072, 1_048_576>::new()),

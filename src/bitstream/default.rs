@@ -75,7 +75,7 @@ impl<const T: usize> BitStream for BitStreamDefault<T> {
         };
 
         if self.mask == 0x80 {
-            self.mask = 1;
+            self.mask = 0x01;
             self.processed += 1;
         } else {
             self.mask <<= 1;
@@ -124,7 +124,9 @@ impl<const T: usize> BitStream for BitStreamDefault<T> {
     }
 
     fn next_bytes(&mut self, count: usize) -> BitStreamResult<Vec<u8>> {
-        self.mask = 0x01;
+        while self.mask != 0x01 {
+            self.next_bit();
+        }
 
         let data = match &self.buffer.get(0..self.boundary) {
             None => None,
@@ -195,7 +197,7 @@ mod tests {
         assert_eq!(bitstream.next_bit(), Some(0));
         assert_eq!(bitstream.next_bit(), Some(1));
 
-        assert_eq!(bitstream.processed, 1);
+        assert_eq!(bitstream.processed, 0);
     }
 
     #[test]

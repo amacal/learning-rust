@@ -1,10 +1,15 @@
-use std::arch::x86_64::*;
-
 use crate::bitstream::header::{BitStream, BitStreamError, BitStreamResult};
 
+extern "C" {
+    fn extract_bits(dst: *mut u8, src: *const u8, count: usize);
+}
+
+#[repr(align(32))]
+struct AlignedBytes<const T: usize>([u8; T]);
+
 pub struct BitStreamOptimized<const TBYTES: usize, const TBITS: usize> {
-    bytes: Box<[u8; TBYTES]>,
-    bits: Box<[u8; TBITS]>,
+    bytes: Box<AlignedBytes<TBYTES>>,
+    bits: Box<AlignedBytes<TBITS>>,
     bits_boundary: usize,
     bits_processed: usize,
 }
@@ -12,8 +17,8 @@ pub struct BitStreamOptimized<const TBYTES: usize, const TBITS: usize> {
 impl<const TBYTES: usize, const TBITS: usize> BitStreamOptimized<TBYTES, TBITS> {
     pub fn new() -> Self {
         Self {
-            bytes: Box::new([0; TBYTES]),
-            bits: Box::new([0; TBITS]),
+            bytes: Box::new(AlignedBytes([0; TBYTES])),
+            bits: Box::new(AlignedBytes([0; TBITS])),
             bits_boundary: 0,
             bits_processed: 0,
         }
@@ -50,81 +55,29 @@ impl<const TBYTES: usize, const TBITS: usize> BitStream for BitStreamOptimized<T
         let bits_offset = self.bits_processed % 8;
         let bytes_boundary = self.bits_boundary >> 3;
 
-        self.bits.copy_within(bits_processed..self.bits_boundary, 0);
-        self.bytes.copy_within(bytes_processed..bytes_boundary, 0);
+        self.bits.0.copy_within(bits_processed..self.bits_boundary, 0);
+        self.bytes.0.copy_within(bytes_processed..bytes_boundary, 0);
 
         self.bits_boundary -= bits_processed;
         self.bits_processed = bits_offset;
 
         // copy new data just after boundary and recompute bits
         let bytes_boundary = self.bits_boundary >> 3;
-        self.bytes[bytes_boundary..bytes_boundary + data.len()].copy_from_slice(data);
+        self.bytes.0[bytes_boundary..bytes_boundary + data.len()].copy_from_slice(data);
         self.bits_boundary += data.len() << 3;
 
         unsafe {
-            let and_mask256 = _mm256_set_epi32(
-                0b1000_0000_1000_0000_1000_0000_1000_0000u32 as i32,
-                0b0100_0000_0100_0000_0100_0000_0100_0000u32 as i32,
-                0b0010_0000_0010_0000_0010_0000_0010_0000u32 as i32,
-                0b0001_0000_0001_0000_0001_0000_0001_0000u32 as i32,
-                0b0000_1000_0000_1000_0000_1000_0000_1000u32 as i32,
-                0b0000_0100_0000_0100_0000_0100_0000_0100u32 as i32,
-                0b0000_0010_0000_0010_0000_0010_0000_0010u32 as i32,
-                0b0000_0001_0000_0001_0000_0001_0000_0001u32 as i32,
-            );
+            let src = self.bytes.0.as_ptr().add(bytes_boundary);
+            let dst = self.bits.0.as_mut_ptr().add(bytes_boundary << 3);
 
-            let shuffle_mask256 = _mm256_setr_epi8(
-                0, 4, 8, 12, 1, 5, 9, 13,
-                2, 6, 10, 14, 3, 7, 11, 15,
-                0, 4, 8, 12, 1, 5, 9, 13,
-                2, 6, 10, 14, 3, 7, 11, 15,
-            );
-
-            let permute_mask256 = _mm256_setr_epi32(
-                0, 4, 1, 5, 2, 6, 3, 7
-            );
-
-            let mut src = self.bytes[bytes_boundary..].as_ptr() as *const i32;
-            let mut dst = self.bits[bytes_boundary << 3..].as_mut_ptr() as *mut __m256i;
-
-            for _ in 0..(data.len() / 4) {
-                let int: i32 = std::ptr::read_unaligned(src);
-                let reg256 = _mm256_set1_epi32(int);
-
-                let and_result = _mm256_and_si256(reg256, and_mask256);
-                let shuffle_result = _mm256_shuffle_epi8(and_result, shuffle_mask256);
-                let permute_result = _mm256_permutevar8x32_epi32(shuffle_result, permute_mask256);
-
-                let cmp_mask = _mm256_cmpeq_epi8(permute_result, _mm256_set1_epi8(0));
-                let add_result = _mm256_add_epi8(cmp_mask, _mm256_set1_epi8(1));
-
-                _mm256_storeu_si256(dst, add_result);
-
-                src = src.add(1);
-                dst = dst.add(1);
-
-                //println!("avx {:?}", &self.bits[bytes_boundary << 3..(bytes_boundary<<3) + 16]);
-            }
-        }
-
-        unsafe {
-            for index in bytes_boundary + (data.len() / 4)..bytes_boundary + data.len() {
-                for offset in 0..8 {
-                    let bit = self.bits.get_unchecked_mut((index << 3) + offset);
-                    let value = if self.bytes[index] & (1 << offset) != 0 { 1 } else { 0 };
-
-                    *bit = value;
-                }
-            }
-
-            //println!("tst {:?}", &self.bits[bytes_boundary << 3..(bytes_boundary<<3) + 16]);
+            extract_bits(dst, src, data.len());
         }
 
         Ok(())
     }
 
     fn next_bit(&mut self) -> Option<u8> {
-        match self.bits.get(0..self.bits_boundary) {
+        match self.bits.0.get(0..self.bits_boundary) {
             None => return None,
             Some(bits) => match bits.get(self.bits_processed) {
                 None => return None,
@@ -138,7 +91,7 @@ impl<const TBYTES: usize, const TBITS: usize> BitStream for BitStreamOptimized<T
 
     fn next_bit_unchecked(&mut self) -> u8 {
         unsafe {
-            let &bit = self.bits.get_unchecked(self.bits_processed);
+            let &bit = self.bits.0.get_unchecked(self.bits_processed);
             self.bits_processed += 1;
             bit
         }
@@ -175,7 +128,7 @@ impl<const TBYTES: usize, const TBITS: usize> BitStream for BitStreamOptimized<T
         let bytes_boundary = self.bits_boundary >> 3;
         let bytes_processed = self.bits_processed >> 3;
 
-        let data = match &self.bytes.get(0..bytes_boundary) {
+        let data = match &self.bytes.0.get(0..bytes_boundary) {
             None => None,
             Some(slice) => match slice.get(bytes_processed..bytes_processed + count) {
                 None => None,
@@ -210,8 +163,8 @@ mod tests {
     fn creates_bitstream() {
         let bitstream: BitStreamOptimized<32, 256> = BitStreamOptimized::new();
 
-        assert_eq!(bitstream.bytes.len(), 32);
-        assert_eq!(bitstream.bits.len(), 256);
+        assert_eq!(bitstream.bytes.0.len(), 32);
+        assert_eq!(bitstream.bits.0.len(), 256);
 
         assert_eq!(bitstream.bits_processed, 0);
         assert_eq!(bitstream.bits_boundary, 0);
