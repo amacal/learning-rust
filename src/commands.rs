@@ -6,7 +6,7 @@ use std::io::{Read, Write};
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::bitstream::{BitStream, BitStreamDefault, BitStreamError, BitStreamOptimized};
+use crate::bitstream::{BitStream, BitStreamBytewise, BitStreamError, BitStreamBitwise};
 use crate::inflate::{InflateError, InflateEvent, InflateSymbol, InflateWriter};
 use crate::zlib::{ZlibError, ZlibEvent, ZlibReader};
 
@@ -124,7 +124,7 @@ impl DecompressAsyncCommand {
         };
 
         let mut writer: InflateWriter<131_072> = InflateWriter::new();
-        let bitstream: BitStreamDefault<131_072> = BitStreamDefault::new();
+        let bitstream: BitStreamBytewise<131_072> = BitStreamBytewise::new();
 
         let mut reader = match ZlibReader::open(bitstream, &buffer[..count]) {
             Ok(reader) => reader,
@@ -221,7 +221,7 @@ impl DecompressSyncCommand {
 
         let mut checksum = None;
         let mut writer: InflateWriter<131_072> = InflateWriter::new();
-        let bitstream: BitStreamOptimized<131_072, 1_048_576> = BitStreamOptimized::new();
+        let bitstream: BitStreamBitwise<131_072, 1_048_576> = BitStreamBitwise::new();
 
         let mut reader = match ZlibReader::open(bitstream, &buffer[0..count]) {
             Ok(reader) => reader,
@@ -308,8 +308,8 @@ impl DecompressSyncCommand {
 impl BitStreamCommand {
     pub fn handle(&self) -> CliResult<()> {
         match self.implementation.as_str() {
-            "bytewise" => self.benchmark(&mut BitStreamDefault::<131_072>::new()),
-            "bitwise" => self.benchmark(&mut BitStreamOptimized::<131_072, 1_048_576>::new()),
+            "bytewise" => self.benchmark(&mut BitStreamBytewise::<131_072>::new()),
+            "bitwise" => self.benchmark(&mut BitStreamBitwise::<131_072, 1_048_576>::new()),
             _ => CliError::raise_benchmark_error(&self.implementation),
         }
     }
@@ -394,7 +394,7 @@ impl BitStreamCommand {
 impl BlockCommand {
     pub async fn handle(&self) -> CliResult<()> {
         let mut buffer = Box::new([0; 65_536]);
-        let bitstream: BitStreamDefault<131_072> = BitStreamDefault::new();
+        let bitstream: BitStreamBytewise<131_072> = BitStreamBytewise::new();
 
         let mut source = match TokioFile::open(&self.source).await {
             Ok(file) => file,
