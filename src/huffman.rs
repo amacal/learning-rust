@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::bitstream::BitStream;
+use crate::bitstream::BitReader;
 
 #[derive(Debug, PartialEq, Default, Clone, Copy)]
 pub struct HuffmanCode {
@@ -95,7 +95,7 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTable<MAX_BITS, MAX
         return codes;
     }
 
-    pub fn decode(&self, bits: &mut impl BitStream) -> HuffmanResult<u16> {
+    pub fn decode(&self, bits: &mut impl BitReader) -> HuffmanResult<u16> {
         let mut first: u16 = 0;
         let mut code: u16 = 0;
         let mut offset: u16 = 0;
@@ -154,7 +154,7 @@ impl Display for HuffmanCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bitstream::BitStreamBytewise;
+    use crate::bitstream::{BitStream, BitStreamExt, BitStreamBytewise};
 
     fn bitstream<const T: usize>(data: &[u8]) -> BitStreamBytewise<T> {
         let mut bitstream = BitStreamBytewise::new();
@@ -199,20 +199,22 @@ mod tests {
     fn decodes_using_huffman_table() {
         let table: HuffmanTable<4, 5> = HuffmanTable::new([0, 2, 3, 1, 3]).unwrap();
         let mut bitstream: BitStreamBytewise<2> = bitstream(&[0b11011010, 0b00000001]);
+        let mut reader = bitstream.as_checked();
 
-        assert_eq!(table.decode(&mut bitstream).unwrap(), 3);
-        assert_eq!(table.decode(&mut bitstream).unwrap(), 1);
-        assert_eq!(table.decode(&mut bitstream).unwrap(), 2);
-        assert_eq!(table.decode(&mut bitstream).unwrap(), 4);
-        assert_eq!(table.decode(&mut bitstream).unwrap(), 3);
+        assert_eq!(table.decode(&mut reader).unwrap(), 3);
+        assert_eq!(table.decode(&mut reader).unwrap(), 1);
+        assert_eq!(table.decode(&mut reader).unwrap(), 2);
+        assert_eq!(table.decode(&mut reader).unwrap(), 4);
+        assert_eq!(table.decode(&mut reader).unwrap(), 3);
     }
 
     #[test]
     fn decodes_using_huffman_table_failing() {
         let table: HuffmanTable<4, 5> = HuffmanTable::new([0, 2, 3, 1, 0]).unwrap();
         let mut bitstream: BitStreamBytewise<1> = bitstream(&[0b111]);
+        let mut reader = bitstream.as_checked();
 
-        match table.decode(&mut bitstream) {
+        match table.decode(&mut reader) {
             Ok(_) => assert!(false),
             Err(_) => assert!(true,),
         };

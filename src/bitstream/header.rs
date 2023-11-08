@@ -9,6 +9,61 @@ pub enum BitStreamError {
     NotEnoughData { requested: usize, available: usize },
 }
 
+pub trait BitReader {
+    fn next_bit(&mut self) -> Option<u8>;
+    fn next_bits(&mut self, count: usize) -> Option<u16>;
+    fn next_bytes(&mut self, count: usize) -> BitStreamResult<Vec<u8>>;
+}
+
+pub struct BitReaderChecked<'a, T>(&'a mut T) where T: BitStream;
+pub struct BitReaderUnchecked<'a, T>(&'a mut T) where T: BitStream;
+
+impl<'a, T> BitReader for BitReaderChecked<'a, T> where T: BitStream {
+    #[inline(always)]
+    fn next_bit(&mut self) -> Option<u8> {
+        self.0.next_bit()
+    }
+
+    #[inline(always)]
+    fn next_bits(&mut self, count: usize) -> Option<u16> {
+        self.0.next_bits(count)
+    }
+
+    #[inline(always)]
+    fn next_bytes(&mut self, count: usize) -> BitStreamResult<Vec<u8>> {
+        self.0.next_bytes(count)
+    }
+}
+
+impl<'a, T> BitReader for BitReaderUnchecked<'a, T> where T: BitStream {
+    #[inline(always)]
+    fn next_bit(&mut self) -> Option<u8> {
+        Some(self.0.next_bit_unchecked())
+    }
+
+    #[inline(always)]
+    fn next_bits(&mut self, count: usize) -> Option<u16> {
+        Some(self.0.next_bits_unchecked(count))
+    }
+
+    #[inline(always)]
+    fn next_bytes(&mut self, count: usize) -> BitStreamResult<Vec<u8>> {
+        self.0.next_bytes(count)
+    }
+}
+
+pub trait BitStreamExt: BitStream + Sized {
+    fn as_checked(&mut self) -> BitReaderChecked<Self> {
+        BitReaderChecked(self)
+    }
+
+    fn as_unchecked(&mut self) -> BitReaderUnchecked<Self> {
+        BitReaderUnchecked(self)
+    }
+}
+
+impl<T: BitStream> BitStreamExt for T {}
+
 pub trait BitStream {
     fn available(&self) -> usize;
 
@@ -23,6 +78,7 @@ pub trait BitStream {
 
     fn next_bytes(&mut self, count: usize) -> BitStreamResult<Vec<u8>>;
 }
+
 
 impl BitStreamError {
     pub fn raise_too_much_data<T>(passed: usize, acceptable: usize) -> BitStreamResult<T> {

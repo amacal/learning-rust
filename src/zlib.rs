@@ -1,4 +1,4 @@
-use crate::bitstream::{BitStream, BitStreamError};
+use crate::bitstream::{BitStream, BitStreamError, BitStreamExt};
 use crate::inflate::{InflateBlockInfo, InflateError, InflateEvent, InflateReader, InflateResult};
 
 pub struct ZlibReader<TBitStream: BitStream + Sized> {
@@ -100,7 +100,7 @@ impl<TBitStream: BitStream + Sized> ZlibReader<TBitStream> {
             return Ok(ZlibEvent::Checksum(checksum));
         }
 
-        match self.inflate.next(&mut self.bitstream) {
+        match self.inflate.next(&mut self.bitstream.as_unchecked()) {
             Ok(event) => Ok(ZlibEvent::Inflate(event)),
             Err(error) => ZlibError::raise_inflate_error(error),
         }

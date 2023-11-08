@@ -76,6 +76,7 @@ impl<const TBYTES: usize, const TBITS: usize> BitStream for BitStreamBitwise<TBY
         Ok(())
     }
 
+    #[inline(always)]
     fn next_bit(&mut self) -> Option<u8> {
         match self.bits.0.get(0..self.bits_boundary) {
             None => return None,
@@ -89,6 +90,7 @@ impl<const TBYTES: usize, const TBITS: usize> BitStream for BitStreamBitwise<TBY
         }
     }
 
+    #[inline(always)]
     fn next_bit_unchecked(&mut self) -> u8 {
         unsafe {
             let &bit = self.bits.0.get_unchecked(self.bits_processed);
@@ -97,6 +99,7 @@ impl<const TBYTES: usize, const TBITS: usize> BitStream for BitStreamBitwise<TBY
         }
     }
 
+    #[inline(always)]
     fn next_bits(&mut self, count: usize) -> Option<u16> {
         let mut outcome: u16 = 0;
 
@@ -110,6 +113,7 @@ impl<const TBYTES: usize, const TBITS: usize> BitStream for BitStreamBitwise<TBY
         Some(outcome)
     }
 
+    #[inline(always)]
     fn next_bits_unchecked(&mut self, count: usize) -> u16 {
         let mut outcome: u16 = 0;
 
