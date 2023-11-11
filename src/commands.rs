@@ -24,7 +24,6 @@ pub struct DecompressSyncCommand {
     pub source: String,
     #[structopt(help = "The absolute or the relative path of the decompressed zlib file")]
     pub destination: String,
-
     #[structopt(long, help = "The BitStream implementation name", default_value = "bitwise")]
     pub bitstream: String,
 }
@@ -33,6 +32,10 @@ pub struct DecompressSyncCommand {
 pub struct BlockCommand {
     #[structopt(help = "The absolute or the relative path of the compressed zlib file")]
     pub source: String,
+    #[structopt(long, help = "The BitStream implementation name", default_value = "bitwise")]
+    pub bitstream: String,
+    #[structopt(long, help = "The deflate block index, starting from zero")]
+    pub index: usize,
 }
 
 #[derive(StructOpt, Debug)]
@@ -444,7 +447,7 @@ impl BlockCommand {
                 }
 
                 match event {
-                    InflateEvent::BlockStarted(index) => {
+                    InflateEvent::BlockStarted(index) if self.index == index => {
                         println!("Block {} started", index);
 
                         let info = match reader.block() {
@@ -476,7 +479,7 @@ impl BlockCommand {
                             }
                         }
                     }
-                    InflateEvent::BlockEnded(index) => {
+                    InflateEvent::BlockEnded(index) if self.index == index => {
                         println!("Block {} ended", index);
                         break;
                     }
@@ -486,6 +489,7 @@ impl BlockCommand {
                         }
                         _ => {}
                     },
+                    _ => {}
                 }
             }
 

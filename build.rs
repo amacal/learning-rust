@@ -3,13 +3,13 @@ use std::env;
 
 fn main() {
     let dir = env::current_dir().unwrap();
-    let asm_file = dir.join("asm/extract.asm");
+    let path = dir.join("asm/extract.asm");
     let out_dir = env::var("OUT_DIR").unwrap();
 
     Command::new("nasm")
         .args(&["-f", "elf64", "-o"])
         .arg(&format!("{}/extract.o", out_dir))
-        .arg(asm_file)
+        .arg(&path)
         .status()
         .expect("Failed to run NASM!");
 
@@ -21,5 +21,5 @@ fn main() {
         .expect("Failed to run AR!");
 
     println!("cargo:rustc-link-search=native={}", out_dir);
-    println!("cargo:rustc-link-lib=static=amacal");
+    println!("cargo:rustc-link-arg=-l:libamacal.a");
 }

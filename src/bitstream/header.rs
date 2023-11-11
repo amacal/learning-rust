@@ -10,6 +10,7 @@ pub enum BitStreamError {
 }
 
 pub trait BitReader {
+    fn available(&self) -> usize;
     fn next_bit(&mut self) -> Option<u8>;
     fn next_bits(&mut self, count: usize) -> Option<u16>;
     fn next_bytes(&mut self, count: usize) -> BitStreamResult<Vec<u8>>;
@@ -19,6 +20,11 @@ pub struct BitReaderChecked<'a, T>(&'a mut T) where T: BitStream;
 pub struct BitReaderUnchecked<'a, T>(&'a mut T) where T: BitStream;
 
 impl<'a, T> BitReader for BitReaderChecked<'a, T> where T: BitStream {
+    #[inline(always)]
+    fn available(&self) -> usize {
+        self.0.available()
+    }
+
     #[inline(always)]
     fn next_bit(&mut self) -> Option<u8> {
         self.0.next_bit()
@@ -36,6 +42,11 @@ impl<'a, T> BitReader for BitReaderChecked<'a, T> where T: BitStream {
 }
 
 impl<'a, T> BitReader for BitReaderUnchecked<'a, T> where T: BitStream {
+    #[inline(always)]
+    fn available(&self) -> usize {
+        self.0.available()
+    }
+
     #[inline(always)]
     fn next_bit(&mut self) -> Option<u8> {
         Some(self.0.next_bit_unchecked())

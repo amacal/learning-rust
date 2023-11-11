@@ -1,6 +1,6 @@
 use crate::adler32::Adler32;
 use crate::bitstream::BitReader;
-use crate::huffman::{HuffmanCode, HuffmanError, HuffmanTable};
+use crate::huffman::{HuffmanCode, HuffmanError, HuffmanTableIterative, HuffmanDecoder};
 
 enum InflateDecoder {
     Huffman { huffman: InflateHuffman },
@@ -8,7 +8,7 @@ enum InflateDecoder {
 }
 
 impl InflateDecoder {
-    fn huffman(literals: HuffmanTable<16, 288>, distances: HuffmanTable<16, 32>) -> Self {
+    fn huffman(literals: HuffmanTableIterative<16, 288>, distances: HuffmanTableIterative<16, 32>) -> Self {
         Self::Huffman {
             huffman: InflateHuffman {
                 literals: literals,
@@ -19,8 +19,8 @@ impl InflateDecoder {
 }
 
 struct InflateHuffman {
-    literals: HuffmanTable<16, 288>,
-    distances: HuffmanTable<16, 32>,
+    literals: HuffmanTableIterative<16, 288>,
+    distances: HuffmanTableIterative<16, 32>,
 }
 
 struct InflateUncompressed {}
@@ -40,9 +40,9 @@ pub struct InflateBlockInfo {
 }
 
 pub struct InflateReader {
-    offset: u32,
+    offset: usize,
     current: Option<InflateBlock>,
-    buffer: Option<u32>,
+    buffer: Option<usize>,
     completed: bool,
     failed: bool,
 }
@@ -63,8 +63,8 @@ pub enum InflateSymbol {
 
 #[derive(Debug)]
 pub enum InflateEvent {
-    BlockStarted(u32),
-    BlockEnded(u32),
+    BlockStarted(usize),
+    BlockEnded(usize),
     SymbolDecoded(InflateSymbol),
 }
 
@@ -115,7 +115,7 @@ fn raise_end_of_stream<T>() -> InflateResult<T> {
     Err(InflateError::EndOfStream)
 }
 
-fn build_fixed_tables() -> InflateResult<(HuffmanTable<16, 288>, HuffmanTable<16, 32>)> {
+fn build_fixed_tables() -> InflateResult<(HuffmanTableIterative<16, 288>, HuffmanTableIterative<16, 32>)> {
     let mut literals = [0; 288];
     let mut distances = [0; 32];
 
@@ -139,12 +139,12 @@ fn build_fixed_tables() -> InflateResult<(HuffmanTable<16, 288>, HuffmanTable<16
         distances[i] = 5;
     }
 
-    let literals = match HuffmanTable::new(literals) {
+    let literals = match HuffmanTableIterative::new(literals) {
         Some(table) => table,
         None => return raise_invalid_state(format!("wrong lengths {:?}", literals).as_str()),
     };
 
-    let distances = match HuffmanTable::new(distances) {
+    let distances = match HuffmanTableIterative::new(distances) {
         Some(table) => table,
         None => return raise_invalid_state("wrong lengths"),
     };
@@ -152,7 +152,7 @@ fn build_fixed_tables() -> InflateResult<(HuffmanTable<16, 288>, HuffmanTable<16
     Ok((literals, distances))
 }
 
-fn build_length_table(hlen: usize, bitstream: &mut impl BitReader) -> InflateResult<HuffmanTable<8, 19>> {
+fn build_length_table(hlen: usize, bitstream: &mut impl BitReader) -> InflateResult<HuffmanTableIterative<8, 19>> {
     let mut lengths: [u16; 19] = [0; 19];
     let mapping = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 
@@ -163,7 +163,7 @@ fn build_length_table(hlen: usize, bitstream: &mut impl BitReader) -> InflateRes
         };
     }
 
-    match HuffmanTable::new(lengths) {
+    match HuffmanTableIterative::new(lengths) {
         Some(table) => Ok(table),
         None => raise_invalid_state(format!("wrong lengths {:?}", lengths).as_str()),
     }
@@ -171,14 +171,14 @@ fn build_length_table(hlen: usize, bitstream: &mut impl BitReader) -> InflateRes
 
 fn build_dynamic_table<const T: usize>(
     bitstream: &mut impl BitReader,
-    lengths: &HuffmanTable<8, 19>,
+    lengths: &impl HuffmanDecoder,
     count: usize,
-) -> InflateResult<HuffmanTable<16, T>> {
+) -> InflateResult<HuffmanTableIterative<16, T>> {
     let mut index: usize = 0;
     let mut symbols = [0; T];
 
     if count > T {
-        return raise_invalid_state(format!("HuffmanTable of size {} cannot accept {} symbols", T, count).as_str());
+        return raise_invalid_state(format!("HuffmanTableIterative of size {} cannot accept {} symbols", T, count).as_str());
     }
 
     while index < count {
@@ -215,7 +215,7 @@ fn build_dynamic_table<const T: usize>(
         }
     }
 
-    match HuffmanTable::new(symbols) {
+    match HuffmanTableIterative::new(symbols) {
         Some(table) => Ok(table),
         None => raise_invalid_state(format!("wrong lengths {:?}", symbols).as_str()),
     }
@@ -223,7 +223,7 @@ fn build_dynamic_table<const T: usize>(
 
 fn build_dynamic_tables(
     bitstream: &mut impl BitReader,
-) -> InflateResult<(HuffmanTable<16, 288>, HuffmanTable<16, 32>)> {
+) -> InflateResult<(HuffmanTableIterative<16, 288>, HuffmanTableIterative<16, 32>)> {
     let hlit = match bitstream.next_bits(5) {
         Some(bits) => 257 + bits as usize,
         None => return raise_not_enough_data("hlit value"),
@@ -355,7 +355,7 @@ impl InflateReader {
             self.buffer = None;
             self.offset += 1;
 
-            return Ok(InflateEvent::BlockEnded(offset));
+            return Ok(InflateEvent::BlockEnded(self.offset - 1));
         }
 
         if self.completed {
@@ -640,9 +640,9 @@ mod tests {
         let mut reader = bitstream.as_checked();
 
         let lengths = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        let lengths: HuffmanTable<8, 19> = HuffmanTable::new(lengths).unwrap();
+        let lengths: HuffmanTableIterative<8, 19> = HuffmanTableIterative::new(lengths).unwrap();
 
-        let result: Result<HuffmanTable<16, 10>, InflateError> = build_dynamic_table(&mut reader, &lengths, 10);
+        let result: Result<HuffmanTableIterative<16, 10>, InflateError> = build_dynamic_table(&mut reader, &lengths, 10);
 
         match result {
             Ok(_) => assert!(false),
