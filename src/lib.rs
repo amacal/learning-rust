@@ -5,5 +5,6 @@ mod huffman;
 mod inflate;
 mod zlib;
 
-pub use crate::bitstream::{BitReader, BitStream, BitStreamExt, BitStreamBytewise, BitStreamBitwise, BitStreamError};
-pub use crate::huffman::{HuffmanDecoder, HuffmanTableIterative, HuffmanResult, HuffmanError, HuffmanCode};
+pub use crate::bitstream::{BitReader, BitStream, BitStreamBitwise, BitStreamBytewise, BitStreamError, BitStreamExt};
+pub use crate::huffman::{HuffmanCode, HuffmanDecoder, HuffmanError, HuffmanResult};
+pub use crate::huffman::{HuffmanTableIterative, HuffmanTableLookup};

@@ -19,8 +19,8 @@ pub enum HuffmanError {
     #[error("Not enough data")]
     NotEnoughData,
 
-    #[error("Invalid symbol")]
-    InvalidSymbol,
+    #[error("Invalid symbol: {0}")]
+    InvalidSymbol(u16),
 }
 
 impl HuffmanError {
@@ -28,8 +28,8 @@ impl HuffmanError {
         Err(HuffmanError::NotEnoughData)
     }
 
-    pub fn raise_invalid_symbol<T>() -> HuffmanResult<T> {
-        Err(HuffmanError::InvalidSymbol)
+    pub fn raise_invalid_symbol<T>(value: u16) -> HuffmanResult<T> {
+        Err(HuffmanError::InvalidSymbol(value))
     }
 }
 

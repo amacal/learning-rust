@@ -1,17 +1,21 @@
 use crate::bitstream::BitReader;
-use crate::huffman::header::{HuffmanDecoder, HuffmanCode, HuffmanResult, HuffmanError};
+use crate::huffman::header::{HuffmanCode, HuffmanDecoder, HuffmanError, HuffmanResult};
 
-pub struct HuffmanTableIterative<const MAX_BITS: usize, const MAX_SYMBOLS: usize> {
-    shortest: usize,              // the shortest code in the table
-    counts: [u16; MAX_BITS],      // the array of counts per each length
-    symbols: [u16; MAX_SYMBOLS],  // the array of symbols
+pub struct HuffmanTableLookup<const MAX_BITS: usize, const MAX_SYMBOLS: usize> {
+    counts: [u16; MAX_BITS],     // the array of counts per each length
+    lower: [u16; MAX_BITS],      // the array of lower values at each length
+    upper: [u16; MAX_BITS],      // the array of upper values at each length
+    offsets: [u16; MAX_BITS],    // the array of symbols' offsets at each length
+    symbols: [u16; MAX_SYMBOLS], // the array of symbols
 }
 
-impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTableIterative<MAX_BITS, MAX_SYMBOLS> {
+impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTableLookup<MAX_BITS, MAX_SYMBOLS> {
     pub fn new(lengths: [u16; MAX_SYMBOLS]) -> Option<Self> {
         let mut counts = [0; MAX_BITS];
         let mut symbols = [0; MAX_SYMBOLS];
         let mut offsets = [0; MAX_BITS];
+        let mut lower = [0; MAX_BITS];
+        let mut upper = [0; MAX_BITS];
         let mut shortest = 0;
 
         for index in 0..MAX_SYMBOLS {
@@ -35,14 +39,29 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTableIterative<MAX_
             }
         }
 
+        let mut first = 0;
+        let mut offset = 0;
+
+        for index in 0..MAX_BITS {
+            lower[index] = first;
+            offsets[index] = offset;
+            upper[index] = first + counts[index];
+
+            offset += counts[index];
+            first += counts[index];
+            first <<= 1;
+        }
+
         if shortest == 0 {
             return None;
         }
 
         Some(Self {
-            shortest: shortest,
             counts: counts,
             symbols: symbols,
+            lower: lower,
+            upper: upper,
+            offsets: offsets,
         })
     }
 
@@ -68,32 +87,33 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTableIterative<MAX_
     }
 }
 
-impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanDecoder for HuffmanTableIterative<MAX_BITS, MAX_SYMBOLS> {
+impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanDecoder for HuffmanTableLookup<MAX_BITS, MAX_SYMBOLS> {
     fn decode(&self, bits: &mut impl BitReader) -> HuffmanResult<u16> {
-        let mut first: u16 = 0;
         let mut code: u16 = 0;
-        let mut offset: u16 = 0;
 
-        for &count in self.counts[1..].iter() {
+        for length in 1..MAX_BITS {
             code |= match bits.next_bit() {
                 Some(bit) => bit as u16,
                 None => return HuffmanError::raise_not_enough_data(),
             };
 
-            if code < first + count {
-                let index = offset as usize + (code - first) as usize;
-                let symbol = match self.symbols.get(index) {
-                    Some(&value) => value,
-                    None => return HuffmanError::raise_invalid_symbol(code),
-                };
+            unsafe {
+                let lower = *self.lower.get_unchecked(length);
+                let upper = *self.upper.get_unchecked(length);
 
-                return Ok(symbol);
+                if code >= lower && code < upper {
+                    let offset = *self.offsets.get_unchecked(length);
+                    let index = offset as usize + (code - lower) as usize;
+
+                    let symbol = match self.symbols.get(index) {
+                        Some(&value) => value,
+                        None => return HuffmanError::raise_invalid_symbol(code),
+                    };
+
+                    return Ok(symbol);
+                }
             }
 
-            offset += count;
-            first += count;
-
-            first <<= 1;
             code <<= 1;
         }
 
@@ -104,7 +124,7 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanDecoder for Huffman
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bitstream::{BitStream, BitStreamExt, BitStreamBytewise};
+    use crate::bitstream::{BitStream, BitStreamBytewise, BitStreamExt};
 
     fn bitstream<const T: usize>(data: &[u8]) -> BitStreamBytewise<T> {
         let mut bitstream = BitStreamBytewise::new();
@@ -119,23 +139,22 @@ mod tests {
 
     #[test]
     fn creates_huffman_table() {
-        let table: HuffmanTableIterative<4, 5> = HuffmanTableIterative::new([0, 2, 3, 1, 3]).unwrap();
+        let table: HuffmanTableLookup<4, 5> = HuffmanTableLookup::new([0, 2, 3, 1, 3]).unwrap();
 
-        assert_eq!(table.shortest, 1);
         assert_eq!(table.counts, [0, 1, 1, 2]);
         assert_eq!(table.symbols, [3, 1, 2, 4, 0]);
     }
 
     #[test]
     fn creates_huffman_table_fails() {
-        let table: Option<HuffmanTableIterative<4, 5>> = HuffmanTableIterative::new([0, 0, 0, 0, 0]);
+        let table: Option<HuffmanTableLookup<4, 5>> = HuffmanTableLookup::new([0, 0, 0, 0, 0]);
 
         assert!(table.is_none());
     }
 
     #[test]
     fn lists_huffman_table() {
-        let table: HuffmanTableIterative<4, 5> = HuffmanTableIterative::new([0, 2, 3, 1, 3]).unwrap();
+        let table: HuffmanTableLookup<4, 5> = HuffmanTableLookup::new([0, 2, 3, 1, 3]).unwrap();
         let codes = table.list();
 
         assert_eq!(codes[0], HuffmanCode::default());
@@ -147,7 +166,7 @@ mod tests {
 
     #[test]
     fn decodes_using_huffman_table() {
-        let table: HuffmanTableIterative<4, 5> = HuffmanTableIterative::new([0, 2, 3, 1, 3]).unwrap();
+        let table: HuffmanTableLookup<4, 5> = HuffmanTableLookup::new([0, 2, 3, 1, 3]).unwrap();
         let mut bitstream: BitStreamBytewise<2> = bitstream(&[0b11011010, 0b00000001]);
         let mut reader = bitstream.as_checked();
 
@@ -160,7 +179,7 @@ mod tests {
 
     #[test]
     fn decodes_using_huffman_table_failing() {
-        let table: HuffmanTableIterative<4, 5> = HuffmanTableIterative::new([0, 2, 3, 1, 0]).unwrap();
+        let table: HuffmanTableLookup<4, 5> = HuffmanTableLookup::new([0, 2, 3, 1, 0]).unwrap();
         let mut bitstream: BitStreamBytewise<1> = bitstream(&[0b111]);
         let mut reader = bitstream.as_checked();
 
