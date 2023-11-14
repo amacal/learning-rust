@@ -1,20 +1,21 @@
 use crate::bitstream::BitReader;
 use crate::huffman::header::{HuffmanCode, HuffmanDecoder, HuffmanError, HuffmanResult};
 
-pub struct HuffmanTableLookup<const MAX_BITS: usize, const MAX_SYMBOLS: usize> {
+pub struct HuffmanTableBounds<const MAX_BITS: usize, const MAX_SYMBOLS: usize> {
     counts: [u16; MAX_BITS],     // the array of counts per each length
+    lower: [u16; MAX_BITS],      // the array of lower values at each length
+    upper: [u16; MAX_BITS],      // the array of upper values at each length
+    offsets: [u16; MAX_BITS],    // the array of symbols' offsets at each length
     symbols: [u16; MAX_SYMBOLS], // the array of symbols
-    lookup: [u16; 65536],        // the array of lower values at each length
 }
 
-impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTableLookup<MAX_BITS, MAX_SYMBOLS> {
+impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTableBounds<MAX_BITS, MAX_SYMBOLS> {
     pub fn new(lengths: [u16; MAX_SYMBOLS]) -> Option<Self> {
         let mut counts = [0; MAX_BITS];
         let mut symbols = [0; MAX_SYMBOLS];
         let mut offsets = [0; MAX_BITS];
         let mut lower = [0; MAX_BITS];
         let mut upper = [0; MAX_BITS];
-        let mut lookup = [65535; 65536];
         let mut shortest = 0;
 
         for index in 0..MAX_SYMBOLS {
@@ -55,28 +56,12 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTableLookup<MAX_BIT
             return None;
         }
 
-        unsafe {
-            let mut bits = 0;
-            let mut offset = 0;
-
-            for &count in &counts[1..] {
-                for _ in 0..count {
-                    if offset < MAX_SYMBOLS {
-                        *lookup.get_unchecked_mut(bits) = *symbols.get_unchecked(offset);
-                    }
-
-                    bits += 1;
-                    offset += 1;
-                }
-
-                bits <<= 1;
-            }
-        }
-
         Some(Self {
             counts: counts,
             symbols: symbols,
-            lookup: lookup,
+            lower: lower,
+            upper: upper,
+            offsets: offsets,
         })
     }
 
@@ -102,26 +87,37 @@ impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanTableLookup<MAX_BIT
     }
 }
 
-impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanDecoder for HuffmanTableLookup<MAX_BITS, MAX_SYMBOLS> {
+impl<const MAX_BITS: usize, const MAX_SYMBOLS: usize> HuffmanDecoder for HuffmanTableBounds<MAX_BITS, MAX_SYMBOLS> {
     fn decode(&self, bits: &mut impl BitReader) -> HuffmanResult<u16> {
-        unsafe {
-            let mut code: u16 = 0;
+        let mut code: u16 = 0;
 
-            for _ in 1..MAX_BITS {
-                code <<= 1;
-                code |= match bits.next_bit() {
-                    Some(bit) => bit as u16,
-                    None => return HuffmanError::raise_not_enough_data(),
-                };
+        for length in 1..MAX_BITS {
+            code |= match bits.next_bit() {
+                Some(bit) => bit as u16,
+                None => return HuffmanError::raise_not_enough_data(),
+            };
 
-                match *self.lookup.get_unchecked(code as usize) {
-                    65535 => continue,
-                    value => return Ok(value),
-                };
+            unsafe {
+                let lower = *self.lower.get_unchecked(length);
+                let upper = *self.upper.get_unchecked(length);
+
+                if code >= lower && code < upper {
+                    let offset = *self.offsets.get_unchecked(length);
+                    let index = offset as usize + (code - lower) as usize;
+
+                    let symbol = match self.symbols.get(index) {
+                        Some(&value) => value,
+                        None => return HuffmanError::raise_invalid_symbol(code),
+                    };
+
+                    return Ok(symbol);
+                }
             }
 
-            HuffmanError::raise_invalid_symbol(code)
+            code <<= 1;
         }
+
+        HuffmanError::raise_invalid_symbol(code)
     }
 }
 
@@ -143,7 +139,7 @@ mod tests {
 
     #[test]
     fn creates_huffman_table() {
-        let table: HuffmanTableLookup<4, 5> = HuffmanTableLookup::new([0, 2, 3, 1, 3]).unwrap();
+        let table: HuffmanTableBounds<4, 5> = HuffmanTableBounds::new([0, 2, 3, 1, 3]).unwrap();
 
         assert_eq!(table.counts, [0, 1, 1, 2]);
         assert_eq!(table.symbols, [3, 1, 2, 4, 0]);
@@ -151,14 +147,14 @@ mod tests {
 
     #[test]
     fn creates_huffman_table_fails() {
-        let table: Option<HuffmanTableLookup<4, 5>> = HuffmanTableLookup::new([0, 0, 0, 0, 0]);
+        let table: Option<HuffmanTableBounds<4, 5>> = HuffmanTableBounds::new([0, 0, 0, 0, 0]);
 
         assert!(table.is_none());
     }
 
     #[test]
     fn lists_huffman_table() {
-        let table: HuffmanTableLookup<4, 5> = HuffmanTableLookup::new([0, 2, 3, 1, 3]).unwrap();
+        let table: HuffmanTableBounds<4, 5> = HuffmanTableBounds::new([0, 2, 3, 1, 3]).unwrap();
         let codes = table.list();
 
         assert_eq!(codes[0], HuffmanCode::default());
@@ -170,7 +166,7 @@ mod tests {
 
     #[test]
     fn decodes_using_huffman_table() {
-        let table: HuffmanTableLookup<4, 5> = HuffmanTableLookup::new([0, 2, 3, 1, 3]).unwrap();
+        let table: HuffmanTableBounds<4, 5> = HuffmanTableBounds::new([0, 2, 3, 1, 3]).unwrap();
         let mut bitstream: BitStreamBytewise<2> = bitstream(&[0b11011010, 0b00000001]);
         let mut reader = bitstream.as_checked();
 
@@ -183,7 +179,7 @@ mod tests {
 
     #[test]
     fn decodes_using_huffman_table_failing() {
-        let table: HuffmanTableLookup<4, 5> = HuffmanTableLookup::new([0, 2, 3, 1, 0]).unwrap();
+        let table: HuffmanTableBounds<4, 5> = HuffmanTableBounds::new([0, 2, 3, 1, 0]).unwrap();
         let mut bitstream: BitStreamBytewise<1> = bitstream(&[0b111]);
         let mut reader = bitstream.as_checked();
 
