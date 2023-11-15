@@ -19,6 +19,7 @@ fn iterative_benchmark(criterion: &mut Criterion) {
         b.iter(|| {
             let mut total: u64 = 0;
             let mut bitstream = BitStreamBitwise::<131072, 1048576>::new();
+            let table: HuffmanTableIterative<4, 6> = HuffmanTableIterative::new([0, 1, 0, 2, 3, 3]).unwrap();
 
             let size = 131072;
             let mut offset = 0;
@@ -31,7 +32,6 @@ fn iterative_benchmark(criterion: &mut Criterion) {
                     offset += available;
                 }
 
-                let table: HuffmanTableIterative<4, 6> = HuffmanTableIterative::new([0, 1, 0, 2, 3, 3]).unwrap();
                 let mut reader = bitstream.as_unchecked();
 
                 while reader.available() >= 65536 * 4 + 4 {
@@ -68,6 +68,7 @@ fn bounds_benchmark(criterion: &mut Criterion) {
         b.iter(|| {
             let mut total: u64 = 0;
             let mut bitstream = BitStreamBitwise::<131072, 1048576>::new();
+            let table: HuffmanTableBounds<4, 6> = HuffmanTableBounds::new([0, 1, 0, 2, 3, 3]).unwrap();
 
             let size = 131072;
             let mut offset = 0;
@@ -80,7 +81,6 @@ fn bounds_benchmark(criterion: &mut Criterion) {
                     offset += available;
                 }
 
-                let table: HuffmanTableBounds<4, 6> = HuffmanTableBounds::new([0, 1, 0, 2, 3, 3]).unwrap();
                 let mut reader = bitstream.as_unchecked();
 
                 while reader.available() >= 65536 * 4 + 4 {
@@ -117,6 +117,7 @@ fn lookup_benchmark(criterion: &mut Criterion) {
         b.iter(|| {
             let mut total: u64 = 0;
             let mut bitstream = BitStreamBitwise::<131072, 1048576>::new();
+            let table: HuffmanTableLookup<4, 6> = HuffmanTableLookup::new([0, 1, 0, 2, 3, 3]).unwrap();
 
             let size = 131072;
             let mut offset = 0;
@@ -129,7 +130,6 @@ fn lookup_benchmark(criterion: &mut Criterion) {
                     offset += available;
                 }
 
-                let table: HuffmanTableLookup<4, 6> = HuffmanTableLookup::new([0, 1, 0, 2, 3, 3]).unwrap();
                 let mut reader = bitstream.as_unchecked();
 
                 while reader.available() >= 65536 * 4 + 4 {
