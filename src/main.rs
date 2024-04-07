@@ -2,7 +2,6 @@
 #![no_main]
 
 mod cat;
-mod glibc;
 mod hello;
 mod kernel;
 mod linux;
