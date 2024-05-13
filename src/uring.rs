@@ -1,33 +1,36 @@
 use core::ptr::{null, null_mut, read_volatile, write_volatile};
 
-use crate::kernel::{io_uring_cqe, io_uring_params, io_uring_sqe};
-use crate::syscall::{sys_close, sys_io_uring_enter, sys_io_uring_setup, sys_mmap, sys_munmap};
+use crate::kernel::*;
+use crate::syscall::*;
 
 pub struct IORing {
     fd: u32,
+    sq_ptr: *mut (),
+    sq_ptr_len: usize,
+    sq_sqes: *mut io_uring_sqe,
+    sq_sqes_len: usize,
+    cq_ptr: *mut (),
+    cq_ptr_len: usize,
+}
 
-    sq_ptr: *mut u8,
+pub struct IORingSubmitter {
+    fd: u32,
+    sq_ptr: *mut (),
     sq_ptr_len: usize,
     sq_tail: *mut u32,
     sq_ring_mask: *mut u32,
     sq_array: *mut u32,
-
     sq_sqes: *mut io_uring_sqe,
     sq_sqes_len: usize,
-
-    cq_ptr: *mut u8,
+}
+pub struct IORingCompleter {
+    fd: u32,
+    cq_ptr: *mut (),
     cq_ptr_len: usize,
     cq_head: *mut u32,
     cq_tail: *mut u32,
     cq_ring_mask: *mut u32,
     cq_cqes: *mut io_uring_cqe,
-}
-
-pub enum IORingInit {
-    Succeeded(IORing),
-    InvalidDescriptor(isize),
-    SetupFailed(isize),
-    MappingFailed(&'static [u8], isize),
 }
 
 impl IORing {
@@ -36,6 +39,7 @@ impl IORing {
     const IORING_OFF_SQES: usize = 0x010000000;
     const IORING_ENTER_GETEVENTS: u32 = 0x00000001;
 
+    const IORING_OP_TIMEOUT: u8 = 11;
     const IORING_OP_OPENAT: u8 = 18;
     const IORING_OP_CLOSE: u8 = 19;
     const IORING_OP_READ: u8 = 22;
@@ -47,9 +51,15 @@ impl IORing {
     const PROT_WRITE: usize = 0x00000002;
 
     const MAP_SHARED: usize = 0x00000001;
-    const MAP_PRIVATE: usize = 0x00000002;
-    const MAP_ANONYMOUS: usize = 0x00000020;
     const MAP_POPULATE: usize = 0x00008000;
+}
+
+#[allow(dead_code)]
+pub enum IORingInit {
+    Succeeded(IORingSubmitter, IORingCompleter),
+    InvalidDescriptor(isize),
+    SetupFailed(isize),
+    MappingFailed(&'static [u8], isize),
 }
 
 impl IORing {
@@ -82,7 +92,7 @@ impl IORing {
         let offset = IORing::IORING_OFF_SQ_RING;
         let (sq_ptr, sq_ptr_len) = match map::<u32>(fd, sq_array, sq_entries, offset) {
             (res, _) if res <= 0 => return IORingInit::MappingFailed(b"SQ_RING", res),
-            (res, len) => (res as *mut u8, len),
+            (res, len) => (res as *mut (), len),
         };
 
         let sq_tail = (sq_ptr as usize + params.sq_off.tail as usize) as *mut u32;
@@ -100,7 +110,7 @@ impl IORing {
         let offset = IORing::IORING_OFF_CQ_RING;
         let (cq_ptr, cq_ptr_len) = match map::<io_uring_cqe>(fd, cq_array, cq_entries, offset) {
             (res, _) if res <= 0 => return IORingInit::MappingFailed(b"CQ_RING", res),
-            (res, len) => (res as *mut u8, len),
+            (res, len) => (res as *mut (), len),
         };
 
         let cq_head = (cq_ptr as usize + params.cq_off.head as usize) as *mut u32;
@@ -108,7 +118,7 @@ impl IORing {
         let cq_ring_mask = (cq_ptr as usize + params.cq_off.ring_mask as usize) as *mut u32;
         let cq_cqes = (sq_ptr as usize + params.cq_off.cqes as usize) as *mut io_uring_cqe;
 
-        IORingInit::Succeeded(IORing {
+        let submitter = IORingSubmitter {
             fd: fd,
             sq_ptr: sq_ptr,
             sq_ptr_len: sq_ptr_len,
@@ -117,16 +127,23 @@ impl IORing {
             sq_array: sq_array,
             sq_sqes: sq_sqes,
             sq_sqes_len: sq_sqes_len,
+        };
+
+        let completer = IORingCompleter {
+            fd: fd,
             cq_ptr: cq_ptr,
             cq_ptr_len: cq_ptr_len,
             cq_head: cq_head,
             cq_tail: cq_tail,
             cq_ring_mask: cq_ring_mask,
             cq_cqes: cq_cqes,
-        })
+        };
+
+        IORingInit::Succeeded(submitter, completer)
     }
 }
 
+#[allow(dead_code)]
 pub enum IORingSubmit {
     Succeeded(usize),
     SubmissionFailed(isize),
@@ -137,32 +154,33 @@ pub trait IORingSubmitBuffer {
     fn extract(self) -> (*const u8, usize);
 }
 
+pub struct IORingSubmitEntryTimeout {
+    timespec: *const timespec,
+}
+
 pub struct IORingSubmitEntryOpenAt<T: IORingSubmitBuffer> {
     fd: u32,
     buf: T,
-    user_data: u64,
 }
 
 pub struct IORingSubmitEntryClose {
     fd: u32,
-    user_data: u64,
 }
 
 pub struct IORingSubmitEntryRead<T: IORingSubmitBuffer> {
     fd: u32,
     buf: T,
     off: u64,
-    user_data: u64,
 }
 
 pub struct IORingSubmitEntryWrite<T: IORingSubmitBuffer> {
     fd: u32,
     buf: T,
     off: u64,
-    user_data: u64,
 }
 
 pub enum IORingSubmitEntry<T: IORingSubmitBuffer> {
+    Timeout(IORingSubmitEntryTimeout),
     OpenAt(IORingSubmitEntryOpenAt<T>),
     Close(IORingSubmitEntryClose),
     Read(IORingSubmitEntryRead<T>),
@@ -176,44 +194,42 @@ impl IORingSubmitBuffer for *const u8 {
 }
 
 impl IORingSubmitEntry<*const u8> {
-    pub fn close(fd: u32, user_data: u64) -> Self {
-        Self::Close(IORingSubmitEntryClose {
-            fd: fd,
-            user_data: user_data,
-        })
+    pub fn timeout(timespec: *const timespec) -> Self {
+        Self::Timeout(IORingSubmitEntryTimeout { timespec: timespec })
+    }
+
+    pub fn close(fd: u32) -> Self {
+        Self::Close(IORingSubmitEntryClose { fd: fd })
     }
 }
 
 impl<T: IORingSubmitBuffer> IORingSubmitEntry<T> {
-    pub fn open_at(buf: T, user_data: u64) -> Self {
+    pub fn open_at(buf: T) -> Self {
         Self::OpenAt(IORingSubmitEntryOpenAt {
             fd: IORing::AT_FDCWD as u32,
             buf: buf,
-            user_data: user_data,
         })
     }
 
-    pub fn read(fd: u32, buf: T, off: u64, user_data: u64) -> Self {
+    pub fn read(fd: u32, buf: T, off: u64) -> Self {
         Self::Read(IORingSubmitEntryRead {
             fd: fd,
             buf: buf,
             off: off,
-            user_data: user_data,
         })
     }
 
-    pub fn write(fd: u32, buf: T, off: u64, user_data: u64) -> Self {
+    pub fn write(fd: u32, buf: T, off: u64) -> Self {
         Self::Write(IORingSubmitEntryWrite {
             fd: fd,
             buf: buf,
             off: off,
-            user_data: user_data,
         })
     }
 }
 
-impl IORing {
-    pub fn submit<T, const C: usize>(&mut self, entries: [IORingSubmitEntry<T>; C]) -> IORingSubmit
+impl IORingSubmitter {
+    pub fn submit<T, const C: usize>(&self, user_data: u64, entries: [IORingSubmitEntry<T>; C]) -> IORingSubmit
     where
         T: IORingSubmitBuffer,
     {
@@ -224,19 +240,23 @@ impl IORing {
             let ring_mask = unsafe { read_volatile(self.sq_ring_mask) };
             let sq_tail = unsafe { read_volatile(self.sq_tail) & ring_mask };
 
-            let (opcode, fd, ptr, len, offset, user_data) = match entry {
+            let (opcode, fd, ptr, len, offset) = match entry {
+                IORingSubmitEntry::Timeout(data) => {
+                    /* fmts */
+                    (IORing::IORING_OP_TIMEOUT, 0, data.timespec as *const u8, 1, 0)
+                }
                 IORingSubmitEntry::OpenAt(data) => match data.buf.extract() {
-                    (ptr, _) => (IORing::IORING_OP_OPENAT, data.fd, ptr, 0, 0, data.user_data),
+                    (ptr, _) => (IORing::IORING_OP_OPENAT, data.fd, ptr, 0, 0),
                 },
                 IORingSubmitEntry::Close(data) => {
                     /* fmt */
-                    (IORing::IORING_OP_CLOSE, data.fd, null(), 0, 0, data.user_data)
+                    (IORing::IORING_OP_CLOSE, data.fd, null(), 0, 0)
                 }
                 IORingSubmitEntry::Read(data) => match data.buf.extract() {
-                    (ptr, len) => (IORing::IORING_OP_READ, data.fd, ptr, len, data.off, data.user_data),
+                    (ptr, len) => (IORing::IORING_OP_READ, data.fd, ptr, len, data.off),
                 },
                 IORingSubmitEntry::Write(data) => match data.buf.extract() {
-                    (ptr, len) => (IORing::IORING_OP_WRITE, data.fd, ptr, len, data.off, data.user_data),
+                    (ptr, len) => (IORing::IORING_OP_WRITE, data.fd, ptr, len, data.off),
                 },
             };
 
@@ -268,19 +288,22 @@ impl IORing {
     }
 }
 
+#[allow(dead_code)]
 pub enum IORingComplete {
     Succeeded(IORingCompleteEntry),
     UnexpectedEmpty(usize),
     CompletionFailed(isize),
 }
 
+#[allow(dead_code)]
+#[derive(Default)]
 pub struct IORingCompleteEntry {
     pub res: i32,
     pub flags: u32,
     pub user_data: u64,
 }
 
-impl IORing {
+impl IORingCompleter {
     fn extract(&self) -> Option<IORingCompleteEntry> {
         let ring_mask = unsafe { read_volatile(self.cq_ring_mask) };
         let cq_head = unsafe { read_volatile(self.cq_head) };
@@ -324,6 +347,32 @@ impl IORing {
     }
 }
 
+#[allow(dead_code)]
+pub enum IORingJoin {
+    Succeeded(IORing),
+    MismatchedDescriptor(IORingSubmitter, IORingCompleter),
+}
+
+impl IORing {
+    pub fn join(submitter: IORingSubmitter, completer: IORingCompleter) -> IORingJoin {
+        if submitter.fd != completer.fd {
+            return IORingJoin::MismatchedDescriptor(submitter, completer);
+        }
+
+        let ring = IORing {
+            fd: submitter.fd,
+            sq_ptr: submitter.sq_ptr,
+            sq_ptr_len: submitter.sq_ptr_len,
+            sq_sqes: submitter.sq_sqes,
+            sq_sqes_len: submitter.sq_sqes_len,
+            cq_ptr: completer.cq_ptr,
+            cq_ptr_len: completer.cq_ptr_len,
+        };
+
+        IORingJoin::Succeeded(ring)
+    }
+}
+
 pub enum IORingShutdown {
     Succeeded(),
     Failed(),
@@ -334,7 +383,7 @@ impl IORing {
         let mut failed = false;
 
         failed = failed || 0 != sys_munmap(self.sq_ptr, self.sq_ptr_len);
-        failed = failed || 0 != sys_munmap(self.sq_sqes as *mut u8, self.sq_sqes_len);
+        failed = failed || 0 != sys_munmap(self.sq_sqes as *mut (), self.sq_sqes_len);
         failed = failed || 0 != sys_munmap(self.cq_ptr, self.cq_ptr_len);
         failed = failed || 0 > sys_close(self.fd);
 

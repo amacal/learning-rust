@@ -4,6 +4,10 @@ version = "0.0.0"
 edition = "2021"
 authors = ["Adrian Macal <adma@amacal.pl>"]
 
+[features]
+default = []
+tracing = []
+
 [profile.release]
 opt-level = "z"
 strip = true

@@ -1,4 +1,5 @@
 #[repr(C)]
+#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 #[derive(Default)]
 pub struct io_sqring_offsets {
@@ -14,6 +15,7 @@ pub struct io_sqring_offsets {
 }
 
 #[repr(C)]
+#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 #[derive(Default)]
 pub struct io_cqring_offsets {
@@ -29,6 +31,7 @@ pub struct io_cqring_offsets {
 }
 
 #[repr(C)]
+#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 #[derive(Default)]
 pub struct io_uring_params {
@@ -45,6 +48,7 @@ pub struct io_uring_params {
 }
 
 #[repr(C)]
+#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 pub struct io_uring_sqe {
     pub opcode: u8,
@@ -63,9 +67,18 @@ pub struct io_uring_sqe {
 }
 
 #[repr(C)]
+#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 pub struct io_uring_cqe {
     pub user_data: u64,
     pub res: i32,
     pub flags: u32,
+}
+
+#[repr(C)]
+#[allow(dead_code)]
+#[allow(non_camel_case_types)]
+pub struct timespec {
+	pub tv_sec: i64,
+	pub tv_nsec: i64,
 }

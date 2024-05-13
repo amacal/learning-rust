@@ -3,6 +3,7 @@ use core::arch::asm;
 use crate::kernel::io_uring_params;
 
 #[allow(dead_code)]
+#[inline(never)]
 pub fn sys_read(fd: u32, buf: *const u8, count: usize) -> isize {
     unsafe {
         let ret: isize;
@@ -24,6 +25,7 @@ pub fn sys_read(fd: u32, buf: *const u8, count: usize) -> isize {
 }
 
 #[allow(dead_code)]
+#[inline(never)]
 pub fn sys_write(fd: u32, buf: *const u8, count: usize) -> isize {
     unsafe {
         let ret: isize;
@@ -45,6 +47,7 @@ pub fn sys_write(fd: u32, buf: *const u8, count: usize) -> isize {
 }
 
 #[allow(dead_code)]
+#[inline(never)]
 pub fn sys_open(pathname: *const u8, flags: i32, mode: u16) -> isize {
     unsafe {
         let ret: isize;
@@ -66,6 +69,7 @@ pub fn sys_open(pathname: *const u8, flags: i32, mode: u16) -> isize {
 }
 
 #[allow(dead_code)]
+#[inline(never)]
 pub fn sys_close(fd: u32) -> isize {
     unsafe {
         let ret: isize;
@@ -84,6 +88,8 @@ pub fn sys_close(fd: u32) -> isize {
     }
 }
 
+#[allow(dead_code)]
+#[inline(never)]
 pub fn sys_mmap(addr: *mut u8, len: usize, prot: usize, flags: usize, fd: usize, off: usize) -> isize {
     unsafe {
         let ret: isize;
@@ -108,7 +114,8 @@ pub fn sys_mmap(addr: *mut u8, len: usize, prot: usize, flags: usize, fd: usize,
 }
 
 #[allow(dead_code)]
-pub fn sys_munmap(addr: *mut u8, len: usize) -> isize {
+#[inline(never)]
+pub fn sys_munmap(addr: *mut (), len: usize) -> isize {
     unsafe {
         let ret: isize;
 
@@ -128,6 +135,7 @@ pub fn sys_munmap(addr: *mut u8, len: usize) -> isize {
 }
 
 #[allow(dead_code)]
+#[inline(never)]
 pub fn sys_exit(status: i32) -> ! {
     unsafe {
         asm!(
@@ -140,6 +148,7 @@ pub fn sys_exit(status: i32) -> ! {
 }
 
 #[allow(dead_code)]
+#[inline(never)]
 pub fn sys_io_uring_setup(entries: u32, params: *mut io_uring_params) -> isize {
     unsafe {
         let ret;
@@ -160,6 +169,7 @@ pub fn sys_io_uring_setup(entries: u32, params: *mut io_uring_params) -> isize {
 }
 
 #[allow(dead_code)]
+#[inline(never)]
 pub fn sys_io_uring_enter(fd: u32, to_submit: u32, min_complete: u32, flags: u32, argp: *const u8, args: u32) -> isize {
     unsafe {
         let ret;
