@@ -4,18 +4,47 @@ use super::core::*;
 use super::pin::*;
 use super::refs::*;
 use crate::uring::*;
+use super::erase::*;
 
 pub struct IORingTaskToken {
+    kind: IORingTaskTokenKind,
     completer: IORingCompleterRef,
 }
 
+enum IORingTaskTokenKind {
+    Op,
+    Queue,
+    Execute,
+}
+
 impl IORingTaskToken {
-    fn new(completer: IORingCompleterRef) -> Self {
-        Self { completer }
+    fn from_op(completer: IORingCompleterRef) -> Self {
+        Self {
+            completer,
+            kind: IORingTaskTokenKind::Op,
+        }
+    }
+
+    fn from_queue(completer: IORingCompleterRef) -> Self {
+        Self {
+            completer,
+            kind: IORingTaskTokenKind::Queue,
+        }
+    }
+
+    fn from_execute(completer: IORingCompleterRef) -> Self {
+        Self {
+            completer,
+            kind: IORingTaskTokenKind::Execute,
+        }
     }
 
     fn context(waker: &Waker) -> &mut IORingRuntimeContext {
         IORingRuntime::from_waker(waker)
+    }
+
+    pub fn cid(&self) -> u32 {
+        self.completer.cid()
     }
 }
 
@@ -26,18 +55,29 @@ pub enum IORingTaskTokenExtract {
 
 impl IORingTaskToken {
     pub fn extract(self, waker: &Waker) -> IORingTaskTokenExtract {
-        match Self::context(waker).extract(&self.completer) {
-            IORingRuntimeExtract::Succeeded(value) => IORingTaskTokenExtract::Succeeded(value),
-            IORingRuntimeExtract::NotCompleted() => IORingTaskTokenExtract::Failed(self),
-            IORingRuntimeExtract::NotFound() => IORingTaskTokenExtract::Failed(self),
+        let context = Self::context(waker);
+        let value = match context.extract(&self.completer) {
+            IORingRuntimeExtract::Succeeded(value) => value,
+            IORingRuntimeExtract::NotCompleted() => return IORingTaskTokenExtract::Failed(self),
+            IORingRuntimeExtract::NotFound() => return IORingTaskTokenExtract::Failed(self),
+        };
+
+        if let IORingTaskTokenKind::Queue = self.kind {
+            context.queue(&self.completer);
         }
+
+        if let IORingTaskTokenKind::Execute = self.kind {
+            context.decrease(&self.completer);
+        }
+
+        IORingTaskTokenExtract::Succeeded(value)
     }
 }
 
 impl IORingTaskToken {
     pub fn submit<T: IORingSubmitBuffer>(waker: &Waker, entry: IORingSubmitEntry<T>) -> Option<IORingTaskToken> {
         match Self::context(waker).submit(entry) {
-            IORingRuntimeSubmit::Succeeded(completer) => Some(IORingTaskToken::new(completer)),
+            IORingRuntimeSubmit::Succeeded(completer) => Some(IORingTaskToken::from_op(completer)),
             IORingRuntimeSubmit::SubmissionFailed(_) => None,
             IORingRuntimeSubmit::InternallyFailed() => None,
             IORingRuntimeSubmit::NotEnoughSlots() => None,
@@ -50,6 +90,21 @@ impl IORingTaskToken {
         match Self::context(waker).spawn(pinned) {
             IORingRuntimeSpawn::Pending(_) => true,
             _ => false,
+        }
+    }
+
+    pub fn execute(waker: &Waker, task: &CallableTarget<24>) -> Option<(IORingTaskToken, IORingTaskToken)> {
+        match Self::context(waker).execute(task) {
+            IORingRuntimeExecute::Queued(queued, executed) => Some((
+                IORingTaskToken::from_queue(queued),
+                IORingTaskToken::from_execute(executed),
+            )),
+            IORingRuntimeExecute::Executed(queued, executed) => Some((
+                IORingTaskToken::from_op(queued),
+                IORingTaskToken::from_execute(executed),
+            )),
+            IORingRuntimeExecute::NotEnoughSlots() => None,
+            IORingRuntimeExecute::InternallyFailed() => None,
         }
     }
 }

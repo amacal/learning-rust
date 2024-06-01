@@ -75,6 +75,16 @@ impl FormatString for &'static [u8] {
     }
 }
 
+impl<T> FormatArg for &T {
+    fn to_number(self) -> Option<impl FormatNumber> {
+        Some(((self as *const T as usize) & 0xffffffff) as u32)
+    }
+
+    fn to_string(self) -> Option<impl FormatString> {
+        None::<Nope>
+    }
+}
+
 impl<T> FormatArg for *const T {
     fn to_number(self) -> Option<impl FormatNumber> {
         Some(((self as usize) & 0xffffffff) as u32)
@@ -88,6 +98,16 @@ impl<T> FormatArg for *const T {
 impl<T> FormatArg for *mut T {
     fn to_number(self) -> Option<impl FormatNumber> {
         Some(((self as usize) & 0xffffffff) as u32)
+    }
+
+    fn to_string(self) -> Option<impl FormatString> {
+        None::<Nope>
+    }
+}
+
+impl FormatArg for u8 {
+    fn to_number(self) -> Option<impl FormatNumber> {
+        Some(self as u32)
     }
 
     fn to_string(self) -> Option<impl FormatString> {
@@ -263,7 +283,7 @@ pub fn trace0(_fmt: &'static [u8]) {}
 #[cfg(feature = "tracing")]
 pub fn trace0(fmt: &'static [u8]) {
     use crate::syscall::*;
-    sys_write(2, fmt.as_ptr(), fmt.len());
+    sys_write(2, fmt.as_ptr() as *const (), fmt.len());
 }
 
 #[allow(dead_code)]
@@ -320,7 +340,7 @@ pub fn trace1<T1: FormatArg + Copy>(fmt: &'static [u8], val1: T1) {
         }
     }
 
-    sys_write(2, msg, msg_idx);
+    sys_write(2, msg as *const (), msg_idx);
 }
 
 #[allow(dead_code)]
@@ -389,7 +409,7 @@ pub fn trace2<T1: FormatArg + Copy, T2: FormatArg + Copy>(fmt: &'static [u8], va
         }
     }
 
-    sys_write(2, msg, msg_idx);
+    sys_write(2, msg as *const (), msg_idx);
 }
 
 #[allow(dead_code)]
@@ -481,5 +501,111 @@ where
         }
     }
 
-    sys_write(2, msg, msg_idx);
+    sys_write(2, msg as *const (), msg_idx);
+}
+
+#[allow(dead_code)]
+#[cfg(not(feature = "tracing"))]
+pub fn trace4<T1, T2, T3, T4>(_fmt: &'static [u8], _val1: T1, _val2: T2, _val3: T3, _val4: T4)
+where
+    T1: FormatArg + Copy,
+    T2: FormatArg + Copy,
+    T3: FormatArg + Copy,
+    T4: FormatArg + Copy,
+{
+}
+
+#[allow(dead_code)]
+#[inline(never)]
+#[cfg(feature = "tracing")]
+pub fn trace4<T1, T2, T3, T4>(fmt: &'static [u8], val1: T1, val2: T2, val3: T3, val4: T4)
+where
+    T1: FormatArg + Copy,
+    T2: FormatArg + Copy,
+    T3: FormatArg + Copy,
+    T4: FormatArg + Copy,
+{
+    use crate::syscall::*;
+
+    let len = fmt.len();
+    let fmt = fmt.as_ptr();
+
+    let mut spec = false;
+    let mut msg: [u8; 80] = [0; 80];
+
+    let max = msg.len();
+    let msg = msg.as_mut_ptr();
+
+    let mut msg_idx = 0;
+    let mut val_idx = 0;
+
+    unsafe {
+        for i in 0..len {
+            if spec == false && *fmt.add(i) == b'%' {
+                spec = true;
+            } else if spec {
+                spec = false;
+                (val_idx, msg_idx) = match (val_idx, *fmt.add(i)) {
+                    (0, b'd') => match val1.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                    },
+                    (0, b'x') => match val1.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                    },
+                    (0, b's') => match val1.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, max, val)),
+                    },
+                    (1, b'd') => match val2.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                    },
+                    (1, b'x') => match val2.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                    },
+                    (1, b's') => match val2.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, max, val)),
+                    },
+                    (2, b'd') => match val3.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                    },
+                    (2, b'x') => match val3.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                    },
+                    (2, b's') => match val3.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, max, val)),
+                    },
+                    (3, b'd') => match val4.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                    },
+                    (3, b'x') => match val4.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                    },
+                    (3, b's') => match val4.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, max, val)),
+                    },
+                    _ => (val_idx + 1, msg_idx),
+                }
+            } else {
+                *msg.add(msg_idx) = *fmt.add(i);
+                msg_idx += 1;
+            }
+
+            if msg_idx == max {
+                break;
+            }
+        }
+    }
+
+    sys_write(2, msg as *const (), msg_idx);
 }

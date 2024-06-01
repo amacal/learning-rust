@@ -1,15 +1,18 @@
-use core::arch::global_asm;
+use ::core::arch;
 
-global_asm! {
-    ".global _start",
-    "_start:",
-    "mov rdi, [rsp]",
-    "lea rsi, [rsp + 8]",
-    "push rsi",
-    "push rdi",
-    "mov rdi, rsp",
-    "call main"
-}
+arch::global_asm!(
+    "
+    .global _start;
+
+    _start:
+        mov rdi, [rsp];
+        lea rsi, [rsp + 8];
+        push rsi;
+        push rdi;
+        mov rdi, rsp;
+        call main;
+"
+);
 
 #[repr(C)]
 pub struct ProcessArguments {
@@ -18,9 +21,13 @@ pub struct ProcessArguments {
 }
 
 impl ProcessArguments {
+    pub fn len(&self) -> usize {
+        self.argc
+    }
+
     pub fn get(&self, index: usize) -> Option<*const u8> {
         if index >= self.argc {
-            return None
+            return None;
         }
 
         unsafe { Some(*self.argv.add(index) as *const u8) }
@@ -29,7 +36,7 @@ impl ProcessArguments {
     pub fn is(&self, index: usize, value: &'static [u8]) -> bool {
         let arg = match self.get(index) {
             None => return false,
-            Some(value) => value
+            Some(value) => value,
         };
 
         let mut idx = 0;

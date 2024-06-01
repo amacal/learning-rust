@@ -22,7 +22,7 @@ pub fn close_file(descriptor: FileDescriptor) -> FileClose {
     }
 }
 
-pub fn read_file(file: &FileDescriptor, buffer: Droplet<Heap>, offset: u64) -> FileRead {
+pub fn read_file<T>(file: &FileDescriptor, buffer: T, offset: u64) -> FileRead<T> {
     FileRead {
         fd: file.value,
         buffer: Some(buffer),
@@ -137,22 +137,25 @@ impl Future for FileClose {
     }
 }
 
-pub struct FileRead {
+pub struct FileRead<T> {
     fd: u32,
-    buffer: Option<Droplet<Heap>>,
     offset: u64,
+    buffer: Option<T>,
     token: Option<IORingTaskToken>,
 }
 
 #[allow(dead_code)]
-pub enum FileReadResult {
-    Succeeded(Droplet<Heap>, u32),
-    OperationFailed(Droplet<Heap>, i32),
+pub enum FileReadResult<T> {
+    Succeeded(T, u32),
+    OperationFailed(T, i32),
     InternallyFailed(),
 }
 
-impl Future for FileRead {
-    type Output = FileReadResult;
+impl<T> Future for FileRead<T>
+where
+    T: IORingSubmitBuffer + Unpin,
+{
+    type Output = FileReadResult<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -181,12 +184,12 @@ impl Future for FileRead {
             }
 
             None => {
-                let buffer = match &this.buffer {
-                    Some(value) => value,
+                let (buf, len) = match &this.buffer {
+                    Some(value) => value.extract(),
                     None => return Poll::Ready(FileReadResult::InternallyFailed()),
                 };
 
-                let op = IORingSubmitEntry::read(this.fd, buffer, this.offset);
+                let op = IORingSubmitEntry::read(this.fd, buf, len, this.offset);
                 let token = match IORingTaskToken::submit(cx.waker(), op) {
                     Some(token) => token,
                     None => return Poll::Ready(FileReadResult::InternallyFailed()),

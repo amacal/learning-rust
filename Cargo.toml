@@ -8,6 +8,11 @@ authors = ["Adrian Macal <adma@amacal.pl>"]
 default = []
 tracing = []
 
+[profile.dev]
+opt-level = "z"
+strip = false
+debug = true
+
 [profile.release]
 opt-level = "z"
 strip = true

@@ -4,6 +4,7 @@ pub struct IORingTaskRef {
     tidx: usize,
 }
 
+#[derive(Clone, Copy)]
 pub struct IORingCompleterRef {
     cid: u32,
     cidx: usize,

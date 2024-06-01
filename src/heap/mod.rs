@@ -1,17 +1,28 @@
 use ::core::ops::Deref;
 use ::core::ops::DerefMut;
 use ::core::ptr;
+use core::mem;
 
 use crate::syscall::*;
+use crate::trace::*;
 
 pub struct HeapSlice {
-    pub ptr: *const (),
+    pub ptr: usize,
     pub len: usize,
 }
 
 pub struct Heap {
-    pub ptr: *mut (),
+    pub ptr: usize,
     pub len: usize,
+}
+
+impl Heap {
+    pub fn at(ptr: usize, len: usize) -> Self {
+        Self {
+            ptr: ptr,
+            len: len,
+        }
+    }
 }
 
 pub enum HeapSlicing {
@@ -31,7 +42,7 @@ impl Heap {
         }
 
         let slice = HeapSlice {
-            ptr: unsafe { self.ptr.offset(start as isize) },
+            ptr: self.ptr + start,
             len: end - start,
         };
 
@@ -57,7 +68,7 @@ pub fn mem_alloc(len: usize) -> MemoryAllocation {
     let addr = match sys_mmap(addr, len, prot, flags, 0, 0) {
         value if value <= 0 => return MemoryAllocation::Failed(value),
         value => Heap {
-            ptr: value as *mut (),
+            ptr: value as usize,
             len: len,
         },
     };
@@ -72,7 +83,7 @@ pub enum MemoryDeallocation {
 }
 
 pub fn mem_free(memory: &mut Heap) -> MemoryDeallocation {
-    match sys_munmap(memory.ptr, memory.len) {
+    match sys_munmap(memory.ptr as *mut (), memory.len) {
         value if value == 0 => MemoryDeallocation::Succeeded(),
         value => MemoryDeallocation::Failed(value),
     }
@@ -116,11 +127,65 @@ impl Heap {
     }
 
     pub fn boxed<T: HeapLifetime>(self) -> Boxed<T> {
-        Boxed::at(self.ptr as *mut T)
+        trace2(b"creating boxed; addr=%x, size=%d\n", self.ptr, self.len);
+        Boxed::at(self.ptr, self.len, self.ptr as *mut T)
+    }
+
+    pub fn boxed_at<T: HeapLifetime>(self, offset: usize) -> Boxed<T> {
+        trace3(
+            b"creating boxed; addr=%x, size=%d, offset=%d\n",
+            self.ptr,
+            self.len,
+            offset,
+        );
+
+        Boxed::at(self.ptr, self.len, (self.ptr + offset) as *mut T)
+    }
+
+    pub fn view<T>(&self) -> View<T> {
+        trace2(b"creating view; addr=%x, size=%d\n", self.ptr, self.len);
+        View::at(self.ptr as *mut T)
+    }
+
+    pub fn view_at<T>(&self, offset: usize) -> View<T> {
+        trace3(
+            b"creating view; addr=%x, size=%d, offset=%d\n",
+            self.ptr,
+            self.len,
+            offset,
+        );
+
+        View::at((self.ptr + offset) as *mut T)
+    }
+}
+
+pub struct View<T> {
+    ptr: *mut T,
+}
+
+impl<T> View<T> {
+    fn at(ptr: *mut T) -> Self {
+        Self { ptr }
+    }
+}
+
+impl<T> Deref for View<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.ptr }
+    }
+}
+
+impl<T> DerefMut for View<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.ptr }
     }
 }
 
 pub struct Boxed<T: HeapLifetime> {
+    root: usize,
+    len: usize,
     ptr: *mut T,
 }
 
@@ -139,17 +204,44 @@ impl<T: HeapLifetime> DerefMut for Boxed<T> {
 }
 
 impl<T: HeapLifetime> Boxed<T> {
-    fn at(ptr: *mut T) -> Self {
+    fn at(root: usize, len: usize, ptr: *mut T) -> Self {
         T::ctor(unsafe { &mut *ptr });
-        let val = Boxed { ptr: ptr };
+        let val = Boxed { root, ptr, len };
 
         val
+    }
+
+    pub fn append<K: HeapLifetime>(self, src: K) -> Boxed<K> {
+        let ptr = unsafe { self.ptr.add(1) };
+        let ptr = ptr as *mut () as *mut K;
+
+        unsafe { ptr::write(ptr, src) };
+
+        Boxed {
+            root: self.root,
+            len: self.len,
+            ptr,
+        }
+    }
+}
+
+impl<T: HeapLifetime> Into<Heap> for Boxed<T> {
+    fn into(self) -> Heap {
+        let heap = Heap::at(self.root, self.len);
+        trace2(b"forgetting boxed; addr=%x, size=%d\n", self.ptr, self.len);
+
+        mem::forget(self);
+        heap
     }
 }
 
 impl<T: HeapLifetime> Drop for Boxed<T> {
     fn drop(&mut self) {
-        T::dtor(unsafe { &mut *self.ptr })
+        let mut heap = Heap::at(self.root, self.len);
+        trace2(b"releasing boxed; addr=%x, size=%d\n", self.ptr, self.len);
+
+        T::dtor(unsafe { &mut *self.ptr });
+        mem_free(&mut heap);
     }
 }
 

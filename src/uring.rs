@@ -2,6 +2,7 @@ use core::ptr::{null, null_mut, read_volatile, write_volatile};
 
 use crate::kernel::*;
 use crate::syscall::*;
+use crate::trace::*;
 
 pub struct IORing {
     fd: u32,
@@ -15,6 +16,7 @@ pub struct IORing {
 
 pub struct IORingSubmitter {
     fd: u32,
+    cnt: usize,
     sq_ptr: *mut (),
     sq_ptr_len: usize,
     sq_tail: *mut u32,
@@ -39,6 +41,7 @@ impl IORing {
     const IORING_OFF_SQES: usize = 0x010000000;
     const IORING_ENTER_GETEVENTS: u32 = 0x00000001;
 
+    const IORING_OP_NOP: u8 = 0;
     const IORING_OP_TIMEOUT: u8 = 11;
     const IORING_OP_OPENAT: u8 = 18;
     const IORING_OP_CLOSE: u8 = 19;
@@ -96,8 +99,11 @@ impl IORing {
         };
 
         let sq_tail = (sq_ptr as usize + params.sq_off.tail as usize) as *mut u32;
-        let sq_ring_mask = (sq_ptr as usize + params.sq_off.ring_mask as usize) as *mut u32;
         let sq_array = (sq_ptr as usize + params.sq_off.array as usize) as *mut u32;
+        let sq_ring_mask = (sq_ptr as usize + params.sq_off.ring_mask as usize) as *mut u32;
+        let sq_ring_entries = (sq_ptr as usize + params.sq_off.ring_entries as usize) as *mut u32;
+
+        trace2(b"ring ready; fd=%d, sq=%d\n", fd, unsafe { *sq_ring_entries });
 
         let offset = IORing::IORING_OFF_SQES;
         let (sq_sqes, sq_sqes_len) = match map::<io_uring_sqe>(fd, 0, sq_entries, offset) {
@@ -115,11 +121,15 @@ impl IORing {
 
         let cq_head = (cq_ptr as usize + params.cq_off.head as usize) as *mut u32;
         let cq_tail = (cq_ptr as usize + params.cq_off.tail as usize) as *mut u32;
-        let cq_ring_mask = (cq_ptr as usize + params.cq_off.ring_mask as usize) as *mut u32;
         let cq_cqes = (sq_ptr as usize + params.cq_off.cqes as usize) as *mut io_uring_cqe;
+        let cq_ring_mask = (cq_ptr as usize + params.cq_off.ring_mask as usize) as *mut u32;
+        let cq_ring_entries = (cq_ptr as usize + params.cq_off.ring_entries as usize) as *mut u32;
+
+        trace2(b"ring ready; fd=%d, cq=%d\n", fd, unsafe { *cq_ring_entries });
 
         let submitter = IORingSubmitter {
             fd: fd,
+            cnt: 0,
             sq_ptr: sq_ptr,
             sq_ptr_len: sq_ptr_len,
             sq_tail: sq_tail,
@@ -151,7 +161,7 @@ pub enum IORingSubmit {
 }
 
 pub trait IORingSubmitBuffer {
-    fn extract(self) -> (*const u8, usize);
+    fn extract(&self) -> (*const u8, usize);
 }
 
 pub struct IORingSubmitEntryTimeout {
@@ -167,9 +177,10 @@ pub struct IORingSubmitEntryClose {
     fd: u32,
 }
 
-pub struct IORingSubmitEntryRead<T: IORingSubmitBuffer> {
+pub struct IORingSubmitEntryRead {
     fd: u32,
-    buf: T,
+    buf: *const u8,
+    len: usize,
     off: u64,
 }
 
@@ -180,20 +191,34 @@ pub struct IORingSubmitEntryWrite<T: IORingSubmitBuffer> {
 }
 
 pub enum IORingSubmitEntry<T: IORingSubmitBuffer> {
+    Noop(),
     Timeout(IORingSubmitEntryTimeout),
     OpenAt(IORingSubmitEntryOpenAt<T>),
     Close(IORingSubmitEntryClose),
-    Read(IORingSubmitEntryRead<T>),
+    Read(IORingSubmitEntryRead),
     Write(IORingSubmitEntryWrite<T>),
 }
 
 impl IORingSubmitBuffer for *const u8 {
-    fn extract(self) -> (*const u8, usize) {
-        (self, 0)
+    fn extract(&self) -> (*const u8, usize) {
+        (*self, 0)
     }
 }
 
 impl IORingSubmitEntry<*const u8> {
+    pub fn noop() -> Self {
+        Self::Noop()
+    }
+
+    pub fn read(fd: u32, buf: *const u8, len: usize, off: u64) -> Self {
+        Self::Read(IORingSubmitEntryRead {
+            fd: fd,
+            buf: buf,
+            len: len,
+            off: off,
+        })
+    }
+
     pub fn timeout(timespec: *const timespec) -> Self {
         Self::Timeout(IORingSubmitEntryTimeout { timespec: timespec })
     }
@@ -211,14 +236,6 @@ impl<T: IORingSubmitBuffer> IORingSubmitEntry<T> {
         })
     }
 
-    pub fn read(fd: u32, buf: T, off: u64) -> Self {
-        Self::Read(IORingSubmitEntryRead {
-            fd: fd,
-            buf: buf,
-            off: off,
-        })
-    }
-
     pub fn write(fd: u32, buf: T, off: u64) -> Self {
         Self::Write(IORingSubmitEntryWrite {
             fd: fd,
@@ -229,7 +246,7 @@ impl<T: IORingSubmitBuffer> IORingSubmitEntry<T> {
 }
 
 impl IORingSubmitter {
-    pub fn submit<T, const C: usize>(&self, user_data: u64, entries: [IORingSubmitEntry<T>; C]) -> IORingSubmit
+    pub fn submit<T, const C: usize>(&mut self, user_data: u64, entries: [IORingSubmitEntry<T>; C]) -> IORingSubmit
     where
         T: IORingSubmitBuffer,
     {
@@ -241,8 +258,12 @@ impl IORingSubmitter {
             let sq_tail = unsafe { read_volatile(self.sq_tail) & ring_mask };
 
             let (opcode, fd, ptr, len, offset) = match entry {
+                IORingSubmitEntry::Noop() => {
+                    /* fmt */
+                    (IORing::IORING_OP_NOP, 0, null() as *const u8, 0, 0)
+                }
                 IORingSubmitEntry::Timeout(data) => {
-                    /* fmts */
+                    /* fmt */
                     (IORing::IORING_OP_TIMEOUT, 0, data.timespec as *const u8, 1, 0)
                 }
                 IORingSubmitEntry::OpenAt(data) => match data.buf.extract() {
@@ -252,8 +273,9 @@ impl IORingSubmitter {
                     /* fmt */
                     (IORing::IORING_OP_CLOSE, data.fd, null(), 0, 0)
                 }
-                IORingSubmitEntry::Read(data) => match data.buf.extract() {
-                    (ptr, len) => (IORing::IORING_OP_READ, data.fd, ptr, len, data.off),
+                IORingSubmitEntry::Read(data) => {
+                    /* fmt */
+                    (IORing::IORING_OP_READ, data.fd, data.buf, data.len, data.off)
                 },
                 IORingSubmitEntry::Write(data) => match data.buf.extract() {
                     (ptr, len) => (IORing::IORING_OP_WRITE, data.fd, ptr, len, data.off),
@@ -261,7 +283,15 @@ impl IORingSubmitter {
             };
 
             unsafe {
+                self.cnt += 1;
                 let sqe = self.sq_sqes.offset(sq_tail as isize);
+
+                trace3(
+                    b"submitting ring operation; op=%d, user=%d, cnt=%d\n",
+                    opcode,
+                    user_data,
+                    self.cnt,
+                );
 
                 (*sqe).opcode = opcode;
                 (*sqe).fd = fd as i32;

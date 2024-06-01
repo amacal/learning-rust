@@ -1,10 +1,10 @@
-use core::arch::asm;
+use ::core::arch::*;
 
-use crate::kernel::io_uring_params;
+use crate::kernel::*;
 
 #[allow(dead_code)]
 #[inline(never)]
-pub fn sys_read(fd: u32, buf: *const u8, count: usize) -> isize {
+pub fn sys_read(fd: u32, buf: *const (), count: usize) -> isize {
     unsafe {
         let ret: isize;
 
@@ -26,7 +26,7 @@ pub fn sys_read(fd: u32, buf: *const u8, count: usize) -> isize {
 
 #[allow(dead_code)]
 #[inline(never)]
-pub fn sys_write(fd: u32, buf: *const u8, count: usize) -> isize {
+pub fn sys_write(fd: u32, buf: *const (), count: usize) -> isize {
     unsafe {
         let ret: isize;
 
@@ -136,6 +136,27 @@ pub fn sys_munmap(addr: *mut (), len: usize) -> isize {
 
 #[allow(dead_code)]
 #[inline(never)]
+pub fn sys_nanosleep(timespec: *const timespec) -> isize {
+    unsafe {
+        let ret: isize;
+
+        asm!(
+            "syscall",
+            in("rax") 35,
+            in("rdi") timespec,
+            in("rsi") 0,
+            lateout("rcx") _,
+            lateout("r11") _,
+            lateout("rax") ret,
+            options(nostack)
+        );
+
+        ret
+    }
+}
+
+#[allow(dead_code)]
+#[inline(never)]
 pub fn sys_exit(status: i32) -> ! {
     unsafe {
         asm!(
@@ -144,6 +165,96 @@ pub fn sys_exit(status: i32) -> ! {
             in("rdi") status,
             options(nostack, noreturn)
         )
+    }
+}
+
+#[allow(dead_code)]
+#[inline(never)]
+pub fn sys_wait4(pid: u32, stats: *mut u32, options: u32, rusage: *mut ()) -> isize {
+    unsafe {
+        let ret: isize;
+
+        asm!(
+            "syscall",
+            in("rax") 61,
+            in("rdi") pid,
+            in("rsi") stats,
+            in("rdx") options,
+            in("r10") rusage,
+            lateout("rcx") _,
+            lateout("r11") _,
+            lateout("rax") ret,
+            options(nostack)
+        );
+
+        ret
+    }
+}
+
+#[allow(dead_code)]
+#[inline(never)]
+pub fn sys_fcntl(fd: u32, cmd: u32, arg: u64) -> isize {
+    unsafe {
+        let ret: isize;
+
+        asm!(
+            "syscall",
+            in("rax") 72,
+            in("rdi") fd,
+            in("rsi") cmd,
+            in("rdx") arg,
+            lateout("rcx") _,
+            lateout("r11") _,
+            lateout("rax") ret,
+            options(nostack)
+        );
+
+        ret
+    }
+}
+
+#[allow(dead_code)]
+#[inline(never)]
+pub fn sys_waitid(which: i32, pid: u32, info: *mut siginfo, options: u32, rusage: *mut ()) -> isize {
+    unsafe {
+        let ret: isize;
+
+        asm!(
+            "syscall",
+            in("rax") 247,
+            in("rdi") which,
+            in("rsi") pid,
+            in("rdx") info,
+            in("r10") options,
+            in("r8") rusage,
+            lateout("rcx") _,
+            lateout("r11") _,
+            lateout("rax") ret,
+            options(nostack)
+        );
+
+        ret
+    }
+}
+
+#[allow(dead_code)]
+#[inline(never)]
+pub fn sys_pipe2(pipefd: *mut u32, flags: u32) -> isize {
+    unsafe {
+        let ret: isize;
+
+        asm!(
+            "syscall",
+            in("rax") 293,
+            in("rdi") pipefd,
+            in("rsi") flags,
+            lateout("rcx") _,
+            lateout("r11") _,
+            lateout("rax") ret,
+            options(nostack)
+        );
+
+        ret
     }
 }
 
@@ -183,6 +294,27 @@ pub fn sys_io_uring_enter(fd: u32, to_submit: u32, min_complete: u32, flags: u32
             in("r10") flags,
             in("r8") argp,
             in("r9") args,
+            lateout("rcx") _,
+            lateout("r11") _,
+            lateout("rax") ret,
+            options(nostack)
+        );
+
+        ret
+    }
+}
+
+#[allow(dead_code)]
+#[inline(never)]
+pub fn sys_pidfd_open(pid: u32, flags: u32) -> isize {
+    unsafe {
+        let ret;
+
+        asm!(
+            "syscall",
+            in("rax") 434,
+            in("rdi") pid,
+            in("rsi") flags,
             lateout("rcx") _,
             lateout("r11") _,
             lateout("rax") ret,

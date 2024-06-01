@@ -8,8 +8,8 @@ use super::refs::*;
 use crate::heap::*;
 use crate::trace::*;
 
-const TASKS_COUNT: usize = 16;
-const COMPLETERS_COUNT: usize = 32;
+const TASKS_COUNT: usize = 128;
+const COMPLETERS_COUNT: usize = 256;
 
 pub struct IORingTaskCompletion {
     cid: u32,

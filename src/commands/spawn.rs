@@ -17,7 +17,7 @@ impl SpawnCommand {
                 TimeoutResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
             };
 
-            let spawned = spawn(async move {
+                let spawned = spawn(async move {
                 for _ in 0..i + 1 {
                     let msg: Option<&'static [u8]> = match timeout(5).await {
                         TimeoutResult::Succeeded() => continue,

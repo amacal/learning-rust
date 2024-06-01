@@ -1,5 +1,7 @@
 #![no_std]
 #![no_main]
+
+#![feature(fn_traits)]
 #![feature(waker_getters)]
 
 mod commands;
@@ -8,6 +10,7 @@ mod kernel;
 mod proc;
 mod runtime;
 mod syscall;
+mod thread;
 mod trace;
 mod uring;
 
@@ -16,31 +19,30 @@ use crate::proc::*;
 use crate::runtime::*;
 use crate::syscall::*;
 use crate::trace::*;
-use crate::uring::*;
 
 #[no_mangle]
 extern "C" fn main(args: &'static ProcessArguments) -> ! {
-    let (submitter, completer) = match IORing::init(32) {
-        IORingInit::Succeeded(submitter, completer) => (submitter, completer),
-        IORingInit::InvalidDescriptor(_) => fail(-2, b"I/O Ring: Invalid Descriptor.\n"),
-        IORingInit::SetupFailed(_) => fail(-2, b"I/O Ring: Setup Failed.\n"),
-        IORingInit::MappingFailed(_, _) => fail(-2, b"I/O Ring: Mapping Failed.\n"),
+    let mut runtime = match IORingRuntime::allocate() {
+        IORingRuntimeAllocate::Succeeded(runtime) => runtime,
+        IORingRuntimeAllocate::RingAllocationFailed() => fail(-2, b"I/O Runtime: Ring Allocation Failed.\n"),
+        IORingRuntimeAllocate::RegistryAllocationFailed() => fail(-2, b"I/O Runtime: Registry Allocation Failed.\n"),
+        IORingRuntimeAllocate::PoolAllocationFailed() => fail(-2, b"I/O Runtime: Pool Allocation Failed.\n"),
+        IORingRuntimeAllocate::PoolThreadingFailed() => fail(-2, b"I/O Runtime: Pool Threading Failed.\n"),
     };
 
-    let mut runtime = match IORingRuntime::create(submitter, completer) {
-        IORingRuntimeCreate::Succeeded(runtime) => runtime,
-        IORingRuntimeCreate::HeapFailed(_) => fail(-2, b"I/O Runtime: Allocation Failed.\n"),
-    };
+    let commands: [&'static [u8]; 9] = [b"cat", b"faster", b"hello", b"pipe", b"sha1sum", b"spawn", b"sync", b"thread", b"tick"];
 
-    let commands: [&'static [u8]; 6] = [b"cat", b"faster", b"hello", b"spawn", b"sync", b"tick"];
     let result = match args.select(1, commands) {
         Some(b"cat") => runtime.run(CatCommand { args: args }.execute()),
         Some(b"faster") => runtime.run(FasterCommand { args: args, delay: 4 }.execute()),
         Some(b"hello") => runtime.run(HelloCommand { msg: b"Hello, World!\n" }.execute()),
+        Some(b"pipe") => runtime.run(PipeCommand { msg: b"Hello, World!\n" }.execute()),
+        Some(b"sha1sum") => runtime.run(Sha1Command { args: args }.execute()),
         Some(b"spawn") => runtime.run(SpawnCommand { times: 30, delay: 3 }.execute()),
         Some(b"sync") => runtime.run(SyncCommand { msg: b"Hello, World!\n" }.execute()),
+        Some(b"thread") => runtime.run(ThreadCommand { ios: 100, cpus: 1000 }.execute()),
         Some(b"tick") => runtime.run(TickCommand { ticks: 2, delay: 1 }.execute()),
-        _ => fail(-2, b"I/O Runtime: Unrecognized Command.\n"),
+        _ => fail(-2, b"I/O Runtime: Unrecognized command.\n"),
     };
 
     match result {
@@ -60,7 +62,7 @@ extern "C" fn main(args: &'static ProcessArguments) -> ! {
 
 #[inline(never)]
 fn fail(status: i32, msg: &'static [u8]) -> ! {
-    sys_write(2, msg.as_ptr(), msg.len());
+    sys_write(2, msg.as_ptr() as *const (), msg.len());
     sys_exit(status);
 }
 
