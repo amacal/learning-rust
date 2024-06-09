@@ -93,7 +93,7 @@ impl IORingTaskToken {
         }
     }
 
-    pub fn execute(waker: &Waker, task: &CallableTarget<24>) -> Option<(IORingTaskToken, IORingTaskToken)> {
+    pub fn execute(waker: &Waker, task: &CallableTarget) -> Option<(IORingTaskToken, IORingTaskToken)> {
         match Self::context(waker).execute(task) {
             IORingRuntimeExecute::Queued(queued, executed) => Some((
                 IORingTaskToken::from_queue(queued),

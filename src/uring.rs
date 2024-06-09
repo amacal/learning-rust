@@ -184,9 +184,10 @@ pub struct IORingSubmitEntryRead {
     off: u64,
 }
 
-pub struct IORingSubmitEntryWrite<T: IORingSubmitBuffer> {
+pub struct IORingSubmitEntryWrite {
     fd: u32,
-    buf: T,
+    buf: *const u8,
+    len: usize,
     off: u64,
 }
 
@@ -196,7 +197,7 @@ pub enum IORingSubmitEntry<T: IORingSubmitBuffer> {
     OpenAt(IORingSubmitEntryOpenAt<T>),
     Close(IORingSubmitEntryClose),
     Read(IORingSubmitEntryRead),
-    Write(IORingSubmitEntryWrite<T>),
+    Write(IORingSubmitEntryWrite),
 }
 
 impl IORingSubmitBuffer for *const u8 {
@@ -219,6 +220,15 @@ impl IORingSubmitEntry<*const u8> {
         })
     }
 
+    pub fn write(fd: u32, buf: *const u8, len: usize, off: u64) -> Self {
+        Self::Write(IORingSubmitEntryWrite {
+            fd: fd,
+            buf: buf,
+            len: len,
+            off: off,
+        })
+    }
+
     pub fn timeout(timespec: *const timespec) -> Self {
         Self::Timeout(IORingSubmitEntryTimeout { timespec: timespec })
     }
@@ -233,14 +243,6 @@ impl<T: IORingSubmitBuffer> IORingSubmitEntry<T> {
         Self::OpenAt(IORingSubmitEntryOpenAt {
             fd: IORing::AT_FDCWD as u32,
             buf: buf,
-        })
-    }
-
-    pub fn write(fd: u32, buf: T, off: u64) -> Self {
-        Self::Write(IORingSubmitEntryWrite {
-            fd: fd,
-            buf: buf,
-            off: off,
         })
     }
 }
@@ -277,8 +279,9 @@ impl IORingSubmitter {
                     /* fmt */
                     (IORing::IORING_OP_READ, data.fd, data.buf, data.len, data.off)
                 },
-                IORingSubmitEntry::Write(data) => match data.buf.extract() {
-                    (ptr, len) => (IORing::IORING_OP_WRITE, data.fd, ptr, len, data.off),
+                IORingSubmitEntry::Write(data) => {
+                    /* fmt */
+                    (IORing::IORING_OP_WRITE, data.fd, data.buf, data.len, data.off)
                 },
             };
 

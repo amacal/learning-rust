@@ -37,7 +37,7 @@ pub enum StdOutWriteResult<T> {
     InternallyFailed(),
 }
 
-impl<T: IORingSubmitBuffer + Copy + Unpin> Future for StdOutWrite<T> {
+impl<T: IORingSubmitBuffer + Unpin> Future for StdOutWrite<T> {
     type Output = StdOutWriteResult<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -67,12 +67,12 @@ impl<T: IORingSubmitBuffer + Copy + Unpin> Future for StdOutWrite<T> {
             }
 
             None => {
-                let buffer = match &this.buffer {
-                    Some(value) => *value,
+                let (buf, len) = match &this.buffer {
+                    Some(value) => value.extract(),
                     None => return Poll::Ready(StdOutWriteResult::InternallyFailed()),
                 };
 
-                let op = IORingSubmitEntry::write(this.fd, buffer, 0);
+                let op = IORingSubmitEntry::write(this.fd, buf, len, 0);
                 let token = match IORingTaskToken::submit(cx.waker(), op) {
                     Some(token) => token,
                     None => return Poll::Ready(StdOutWriteResult::InternallyFailed()),

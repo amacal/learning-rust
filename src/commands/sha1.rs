@@ -1,126 +1,10 @@
 use super::errno::*;
+use crate::core::*;
 use crate::heap::*;
 use crate::proc::*;
 use crate::runtime::*;
+use crate::sha1::*;
 use crate::trace::*;
-
-struct Sha1 {
-    h0: u32,
-    h1: u32,
-    h2: u32,
-    h3: u32,
-    h4: u32,
-}
-
-impl Sha1 {
-    fn new() -> Sha1 {
-        Sha1 {
-            h0: 0x67452301,
-            h1: 0xefcdab89,
-            h2: 0x98badcfe,
-            h3: 0x10325476,
-            h4: 0xc3d2e1f0,
-        }
-    }
-
-    fn finalize(mut self, ptr: *mut u8, mut len: usize, total: u64) -> [u32; 5] {
-        unsafe {
-            if len < 55 {
-                let total = (total * 8).to_be_bytes();
-
-                *ptr.add(len) = 0x80;
-                len += 1;
-
-                while len < 56 {
-                    *ptr.add(len) = 0x00;
-                    len += 1;
-                }
-
-                for i in 0..total.len() {
-                    *ptr.add(len) = total[i];
-                    len += 1;
-                }
-
-                self.update(ptr, len);
-            } else {
-                *ptr.add(len) = 0x80;
-                len += 1;
-
-                while len < 64 {
-                    *ptr.add(len) = 0x00;
-                    len += 1;
-                }
-
-                self.update(ptr, len);
-                len = 0;
-
-                while len < 56 {
-                    *ptr.add(len) = 0x00;
-                    len += 1;
-                }
-
-                let total = (total * 8).to_be_bytes();
-
-                for i in 0..total.len() {
-                    *ptr.add(len) = total[i];
-                    len += 1;
-                }
-
-                self.update(ptr, len);
-            }
-        }
-
-        [self.h0, self.h1, self.h2, self.h3, self.h4]
-    }
-
-    fn update(&mut self, ptr: *const u8, len: usize) {
-        fn rotate<const T: u32>(value: u32) -> u32 {
-            (value << T) ^ (value >> (32 - T))
-        }
-
-        for i in 0..(len / 64) {
-            let (mut a, mut b, mut c, mut d, mut e) = (self.h0, self.h1, self.h2, self.h3, self.h4);
-            let mut w: [u32; 80] = [0; 80];
-
-            unsafe {
-                for j in 0..16 {
-                    let b0 = *ptr.add(i * 64 + j * 4 + 0) as u32;
-                    let b1 = *ptr.add(i * 64 + j * 4 + 1) as u32;
-                    let b2 = *ptr.add(i * 64 + j * 4 + 2) as u32;
-                    let b3 = *ptr.add(i * 64 + j * 4 + 3) as u32;
-
-                    w[j] = (b0 << 24) + (b1 << 16) + (b2 << 8) + b3;
-                }
-
-                for j in 16..80 {
-                    w[j] = rotate::<1>(w[j - 3] ^ w[j - 8] ^ w[j - 14] ^ w[j - 16])
-                }
-
-                for j in 0..80 {
-                    let (f, k) = match j {
-                        0..20 => ((b & c) | (!b & d), 0x5a827999),
-                        20..40 => (b ^ c ^ d, 0x6ed9eba1),
-                        40..60 => (((b & c) | (b & d) | (c & d)), 0x8f1bbcdc),
-                        _ => (b ^ c ^ d, 0xca62c1d6),
-                    };
-
-                    let t = rotate::<5>(a) + f + e + k + w[j];
-                    e = d;
-                    d = c;
-                    c = rotate::<30>(b);
-                    b = a;
-                    a = t;
-                }
-
-                self.h0 = self.h0.wrapping_add(a);
-                self.h1 = self.h1.wrapping_add(b);
-                self.h2 = self.h2.wrapping_add(c);
-                self.h3 = self.h3.wrapping_add(d);
-                self.h4 = self.h4.wrapping_add(e);
-            }
-        }
-    }
-}
 
 pub struct Sha1Command {
     pub args: &'static ProcessArguments,
@@ -129,22 +13,24 @@ pub struct Sha1Command {
 impl Sha1Command {
     pub async fn execute(self) -> Option<&'static [u8]> {
         for arg in 2..self.args.len() {
+            // a task will be spawned for each argument
             let task = spawn(async move {
-                let buffer = match mem_alloc(32 * 4096) {
-                    MemoryAllocation::Failed(_) => return Some(APP_MEMORY_ALLOC_FAILED),
+                // an auto dropped memory for a buffer
+                let buffer: Droplet<Heap> = match mem_alloc(32 * 4096) {
                     MemoryAllocation::Succeeded(value) => value.droplet(),
+                    MemoryAllocation::Failed(_) => return Some(APP_MEMORY_ALLOC_FAILED),
                 };
 
-                let stdout = open_stdout();
-                let path = match self.args.get(arg) {
+                // a path of the file to hash
+                let path: ProcessArgument = match self.args.get(arg) {
                     None => return Some(APP_ARGS_FAILED),
                     Some(value) => value,
                 };
 
-                let file = match open_file(path).await {
+                // a file descriptor for a file we opened
+                let file: FileDescriptor = match open_file(&path).await {
                     FileOpenResult::Succeeded(value) => value,
-                    FileOpenResult::OperationFailed(_) => return Some(APP_FILE_OPENING_FAILED),
-                    FileOpenResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+                    _ => return Some(APP_FILE_OPENING_FAILED),
                 };
 
                 let mut file_offset = 0;
@@ -153,78 +39,114 @@ impl Sha1Command {
 
                 loop {
                     while buffer_offset < buffer.len {
-                        let slice = match buffer.between(buffer_offset, buffer.len) {
-                            HeapSlicing::Succeeded(val) => val,
+                        // slice a buffer to try it fill till the end
+                        let buffer: HeapSlice = match buffer.between(buffer_offset, buffer.len) {
+                            HeapSlicing::Succeeded(value) => value,
                             _ => return Some(APP_MEMORY_SLICE_FAILED),
                         };
 
-                        let read = match read_file(&file, slice, file_offset).await {
+                        // and read bytes into sliced memory from a given file offset
+                        let read = match read_file(&file, buffer, file_offset).await {
                             FileReadResult::Succeeded(_, read) => read as usize,
-                            FileReadResult::OperationFailed(_, _) => return Some(APP_FILE_READING_FAILED),
-                            FileReadResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+                            _ => return Some(APP_FILE_READING_FAILED),
                         };
 
+                        // both counters have to be incremented
                         buffer_offset += read;
                         file_offset += read as u64;
 
+                        // and in case of end of file we return what we managed to read
                         if read == 0 {
                             break;
                         }
                     }
 
+                    // let's slice till 512-bits boundary, as sha1 requires
                     let slice = match buffer.between(0, buffer_offset / 64 * 64) {
                         HeapSlicing::Succeeded(val) => val,
                         _ => return Some(APP_MEMORY_SLICE_FAILED),
                     };
 
-                    let task = spawn_cpu(move || {
-                        sha1.update(slice.ptr as *const u8, slice.len);
-                        Ok(sha1)
+                    // to process it outside event loop
+                    let task = spawn_cpu(move || -> Result<Sha1, ()> {
+                        // just processing a slice and returning new self
+                        Ok(sha1.update(slice.ptr() as *const u8, slice.len()))
                     });
 
-                    sha1 = match task.await {
-                        SpawnCPUResult::Succeeded(Some(sha1)) => sha1,
-                        SpawnCPUResult::Succeeded(None) => todo!(),
-                        SpawnCPUResult::OperationFailed() => todo!(),
-                        SpawnCPUResult::InternallyFailed() => todo!(),
+                    // the cpu task has to be awaited
+                    sha1 = match task {
+                        None => return Some(APP_CPU_SPAWNING_FAILED),
+                        Some(task) => match task.await {
+                            SpawnCPUResult::Succeeded(Some(Ok(sha1))) => sha1,
+                            _ => return Some(APP_CPU_SPAWNING_FAILED),
+                        },
                     };
 
+                    // and in case we didn't full entire buffer
+                    // we may assume the file is completed
                     if buffer_offset < buffer.len {
                         break;
                     }
 
+                    // otherwise start filling buffer from the beginning
                     buffer_offset = 0;
                 }
 
-                let slice = match buffer.between(buffer_offset / 64 * 64, buffer_offset) {
+                // the buffer may have remainder between 0 and 63 bytes
+                let slice: HeapSlice = match buffer.between(buffer_offset / 64 * 64, buffer_offset) {
                     HeapSlicing::Succeeded(slice) => slice,
                     _ => return Some(APP_MEMORY_SLICE_FAILED),
                 };
 
-                let task = spawn_cpu(move || Ok(sha1.finalize(slice.ptr as *mut u8, slice.len, file_offset)));
-
-                let hash = match task.await {
-                    SpawnCPUResult::Succeeded(Some(hash)) => hash,
-                    SpawnCPUResult::Succeeded(None) => todo!(),
-                    SpawnCPUResult::OperationFailed() => todo!(),
-                    SpawnCPUResult::InternallyFailed() => todo!(),
+                // which needs to be finalized
+                let task = move || -> Result<[u32; 5], ()> {
+                    // returning final hash as [u32; 5]
+                    Ok(sha1.finalize(slice.ptr() as *mut u8, slice.len(), file_offset))
                 };
 
-                drop(buffer);
-                trace3(b"hash: %d %d %x\n", buffer_offset, file_offset, hash[0]);
+                // a cpu task has to be awaited
+                let hash: [u32; 5] = match spawn_cpu(task) {
+                    None => return Some(APP_CPU_SPAWNING_FAILED),
+                    Some(task) => match task.await {
+                        SpawnCPUResult::Succeeded(Some(Ok(hash))) => hash,
+                        _ => return Some(APP_CPU_SPAWNING_FAILED),
+                    },
+                };
 
-                match close_file(file).await {
-                    FileCloseResult::Succeeded() => None,
-                    FileCloseResult::OperationFailed(_) => Some(APP_FILE_CLOSING_FAILED),
-                    FileCloseResult::InternallyFailed() => Some(APP_INTERNALLY_FAILED),
+                // a message like sha1sum output is constructed
+                let mut msg = [0; 160];
+                let len = format6(
+                    &mut msg,
+                    b"%x%x%x%x%x  %s\n",
+                    hash[0],
+                    hash[1],
+                    hash[2],
+                    hash[3],
+                    hash[4],
+                    path.as_ptr(),
+                );
+
+                // to be printed asynchronously in the stdout
+                let stdout = open_stdout();
+                match write_stdout(&stdout, (msg, len)).await {
+                    StdOutWriteResult::Succeeded(_, _) => (),
+                    _ => return Some(APP_STDOUT_FAILED),
                 }
+
+                // and finally we close a file
+                match close_file(file).await {
+                    FileCloseResult::Succeeded() => (),
+                    _ => return Some(APP_FILE_CLOSING_FAILED),
+                }
+
+                None
             });
 
+            // and task has to be awaited to be executed
             match task.await {
-                SpawnResult::Succeeded() => None,
-                SpawnResult::OperationFailed() => Some(APP_INTERNALLY_FAILED),
-                SpawnResult::InternallyFailed() => Some(APP_INTERNALLY_FAILED),
-            };
+                SpawnResult::Succeeded() => (),
+                _ => return Some(APP_IO_SPAWNING_FAILED),
+            }
         }
 
         None

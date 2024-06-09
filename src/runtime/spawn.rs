@@ -11,7 +11,7 @@ use crate::trace::*;
 
 pub fn spawn<F>(target: F) -> Spawn
 where
-    F: Future<Output = Option<&'static [u8]>>,
+    F: Future<Output = Option<&'static [u8]>> + Send,
 {
     Spawn {
         task: match IORingPin::allocate(target) {
@@ -21,20 +21,23 @@ where
     }
 }
 
-pub fn spawn_cpu<F, R>(target: F) -> SpawnCPU<F, R>
+pub fn spawn_cpu<'a, F, R, E>(target: F) -> Option<SpawnCPU<'a, F, R, E>>
 where
-    F: FnOnce() -> Result<R, Option<&'static [u8]>> + Unpin,
-    R: Unpin,
+    F: FnOnce() -> Result<R, E> + Unpin + Send + 'a,
+    R: Unpin + Send,
+    E: Unpin + Send,
 {
-    SpawnCPU {
+    let task = match CallableTarget::allocate(target) {
+        CallableTargetAllocate::Succeeded(target) => target,
+        CallableTargetAllocate::AllocationFailed(_) => return None,
+    };
+
+    Some(SpawnCPU {
         queued: None,
         executed: None,
-        phantom: PhantomData::default(),
-        task: match CallableTarget::allocate(target) {
-            CallableTargetAllocate::Succeeded(target) => Some(target),
-            CallableTargetAllocate::AllocationFailed(_) => None,
-        },
-    }
+        phantom: PhantomData,
+        task: Some(task),
+    })
 }
 
 pub struct Spawn {
@@ -69,29 +72,30 @@ impl Future for Spawn {
     }
 }
 
-pub struct SpawnCPU<F, R>
+pub struct SpawnCPU<'a, F, R, E>
 where
     F: Unpin,
     R: Unpin,
 {
-    task: Option<CallableTarget<24>>,
+    task: Option<CallableTarget>,
     queued: Option<IORingTaskToken>,
     executed: Option<IORingTaskToken>,
-    phantom: PhantomData<(F, R)>,
+    phantom: PhantomData<(&'a F, R, E)>,
 }
 
-pub enum SpawnCPUResult<R> {
-    Succeeded(Option<R>),
+pub enum SpawnCPUResult<R, E> {
+    Succeeded(Option<Result<R, E>>),
     OperationFailed(),
     InternallyFailed(),
 }
 
-impl<F, R> Future for SpawnCPU<F, R>
+impl<'a, F, R, E> Future for SpawnCPU<'a, F, R, E>
 where
-    F: FnOnce() -> Result<R, Option<&'static [u8]>> + Unpin,
+    F: FnOnce() -> Result<R, E> + Unpin,
     R: Unpin,
+    E: Unpin,
 {
-    type Output = SpawnCPUResult<R>;
+    type Output = SpawnCPUResult<R, E>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -134,7 +138,7 @@ where
                     trace1(b"# polling spawn-cpu; stage=executed, res=%d\n", result);
                     let result = match this.task.take() {
                         None => SpawnCPUResult::InternallyFailed(),
-                        Some(task) => SpawnCPUResult::Succeeded(task.result::<F, R>()),
+                        Some(task) => SpawnCPUResult::Succeeded(task.result::<F, R, E>()),
                     };
 
                     Poll::Ready(result)
@@ -166,14 +170,14 @@ where
     }
 }
 
-impl<F, R> Drop for SpawnCPU<F, R>
+impl<'a, F, R, E> Drop for SpawnCPU<'a, F, R, E>
 where
     F: Unpin,
     R: Unpin,
 {
     fn drop(&mut self) {
         if let Some(task) = self.task.take() {
-            let (ptr, len) = (task.heap().ptr, task.heap().len);
+            let (ptr, len) = task.as_ptr();
             trace2(b"callable; releasing task, heap=%x, size=%d\n", ptr, len);
             task.release();
         }

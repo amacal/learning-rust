@@ -1,5 +1,7 @@
 use ::core::arch;
 
+use crate::core::*;
+
 arch::global_asm!(
     "
     .global _start;
@@ -20,17 +22,28 @@ pub struct ProcessArguments {
     argv: *const *const u8,
 }
 
+pub struct ProcessArgument {
+    ptr: *const u8,
+}
+
+unsafe impl Sync for ProcessArguments {}
+unsafe impl Send for ProcessArgument {}
+unsafe impl Sync for ProcessArgument {}
+
 impl ProcessArguments {
     pub fn len(&self) -> usize {
         self.argc
     }
 
-    pub fn get(&self, index: usize) -> Option<*const u8> {
+    pub fn get(&self, index: usize) -> Option<ProcessArgument> {
         if index >= self.argc {
             return None;
         }
 
-        unsafe { Some(*self.argv.add(index) as *const u8) }
+        let ptr = unsafe { *self.argv.add(index) as *const u8 };
+        let arg = ProcessArgument { ptr: ptr };
+
+        Some(arg)
     }
 
     pub fn is(&self, index: usize, value: &'static [u8]) -> bool {
@@ -45,18 +58,18 @@ impl ProcessArguments {
 
         unsafe {
             while idx < len {
-                if *arg.add(idx) == b'\0' {
+                if *arg.ptr.add(idx) == b'\0' {
                     return false;
                 }
 
-                if *arg.add(idx) != *value.add(idx) {
+                if *arg.ptr.add(idx) != *value.add(idx) {
                     return false;
                 }
 
                 idx += 1;
             }
 
-            return idx == len && *arg.add(idx) == b'\0';
+            return idx == len && *arg.ptr.add(idx) == b'\0';
         }
     }
 
@@ -69,4 +82,11 @@ impl ProcessArguments {
 
         None
     }
+}
+
+impl AsNullTerminatedRef for ProcessArgument {
+    fn as_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+
 }

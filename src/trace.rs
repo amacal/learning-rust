@@ -75,6 +75,24 @@ impl FormatString for &'static [u8] {
     }
 }
 
+impl FormatString for *const u8 {
+    fn ptr(&self) -> *const u8 {
+        *self
+    }
+
+    fn len(&self) -> usize {
+        let mut usize = 0;
+
+        unsafe {
+            while *(*self).add(usize) != b'\0' {
+                usize += 1;
+            }
+        }
+
+        usize
+    }
+}
+
 impl<T> FormatArg for &T {
     fn to_number(self) -> Option<impl FormatNumber> {
         Some(((self as *const T as usize) & 0xffffffff) as u32)
@@ -85,7 +103,17 @@ impl<T> FormatArg for &T {
     }
 }
 
-impl<T> FormatArg for *const T {
+impl FormatArg for *const u8 {
+    fn to_number(self) -> Option<impl FormatNumber> {
+        Some(((self as usize) & 0xffffffff) as u32)
+    }
+
+    fn to_string(self) -> Option<impl FormatString> {
+        Some(self)
+    }
+}
+
+impl FormatArg for *const () {
     fn to_number(self) -> Option<impl FormatNumber> {
         Some(((self as usize) & 0xffffffff) as u32)
     }
@@ -95,7 +123,7 @@ impl<T> FormatArg for *const T {
     }
 }
 
-impl<T> FormatArg for *mut T {
+impl FormatArg for *mut () {
     fn to_number(self) -> Option<impl FormatNumber> {
         Some(((self as usize) & 0xffffffff) as u32)
     }
@@ -213,7 +241,7 @@ fn format_string<T: FormatString>(msg: *mut u8, mut idx: usize, max: usize, val:
     let mut off = 0;
 
     unsafe {
-        while off < len && idx < max && *val.add(off) != b'\0' {
+        while off < len && idx < max && *val.add(off) != 0 {
             *msg.add(idx) = *val.add(off);
             off += 1;
             idx += 1;
@@ -225,7 +253,12 @@ fn format_string<T: FormatString>(msg: *mut u8, mut idx: usize, max: usize, val:
 
 #[allow(dead_code)]
 #[inline(never)]
-fn format_number<T: FormatNumber, const B: u8>(msg: *mut u8, mut idx: usize, max: usize, val: T) -> usize {
+fn format_number<T: FormatNumber, const B: u8, const L: usize>(
+    msg: *mut u8,
+    mut idx: usize,
+    max: usize,
+    val: T,
+) -> usize {
     let neg = val.is_negative();
     let zero = val.is_zero();
     let mut val = val.absolute();
@@ -234,7 +267,7 @@ fn format_number<T: FormatNumber, const B: u8>(msg: *mut u8, mut idx: usize, max
     let buf = buf.as_mut_ptr();
     let mut buf_idx = 0;
 
-    while buf_idx < 10 && idx < max && !val.is_zero() {
+    while buf_idx < 10 && idx < max && (!val.is_zero() || buf_idx < L) {
         let (next, remainder) = val.divide::<B>();
         let character = match remainder {
             value if value <= 9 => b'0' + value,
@@ -317,11 +350,11 @@ pub fn trace1<T1: FormatArg + Copy>(fmt: &'static [u8], val1: T1) {
                 (val_idx, msg_idx) = match (val_idx, *fmt.add(i)) {
                     (0, b'd') => match val1.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, max, val)),
                     },
                     (0, b'x') => match val1.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, max, val)),
                     },
                     (0, b's') => match val1.to_string() {
                         None => (val_idx + 1, msg_idx),
@@ -374,11 +407,11 @@ pub fn trace2<T1: FormatArg + Copy, T2: FormatArg + Copy>(fmt: &'static [u8], va
                 (val_idx, msg_idx) = match (val_idx, *fmt.add(i)) {
                     (0, b'd') => match val1.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, max, val)),
                     },
                     (0, b'x') => match val1.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, max, val)),
                     },
                     (0, b's') => match val1.to_string() {
                         None => (val_idx + 1, msg_idx),
@@ -386,11 +419,11 @@ pub fn trace2<T1: FormatArg + Copy, T2: FormatArg + Copy>(fmt: &'static [u8], va
                     },
                     (1, b'd') => match val2.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, max, val)),
                     },
                     (1, b'x') => match val2.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, max, val)),
                     },
                     (1, b's') => match val2.to_string() {
                         None => (val_idx + 1, msg_idx),
@@ -454,11 +487,11 @@ where
                 (val_idx, msg_idx) = match (val_idx, *fmt.add(i)) {
                     (0, b'd') => match val1.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, max, val)),
                     },
                     (0, b'x') => match val1.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, max, val)),
                     },
                     (0, b's') => match val1.to_string() {
                         None => (val_idx + 1, msg_idx),
@@ -466,11 +499,11 @@ where
                     },
                     (1, b'd') => match val2.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, max, val)),
                     },
                     (1, b'x') => match val2.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, max, val)),
                     },
                     (1, b's') => match val2.to_string() {
                         None => (val_idx + 1, msg_idx),
@@ -478,11 +511,11 @@ where
                     },
                     (2, b'd') => match val3.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, max, val)),
                     },
                     (2, b'x') => match val3.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, max, val)),
                     },
                     (2, b's') => match val3.to_string() {
                         None => (val_idx + 1, msg_idx),
@@ -548,11 +581,11 @@ where
                 (val_idx, msg_idx) = match (val_idx, *fmt.add(i)) {
                     (0, b'd') => match val1.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, max, val)),
                     },
                     (0, b'x') => match val1.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, max, val)),
                     },
                     (0, b's') => match val1.to_string() {
                         None => (val_idx + 1, msg_idx),
@@ -560,11 +593,11 @@ where
                     },
                     (1, b'd') => match val2.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, max, val)),
                     },
                     (1, b'x') => match val2.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, max, val)),
                     },
                     (1, b's') => match val2.to_string() {
                         None => (val_idx + 1, msg_idx),
@@ -572,11 +605,11 @@ where
                     },
                     (2, b'd') => match val3.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, max, val)),
                     },
                     (2, b'x') => match val3.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, max, val)),
                     },
                     (2, b's') => match val3.to_string() {
                         None => (val_idx + 1, msg_idx),
@@ -584,11 +617,11 @@ where
                     },
                     (3, b'd') => match val4.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 10>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, max, val)),
                     },
                     (3, b'x') => match val4.to_number() {
                         None => (val_idx + 1, msg_idx),
-                        Some(val) => (val_idx + 1, format_number::<_, 16>(msg, msg_idx, max, val)),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, max, val)),
                     },
                     (3, b's') => match val4.to_string() {
                         None => (val_idx + 1, msg_idx),
@@ -608,4 +641,264 @@ where
     }
 
     sys_write(2, msg as *const (), msg_idx);
+}
+
+#[allow(dead_code)]
+#[cfg(not(feature = "tracing"))]
+pub fn trace5<T1, T2, T3, T4, T5>(_fmt: &'static [u8], _val1: T1, _val2: T2, _val3: T3, _val4: T4, _val5: T5)
+where
+    T1: FormatArg + Copy,
+    T2: FormatArg + Copy,
+    T3: FormatArg + Copy,
+    T4: FormatArg + Copy,
+    T5: FormatArg + Copy,
+{
+}
+
+#[allow(dead_code)]
+#[inline(never)]
+#[cfg(feature = "tracing")]
+pub fn trace5<T1, T2, T3, T4, T5>(fmt: &'static [u8], val1: T1, val2: T2, val3: T3, val4: T4, val5: T5)
+where
+    T1: FormatArg + Copy,
+    T2: FormatArg + Copy,
+    T3: FormatArg + Copy,
+    T4: FormatArg + Copy,
+    T5: FormatArg + Copy,
+{
+    use crate::syscall::*;
+    let mut msg: [u8; 80] = [0; 80];
+
+    format5(&mut msg, fmt, val1, val2, val3, val4, val5);
+    sys_write(2, msg.as_ptr() as *const (), msg.len());
+}
+
+#[allow(dead_code)]
+#[inline(never)]
+pub fn format5<const T: usize, T1, T2, T3, T4, T5>(
+    msg: &mut [u8; T],
+    fmt: &'static [u8],
+    val1: T1,
+    val2: T2,
+    val3: T3,
+    val4: T4,
+    val5: T5,
+) where
+    T1: FormatArg + Copy,
+    T2: FormatArg + Copy,
+    T3: FormatArg + Copy,
+    T4: FormatArg + Copy,
+    T5: FormatArg + Copy,
+{
+    let len = fmt.len();
+    let fmt = fmt.as_ptr();
+
+    let mut spec = false;
+    let msg = msg.as_mut_ptr();
+
+    let mut msg_idx = 0;
+    let mut val_idx = 0;
+
+    unsafe {
+        for i in 0..len {
+            if spec == false && *fmt.add(i) == b'%' {
+                spec = true;
+            } else if spec {
+                spec = false;
+                (val_idx, msg_idx) = match (val_idx, *fmt.add(i)) {
+                    (0, b'd') => match val1.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (0, b'x') => match val1.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (0, b's') => match val1.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    (1, b'd') => match val2.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (1, b'x') => match val2.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (1, b's') => match val2.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    (2, b'd') => match val3.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (2, b'x') => match val3.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (2, b's') => match val3.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    (3, b'd') => match val4.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (3, b'x') => match val4.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (3, b's') => match val4.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    (4, b'd') => match val5.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (4, b'x') => match val5.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (4, b's') => match val5.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    _ => (val_idx + 1, msg_idx),
+                }
+            } else {
+                *msg.add(msg_idx) = *fmt.add(i);
+                msg_idx += 1;
+            }
+
+            if msg_idx == T {
+                break;
+            }
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[inline(never)]
+pub fn format6<const T: usize, T1, T2, T3, T4, T5, T6>(
+    msg: &mut [u8; T],
+    fmt: &'static [u8],
+    val1: T1,
+    val2: T2,
+    val3: T3,
+    val4: T4,
+    val5: T5,
+    val6: T6,
+) -> usize where
+    T1: FormatArg + Copy,
+    T2: FormatArg + Copy,
+    T3: FormatArg + Copy,
+    T4: FormatArg + Copy,
+    T5: FormatArg + Copy,
+    T6: FormatArg + Copy,
+{
+    let len = fmt.len();
+    let fmt = fmt.as_ptr();
+
+    let mut spec = false;
+    let msg = msg.as_mut_ptr();
+
+    let mut msg_idx = 0;
+    let mut val_idx = 0;
+
+    unsafe {
+        for i in 0..len {
+            if spec == false && *fmt.add(i) == b'%' {
+                spec = true;
+            } else if spec {
+                spec = false;
+                (val_idx, msg_idx) = match (val_idx, *fmt.add(i)) {
+                    (0, b'd') => match val1.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (0, b'x') => match val1.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (0, b's') => match val1.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    (1, b'd') => match val2.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (1, b'x') => match val2.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (1, b's') => match val2.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    (2, b'd') => match val3.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (2, b'x') => match val3.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (2, b's') => match val3.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    (3, b'd') => match val4.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (3, b'x') => match val4.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (3, b's') => match val4.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    (4, b'd') => match val5.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (4, b'x') => match val5.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (4, b's') => match val5.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    (5, b'd') => match val6.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 10, 0>(msg, msg_idx, T, val)),
+                    },
+                    (5, b'x') => match val6.to_number() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_number::<_, 16, 8>(msg, msg_idx, T, val)),
+                    },
+                    (5, b's') => match val6.to_string() {
+                        None => (val_idx + 1, msg_idx),
+                        Some(val) => (val_idx + 1, format_string(msg, msg_idx, T, val)),
+                    },
+                    _ => (val_idx + 1, msg_idx),
+                }
+            } else {
+                *msg.add(msg_idx) = *fmt.add(i);
+                msg_idx += 1;
+            }
+
+            if msg_idx == T {
+                break;
+            }
+        }
+
+        msg_idx
+    }
 }

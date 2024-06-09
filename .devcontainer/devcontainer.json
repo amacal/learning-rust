@@ -15,7 +15,10 @@
 			"settings": {
 				"files.trimTrailingWhitespace": true,
 				"files.trimFinalNewlines": true,
-				"files.insertFinalNewline": true
+				"files.insertFinalNewline": true,
+				"rust-analyzer.cargo.features": [],
+				"rust-analyzer.cargo.target": "x86_64-unknown-none",
+				"rust-analyzer.checkOnSave.allTargets": false
 			}
 		}
 	}

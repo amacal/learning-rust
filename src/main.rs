@@ -5,14 +5,19 @@
 #![feature(waker_getters)]
 
 mod commands;
+mod core;
 mod heap;
 mod kernel;
+mod pipe;
 mod proc;
 mod runtime;
+mod sha1;
 mod syscall;
 mod thread;
 mod trace;
 mod uring;
+
+use ::core::panic;
 
 use crate::commands::*;
 use crate::proc::*;
@@ -27,7 +32,6 @@ extern "C" fn main(args: &'static ProcessArguments) -> ! {
         IORingRuntimeAllocate::RingAllocationFailed() => fail(-2, b"I/O Runtime: Ring Allocation Failed.\n"),
         IORingRuntimeAllocate::RegistryAllocationFailed() => fail(-2, b"I/O Runtime: Registry Allocation Failed.\n"),
         IORingRuntimeAllocate::PoolAllocationFailed() => fail(-2, b"I/O Runtime: Pool Allocation Failed.\n"),
-        IORingRuntimeAllocate::PoolThreadingFailed() => fail(-2, b"I/O Runtime: Pool Threading Failed.\n"),
     };
 
     let commands: [&'static [u8]; 9] = [b"cat", b"faster", b"hello", b"pipe", b"sha1sum", b"spawn", b"sync", b"thread", b"tick"];
@@ -68,6 +72,6 @@ fn fail(status: i32, msg: &'static [u8]) -> ! {
 
 #[inline(never)]
 #[panic_handler]
-fn panic(_panic: &core::panic::PanicInfo<'_>) -> ! {
+fn panic(_panic: &panic::PanicInfo<'_>) -> ! {
     sys_exit(-1)
 }

@@ -63,7 +63,6 @@ pub trait PipeClosable {
     fn as_fd(self) -> u32;
 }
 
-#[derive(Clone, Copy)]
 pub struct ReadPipeDescriptor {
     value: u32,
 }
@@ -74,7 +73,6 @@ impl PipeClosable for ReadPipeDescriptor {
     }
 }
 
-#[derive(Clone, Copy)]
 pub struct WritePipeDescriptor {
     value: u32,
 }
@@ -104,7 +102,7 @@ pub enum PipeWriteResult<T> {
     InternallyFailed(),
 }
 
-impl<T: IORingSubmitBuffer + Copy + Unpin> Future for PipeWrite<T> {
+impl<T: IORingSubmitBuffer + Unpin> Future for PipeWrite<T> {
     type Output = PipeWriteResult<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -134,12 +132,12 @@ impl<T: IORingSubmitBuffer + Copy + Unpin> Future for PipeWrite<T> {
             }
 
             None => {
-                let buffer = match &this.buffer {
-                    Some(value) => *value,
+                let (buf, len) = match &this.buffer {
+                    Some(value) => value.extract(),
                     None => return Poll::Ready(PipeWriteResult::InternallyFailed()),
                 };
 
-                let op = IORingSubmitEntry::write(this.fd, buffer, 0);
+                let op = IORingSubmitEntry::write(this.fd, buf, len, 0);
                 let token = match IORingTaskToken::submit(cx.waker(), op) {
                     Some(token) => token,
                     None => return Poll::Ready(PipeWriteResult::InternallyFailed()),

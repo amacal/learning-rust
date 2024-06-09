@@ -35,7 +35,7 @@ impl Future for Timeout {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling timeout; timespec=%x\n", &this.timespec as *const timespec);
+        trace1(b"# polling timeout; timespec=%x\n", &this.timespec as *const timespec as *const ());
 
         match this.token.take() {
             Some(token) => {

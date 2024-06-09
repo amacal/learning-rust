@@ -4,11 +4,16 @@ use ::core::task::Context;
 use ::core::task::Poll;
 
 use super::token::*;
-use crate::heap::*;
+use crate::core::*;
 use crate::trace::*;
 use crate::uring::*;
 
-pub fn open_file(path: *const u8) -> FileOpen {
+// a file can be opened from any null terminated string reference
+// because this is a way how I/O Ring accepts it in open_at operation
+pub fn open_file<'a, TPath>(path: &'a TPath) -> FileOpen<'a, TPath>
+where
+    TPath: AsNullTerminatedRef,
+{
     FileOpen {
         path: path,
         token: None,
@@ -22,7 +27,7 @@ pub fn close_file(descriptor: FileDescriptor) -> FileClose {
     }
 }
 
-pub fn read_file<T>(file: &FileDescriptor, buffer: T, offset: u64) -> FileRead<T> {
+pub fn read_file<TBuffer>(file: &FileDescriptor, buffer: TBuffer, offset: u64) -> FileRead<TBuffer> {
     FileRead {
         fd: file.value,
         buffer: Some(buffer),
@@ -32,11 +37,14 @@ pub fn read_file<T>(file: &FileDescriptor, buffer: T, offset: u64) -> FileRead<T
 }
 
 pub struct FileDescriptor {
-    pub value: u32,
+    value: u32,
 }
 
-pub struct FileOpen {
-    path: *const u8,
+pub struct FileOpen<'a, TPath>
+where
+    TPath: AsNullTerminatedRef,
+{
+    path: &'a TPath,
     token: Option<IORingTaskToken>,
 }
 
@@ -47,12 +55,15 @@ pub enum FileOpenResult {
     InternallyFailed(),
 }
 
-impl Future for FileOpen {
+impl<'a, TPath> Future for FileOpen<'a, TPath>
+where
+    TPath: AsNullTerminatedRef,
+{
     type Output = FileOpenResult;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling file-open; addr=%x\n", this.path);
+        trace1(b"# polling file-open; addr=%x\n", this.path.as_ptr());
 
         match this.token.take() {
             Some(token) => {
@@ -72,7 +83,7 @@ impl Future for FileOpen {
             }
 
             None => {
-                let op = IORingSubmitEntry::open_at(this.path);
+                let op = IORingSubmitEntry::open_at(this.path.as_ptr());
                 let token = match IORingTaskToken::submit(cx.waker(), op) {
                     Some(token) => token,
                     None => return Poll::Ready(FileOpenResult::InternallyFailed()),
@@ -137,25 +148,25 @@ impl Future for FileClose {
     }
 }
 
-pub struct FileRead<T> {
+pub struct FileRead<TBuffer> {
     fd: u32,
     offset: u64,
-    buffer: Option<T>,
+    buffer: Option<TBuffer>,
     token: Option<IORingTaskToken>,
 }
 
 #[allow(dead_code)]
-pub enum FileReadResult<T> {
-    Succeeded(T, u32),
-    OperationFailed(T, i32),
+pub enum FileReadResult<TBuffer> {
+    Succeeded(TBuffer, u32),
+    OperationFailed(TBuffer, i32),
     InternallyFailed(),
 }
 
-impl<T> Future for FileRead<T>
+impl<TBuffer> Future for FileRead<TBuffer>
 where
-    T: IORingSubmitBuffer + Unpin,
+    TBuffer: IORingSubmitBuffer + Unpin,
 {
-    type Output = FileReadResult<T>;
+    type Output = FileReadResult<TBuffer>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();

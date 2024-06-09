@@ -6,9 +6,20 @@ use core::mem;
 use crate::syscall::*;
 use crate::trace::*;
 
-pub struct HeapSlice {
-    pub ptr: usize,
-    pub len: usize,
+pub struct HeapSlice<'a> {
+    src: &'a Heap,
+    off: usize,
+    len: usize,
+}
+
+impl<'a> HeapSlice<'a> {
+    pub fn ptr(&self) -> usize {
+        self.src.ptr + self.off
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
 }
 
 pub struct Heap {
@@ -25,14 +36,14 @@ impl Heap {
     }
 }
 
-pub enum HeapSlicing {
-    Succeeded(HeapSlice),
+pub enum HeapSlicing<'a> {
+    Succeeded(HeapSlice<'a>),
     InvalidParameters(),
     OutOfRange(),
 }
 
 impl Heap {
-    pub fn between(&self, start: usize, end: usize) -> HeapSlicing {
+    pub fn between<'a>(&'a self, start: usize, end: usize) -> HeapSlicing<'a> {
         if start > self.len || end > self.len {
             return HeapSlicing::OutOfRange();
         }
@@ -42,7 +53,8 @@ impl Heap {
         }
 
         let slice = HeapSlice {
-            ptr: self.ptr + start,
+            src: self,
+            off: start,
             len: end - start,
         };
 
@@ -124,6 +136,10 @@ impl Heap {
         }
 
         Droplet::from(self, free)
+    }
+
+    pub fn as_ptr(&self) -> (usize, usize) {
+        (self.ptr, self.len)
     }
 
     pub fn boxed<T: HeapLifetime>(self) -> Boxed<T> {
@@ -227,8 +243,10 @@ impl<T: HeapLifetime> Boxed<T> {
 
 impl<T: HeapLifetime> Into<Heap> for Boxed<T> {
     fn into(self) -> Heap {
+        let ptr = self.ptr as usize;
         let heap = Heap::at(self.root, self.len);
-        trace2(b"forgetting boxed; addr=%x, size=%d\n", self.ptr, self.len);
+
+        trace2(b"forgetting boxed; addr=%x, size=%d\n", ptr, self.len);
 
         mem::forget(self);
         heap
@@ -237,8 +255,10 @@ impl<T: HeapLifetime> Into<Heap> for Boxed<T> {
 
 impl<T: HeapLifetime> Drop for Boxed<T> {
     fn drop(&mut self) {
+        let ptr = self.ptr as usize;
         let mut heap = Heap::at(self.root, self.len);
-        trace2(b"releasing boxed; addr=%x, size=%d\n", self.ptr, self.len);
+
+        trace2(b"releasing boxed; addr=%x, size=%d\n", ptr, self.len);
 
         T::dtor(unsafe { &mut *self.ptr });
         mem_free(&mut heap);

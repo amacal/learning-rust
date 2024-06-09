@@ -7,7 +7,7 @@ use crate::syscall::*;
 use crate::trace::*;
 use crate::uring::*;
 
-use crate::CallableTarget;
+use crate::runtime::CallableTarget;
 
 arch::global_asm!(
     "
@@ -34,7 +34,7 @@ arch::global_asm!(
 
 extern "C" {
     fn _start_thread(flags: u64, stack: *mut (), func: extern "C" fn(&WorkerArgs) -> !, seed: u64) -> isize;
-    fn _stop_thread(heap_ptr: usize, heap_len: usize) -> !;
+    fn _stop_thread(stack_ptr: usize, stack_len: usize) -> !;
 }
 
 unsafe fn start_thread(heap: &Heap, func: extern "C" fn(&WorkerArgs) -> !, args: WorkerArgs) -> isize {
@@ -45,6 +45,7 @@ unsafe fn start_thread(heap: &Heap, func: extern "C" fn(&WorkerArgs) -> !, args:
     let size = mem::size_of::<WorkerArgs>();
     let stack = (heap.ptr as *mut u8).add(heap.len - size);
 
+    // copy worker args on new stack
     *(stack as *mut WorkerArgs) = args;
 
     // we don't care about handing negative results here
@@ -61,8 +62,8 @@ pub struct Worker {
 
 #[repr(C)]
 struct WorkerArgs {
-    heap_ptr: usize,
-    heap_len: usize,
+    stack_ptr: usize,
+    stack_len: usize,
     incoming: u32,
     outgoing: u32,
 }
@@ -108,11 +109,11 @@ impl Worker {
             }
         };
 
-        // a seed will be passed directly to newly created thread
-        // and must contains incoming and outgoing pipes
+        // args will be passed directly to newly created thread
+        // and must contain incoming and outgoing pipes
         let args = WorkerArgs {
-            heap_ptr: heap.ptr,
-            heap_len: heap.len,
+            stack_ptr: heap.ptr,
+            stack_len: heap.len,
             incoming: pipefd[0],
             outgoing: pipefd[3],
         };
@@ -148,52 +149,57 @@ impl Worker {
         sys_close(self.incoming);
         sys_close(self.outgoing);
     }
+}
 
-    pub fn execute(&mut self, callable: &CallableTarget<24>) -> IORingSubmitEntry<*const u8> {
-        let heap = callable.heap();
-        let ptr = heap.ptr;
+pub enum WorkerExecute {
+    Succeeded(IORingSubmitEntry<*const u8>),
+    OutgoingPipeFailed(isize)
+}
 
-        unsafe { *(ptr as *mut usize) = heap.ptr };
-        unsafe { *(ptr as *mut usize).add(1) = heap.len };
+impl Worker {
+    pub fn execute(&mut self, callable: &CallableTarget) -> WorkerExecute {
+        let ((ptr, _), len) = (callable.as_ptr(), 16);
 
-        trace2(b"worker sends bytes; addr=%x, size=%d\n", heap.ptr, heap.len);
-        let res = sys_write(self.outgoing, ptr as *mut (), 16);
+        // we expect here to not have any blocking operation because worker waits for it
+        trace2(b"worker sends bytes; ptr=%x, len=%d\n", ptr, len);
+        let res = sys_write(self.outgoing, ptr as *mut (), len);
 
-        trace3(b"worker sends bytes; fd=%d, size=%d, res=%d\n", self.outgoing, 16, res);
+        // we sends exactly 16 bytes, containing (ptr, len) of the heap
+        trace3(b"worker sends bytes; fd=%d, size=%d, res=%d\n", self.outgoing, len, res);
+        if res != len as isize {
+            return WorkerExecute::OutgoingPipeFailed(res);
+        }
 
-        let slice = match heap.between(16, 17) {
-            HeapSlicing::Succeeded(slice) => slice,
-            HeapSlicing::InvalidParameters() => todo!(),
-            HeapSlicing::OutOfRange() => todo!(),
-        };
-
-        IORingSubmitEntry::read(self.incoming, slice.ptr as *const u8, slice.len, 0)
+        // asynchronous operation has to be returned referencing callable's header
+        WorkerExecute::Succeeded(IORingSubmitEntry::read(self.incoming, (ptr + 16) as *const u8, 1, 0))
     }
 }
 
 extern "C" fn worker_callback(args: &WorkerArgs) -> ! {
-    let mut buffer: [u8; 16] = [0; 16];
+    let mut buffer: [usize; 2] = [0; 2];
     let ptr = buffer.as_mut_ptr() as *mut ();
 
     loop {
-        let received = sys_read(args.incoming, ptr, buffer.len());
+        // read 16-bytes from the main thread
+        let received = sys_read(args.incoming, ptr, 16);
         trace2(b"worker received bytes; fd=%d, size=%d\n", args.incoming, received);
 
-        if received == 0 {
+        if received != 16 {
             break;
         }
 
-        let heap_ptr = unsafe { *(ptr as *const usize) };
-        let heap_len = unsafe { *(ptr as *const usize).add(1) };
+        trace2(b"worker received bytes; addr=%x, size=%d\n", buffer[0], buffer[1]);
 
-        trace2(b"worker received bytes; addr=%x, size=%d\n", heap_ptr, heap_len);
+        let heap = Heap::at(buffer[0], buffer[1]);
+        let mut target: CallableTarget = CallableTarget::from(heap);
 
-        let heap = Heap::at(heap_ptr, heap_len);
-        let mut target: CallableTarget<24> = CallableTarget::from(heap);
+        // calling the function behind the heap
+        match target.call() {
+            None => trace0(b"worker called target; successfully\n"),
+            Some(err) => trace1(b"worker called target; %s\n", err),
+        }
 
-        let res = target.call();
-        trace0(b"worker called target; successfully\n");
-
+        // reporting one byte
         let res = sys_write(args.outgoing, ptr, 1);
         trace1(b"worker completed; res=%d\n", res);
     }
@@ -204,6 +210,7 @@ extern "C" fn worker_callback(args: &WorkerArgs) -> ! {
     let res = sys_close(args.outgoing);
     trace2(b"terminating thread; out=%d, res=%d\n", args.outgoing, res);
 
-    trace2(b"terminating thread; heap=%x, len=%d\n", args.heap_ptr, args.heap_len);
-    unsafe { _stop_thread(args.heap_ptr, args.heap_len) }
+    // releasing stack memory and exiting current thread
+    trace2(b"terminating thread; heap=%x, len=%d\n", args.stack_ptr, args.stack_len);
+    unsafe { _stop_thread(args.stack_ptr, args.stack_len) }
 }

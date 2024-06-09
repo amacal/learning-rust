@@ -7,6 +7,7 @@ pub const APP_STDOUT_FAILED: &'static [u8] = b"Stdout: Cannot Write.";
 pub const APP_STDOUT_INCOMPLETE: &'static [u8] = b"Stdout: Incomplete.";
 
 pub const APP_PIPE_CREATING_FAILED: &'static [u8] = b"Pipe: Cannot Create Pipe.";
+pub const APP_PIPE_CLOSING_FAILED: &'static [u8] = b"Pipe: Cannot Close Pipe.";
 pub const APP_PIPE_WRITING_FAILED: &'static [u8] = b"Pipe: Cannot Write Pipe.";
 pub const APP_PIPE_READING_FAILED: &'static [u8] = b"Pipe: Cannot Read Pipe.";
 
@@ -17,3 +18,6 @@ pub const APP_FILE_OPENING_FAILED: &'static [u8] = b"File: Cannot Open File.";
 pub const APP_FILE_READING_FAILED: &'static [u8] = b"File: Cannot Read File.";
 pub const APP_FILE_WRITING_FAILED: &'static [u8] = b"File: Cannot Write File.";
 pub const APP_FILE_CLOSING_FAILED: &'static [u8] = b"File: Cannot Close File.";
+
+pub const APP_IO_SPAWNING_FAILED: &'static [u8] = b"Task: I/O Task Spawning Failed.";
+pub const APP_CPU_SPAWNING_FAILED: &'static [u8] = b"Task: CPU Task Spawning Failed.";

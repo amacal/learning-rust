@@ -35,130 +35,129 @@ impl PollableTarget {
     }
 }
 
-pub struct CallableTarget<const T: usize> {
+pub struct CallableTarget {
     target: Heap,
-    call: fn(&mut Heap) -> Option<&'static [u8]>,
-}
-
-pub struct CallableHeader {
-    call: fn(&mut Heap) -> Option<&'static [u8]>,
+    call: fn(&Heap) -> Option<&'static [u8]>,
 }
 
 #[repr(C)]
-pub struct CallableArgs<const T: usize, F, R>
-where
-    F: FnOnce() -> Result<R, Option<&'static [u8]>>,
-{
-    call: fn(&mut Heap) -> Option<&'static [u8]>,
-    target: Option<F>,
-    result: Option<R>,
+struct CallableHeader {
+    data: [usize; 4],
+    call: fn(&Heap) -> Option<&'static [u8]>,
 }
 
-impl<const T: usize, F, R> CallableArgs<T, F, R>
+#[repr(C)]
+struct CallableArgs<F, R, E>
 where
-    F: FnOnce() -> Result<R, Option<&'static [u8]>>,
+    F: FnOnce() -> Result<R, E>,
+{
+    header: CallableHeader,
+    target: Option<F>,
+    result: Option<Result<R, E>>,
+}
+
+impl<F, R, E> CallableArgs<F, R, E>
+where
+    F: FnOnce() -> Result<R, E>,
 {
     pub fn call(&mut self) -> Option<&'static [u8]> {
-        let result = match self.target.take() {
-            None => return Some(b"Cannot call function"),
-            Some(target) => target.call_once(()),
+        self.result = match self.target.take() {
+            None => return Some(b"calling callable; failed"),
+            Some(target) => Some(target.call_once(())),
         };
-
-        match result {
-            Ok(value) => self.result = Some(value),
-            Err(err) => return err,
-        }
 
         None
     }
 }
 
-impl<const T: usize, F, R> HeapLifetime for CallableArgs<T, F, R>
+impl<F, R, E> HeapLifetime for CallableArgs<F, R, E>
 where
-    F: FnOnce() -> Result<R, Option<&'static [u8]>>,
+    F: FnOnce() -> Result<R, E>,
 {
     fn ctor(&mut self) {}
     fn dtor(&mut self) {}
 }
 
-impl<const T: usize> CallableTarget<T> {
-    fn new(target: Heap, call: fn(&mut Heap) -> Option<&'static [u8]>) -> Self {
+impl CallableTarget {
+    fn new(target: Heap, call: fn(&Heap) -> Option<&'static [u8]>) -> Self {
         Self { target, call }
     }
 
-    pub fn heap(&self) -> &Heap {
-        &self.target
+    pub fn as_ptr(&self) -> (usize, usize) {
+        (self.target.ptr, self.target.len)
     }
 
     pub fn from(heap: Heap) -> Self {
-        let header: View<CallableHeader> = heap.view_at(T);
-        let target: CallableTarget<T> = CallableTarget::new(heap, header.call);
+        let header: View<CallableHeader> = heap.view();
+        let target: CallableTarget = CallableTarget::new(heap, header.call);
 
         target
     }
 }
 
-pub enum CallableTargetAllocate<const T: usize> {
-    Succeeded(CallableTarget<T>),
+pub enum CallableTargetAllocate {
+    Succeeded(CallableTarget),
     AllocationFailed(isize),
 }
 
-impl<const T: usize> CallableTarget<T> {
-    pub fn allocate<F, R>(target: F) -> CallableTargetAllocate<T>
+impl CallableTarget {
+    pub fn allocate<F, R, E>(target: F) -> CallableTargetAllocate
     where
-        F: FnOnce() -> Result<R, Option<&'static [u8]>>,
+        F: FnOnce() -> Result<R, E> + Send,
     {
-        fn call<const T: usize, F, R>(target: &mut Heap) -> Option<&'static [u8]>
+        fn call<F, R, E>(target: &Heap) -> Option<&'static [u8]>
         where
-            F: FnOnce() -> Result<R, Option<&'static [u8]>>,
+            F: FnOnce() -> Result<R, E>,
         {
-            let mut args: View<CallableArgs<T, F, R>> = target.view_at(T);
+            let mut args: View<CallableArgs<F, R, E>> = target.view();
             let result: Option<&[u8]> = args.call();
 
             result
         }
 
-        let len = T + mem::size_of::<CallableArgs<T, F, R>>();
+        let len = mem::size_of::<CallableArgs<F, R, E>>();
         trace1(b"allocating callable; size=%d\n", len);
 
-        let mut data = match mem_alloc(len) {
-            MemoryAllocation::Succeeded(heap) => heap.boxed_at::<CallableArgs<T, F, R>>(T),
+        let ((ptr, len), mut data) = match mem_alloc(len) {
+            MemoryAllocation::Succeeded(heap) => (heap.as_ptr(), heap.boxed::<CallableArgs<F, R, E>>()),
             MemoryAllocation::Failed(err) => return CallableTargetAllocate::AllocationFailed(err),
         };
 
         data.result = None;
         data.target = Some(target);
-        data.call = call::<T, F, R>;
+        data.header = CallableHeader {
+            data: [ptr, len, 0, 0],
+            call: call::<F, R, E>,
+        };
 
         CallableTargetAllocate::Succeeded(Self {
             target: data.into(),
-            call: call::<T, F, R>,
+            call: call::<F, R, E>,
         })
     }
 
     pub fn release(mut self) {
-        trace2(b"releasing callable; addr=%x, size=%d\n", self.target.ptr, T);
+        trace1(b"releasing callable; addr=%x\n", self.target.ptr);
         mem_free(&mut self.target);
     }
 }
 
-impl<const T: usize> CallableTarget<T> {
+impl CallableTarget {
     pub fn call(&mut self) -> Option<&'static [u8]> {
-        trace3(
-            b"dispatching callable; target=%x, size=%d, offset=%d\n",
+        trace2(
+            b"dispatching callable; target=%x, size=%d\n",
             self.target.ptr,
             self.target.len,
-            T,
         );
 
         (self.call)(&mut self.target)
     }
 
-    pub fn result<F, R>(self) -> Option<R>
+    pub fn result<F, R, E>(self) -> Option<Result<R, E>>
     where
-        F: FnOnce() -> Result<R, Option<&'static [u8]>>,
+        F: FnOnce() -> Result<R, E>,
     {
-        let value = self.target.view_at::<CallableArgs<T, F, R>>(T).result.take();
+        let value = self.target.view::<CallableArgs<F, R, E>>().result.take();
         self.release();
         value
     }

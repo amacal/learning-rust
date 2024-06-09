@@ -3,37 +3,37 @@ use ::core::mem;
 use super::erase::*;
 use super::refs::*;
 use crate::heap::*;
-use crate::kernel::*;
 use crate::syscall::*;
 use crate::thread::*;
 use crate::trace::*;
 use crate::uring::*;
+use crate::pipe::*;
 
-const WORKERS_COUNT: usize = 8;
+const WORKERS_COUNT: usize = 1;
 
 pub struct IORuntimePool {
     workers_completers: [Option<u64>; WORKERS_COUNT],
     workers_array: [Option<Worker>; WORKERS_COUNT],
     workers_slots: [usize; WORKERS_COUNT],
     workers_count: usize,
-    incoming: u32,
-    outgoing: u32,
-    queued: usize,
+    queue_incoming: u32,
+    queue_outgoing: u32,
+    queue_counter: usize,
 }
 
 pub enum IORuntimePoolAllocation {
     Succeeded(Boxed<IORuntimePool>),
     AllocationFailed(isize),
     ThreadingFailed(isize),
+    QueueFailed(isize),
 }
 
 impl IORuntimePool {
     pub fn allocate() -> IORuntimePoolAllocation {
-        let mut pipefd = [0; 2];
-        let ptr = pipefd.as_mut_ptr();
-
-        let flags = O_DIRECT;
-        let result = sys_pipe2(ptr, flags);
+        let queue = match PipeChannel::create() {
+            Ok(value) => value,
+            Err(err) => return IORuntimePoolAllocation::QueueFailed(err),
+        };
 
         let mut instance: Boxed<IORuntimePool> = match mem_alloc(mem::size_of::<IORuntimePool>()) {
             MemoryAllocation::Succeeded(heap) => heap.boxed(),
@@ -52,11 +52,13 @@ impl IORuntimePool {
             instance.workers_slots[i] = i;
         }
 
-        instance.queued = 0;
+        let (incoming, outgoing) = queue.extract();
+
+        instance.queue_counter = 0;
         instance.workers_count = 0;
 
-        instance.incoming = pipefd[0];
-        instance.outgoing = pipefd[1];
+        instance.queue_incoming = incoming;
+        instance.queue_outgoing = outgoing;
 
         IORuntimePoolAllocation::Succeeded(instance)
     }
@@ -66,8 +68,8 @@ impl HeapLifetime for IORuntimePool {
     fn ctor(&mut self) {}
 
     fn dtor(&mut self) {
-        sys_close(self.incoming);
-        sys_close(self.outgoing);
+        sys_close(self.queue_incoming);
+        sys_close(self.queue_outgoing);
 
         for i in 0..WORKERS_COUNT {
             if let Some(worker) = self.workers_array[i].take() {
@@ -90,56 +92,55 @@ impl IORuntimePool {
         &mut self,
         submitter: &mut IORingSubmitter,
         completers: [&IORingCompleterRef; 2],
-        callable: &CallableTarget<24>,
+        callable: &CallableTarget,
     ) -> IORuntimePoolExecute {
+        // acquire worker
         if let Some(slot) = self.workers_slots.get(self.workers_count) {
             let worker = match self.workers_array.get_mut(*slot) {
                 Some(Some(worker)) => worker,
                 _ => return IORuntimePoolExecute::InternallyFailed(),
             };
 
+            // confirm queuing
             let op = IORingSubmitEntry::noop();
             match submitter.submit(completers[0].encode(), [op]) {
                 IORingSubmit::Succeeded(_) => (),
-                IORingSubmit::SubmissionFailed(_) => return IORuntimePoolExecute::ScheduleFailed(),
-                IORingSubmit::SubmissionMismatched(_) => return IORuntimePoolExecute::ScheduleFailed(),
+                _ => return IORuntimePoolExecute::ScheduleFailed(),
             }
 
-            let op = worker.execute(callable);
+            // prepare execute op
+            let op = match worker.execute(callable) {
+                WorkerExecute::Succeeded(op) => op,
+                _ => return IORuntimePoolExecute::InternallyFailed(),
+            };
+
+            // confirm execution
             match submitter.submit(completers[1].encode(), [op]) {
                 IORingSubmit::Succeeded(_) => (),
-                IORingSubmit::SubmissionFailed(_) => return IORuntimePoolExecute::ExecutionFailed(),
-                IORingSubmit::SubmissionMismatched(_) => return IORuntimePoolExecute::ExecutionFailed(),
+                _ => return IORuntimePoolExecute::ExecutionFailed(),
             }
 
+            // update internal counter and correlate worker with completer
             self.workers_count += 1;
             self.workers_completers[*slot] = Some(completers[1].encode());
 
             return IORuntimePoolExecute::Executed();
         }
 
-        trace0(b"worker is not available\n");
+        // append encoded completer to a callable header
+        let (ptr, len) = unsafe {
+            let (ptr, _) = callable.as_ptr();
+            let encoded = (ptr + 16) as *mut u64;
 
-        let slice = match callable.heap().between(0, 24) {
-            HeapSlicing::Succeeded(slice) => slice,
-            HeapSlicing::InvalidParameters() => return IORuntimePoolExecute::ScheduleFailed(),
-            HeapSlicing::OutOfRange() => return IORuntimePoolExecute::ScheduleFailed(),
+            *encoded = completers[1].encode();
+            (ptr as *const u8, 24)
         };
 
-        unsafe {
-            let ptr = slice.ptr as *mut usize;
-            let encoded = ptr.add(2) as *mut u64;
-
-            *ptr.add(0) = slice.ptr;
-            *ptr.add(1) = slice.len;
-            *encoded = completers[1].encode();
-        }
-
-        let op = IORingSubmitEntry::write(self.outgoing, slice, 0);
+        // notify when queuing happened
+        let op = IORingSubmitEntry::write(self.queue_outgoing, ptr, len, 0);
         match submitter.submit(completers[0].encode(), [op]) {
             IORingSubmit::Succeeded(_) => (),
-            IORingSubmit::SubmissionFailed(_) => return IORuntimePoolExecute::ScheduleFailed(),
-            IORingSubmit::SubmissionMismatched(_) => return IORuntimePoolExecute::ScheduleFailed(),
+            _ => return IORuntimePoolExecute::ScheduleFailed(),
         }
 
         return IORuntimePoolExecute::Queued();
@@ -148,14 +149,13 @@ impl IORuntimePool {
 
 impl IORuntimePool {
     pub fn queue(&mut self, completer: &IORingCompleterRef) {
-        self.queued += 1;
-        trace2(b"worker queued; cid=%d, size=%d\n", completer.cid(), self.queued);
+        self.queue_counter += 1;
+        trace2(b"worker queued; cid=%d, size=%d\n", completer.cid(), self.queue_counter);
     }
 }
 
 pub enum IORuntimePoolSubmit {
     Succeeded(),
-    ScheduleFailed(),
     ExecutionFailed(),
     InternallyFailed(),
 }
@@ -178,30 +178,34 @@ impl IORuntimePool {
             break;
         }
 
-        if self.queued > 0 {
+        if self.queue_counter > 0 {
             if let Some(slot) = self.workers_slots.get(self.workers_count) {
-                trace1(b"worker would be available; size=%d\n", self.queued);
+                trace1(b"worker would be available; size=%d\n", self.queue_counter);
 
                 let mut buffer: [u8; 24] = [0; 24];
                 let ptr = buffer.as_mut_ptr() as *mut ();
 
-                let result = sys_read(self.incoming, ptr, 24);
+                let result = sys_read(self.queue_incoming, ptr, 24);
                 trace1(b"worker would be available; res=%d\n", result);
-                self.queued -= 1;
+                self.queue_counter -= 1;
 
                 let ptr = ptr as *const usize;
                 let len = unsafe { ptr.add(1) };
                 let encoded = unsafe { ptr.add(2) as *const u64 };
 
                 let heap = unsafe { Heap::at(*ptr, *len) };
-                let callable: CallableTarget<24> = CallableTarget::from(heap);
+                let callable: CallableTarget = CallableTarget::from(heap);
 
                 let worker = match self.workers_array.get_mut(*slot) {
                     Some(Some(worker)) => worker,
                     _ => return IORuntimePoolSubmit::InternallyFailed(),
                 };
 
-                let op = worker.execute(&callable);
+                let op = match worker.execute(&callable) {
+                    WorkerExecute::Succeeded(op) => op,
+                    _ => return IORuntimePoolSubmit::InternallyFailed(),
+                };
+
                 match submitter.submit(unsafe { *encoded }, [op]) {
                     IORingSubmit::Succeeded(_) => (),
                     IORingSubmit::SubmissionFailed(_) => return IORuntimePoolSubmit::ExecutionFailed(),

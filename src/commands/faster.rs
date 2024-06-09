@@ -21,7 +21,7 @@ impl FasterCommand {
             Some(value) => value,
         };
 
-        let file = match open_file(path).await {
+        let file = match open_file(&path).await {
             FileOpenResult::Succeeded(value) => value,
             FileOpenResult::OperationFailed(_) => return Some(APP_FILE_OPENING_FAILED),
             FileOpenResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),

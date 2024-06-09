@@ -30,7 +30,6 @@ pub enum IORingRuntimeAllocate {
     Succeeded(IORingRuntime),
     RingAllocationFailed(),
     PoolAllocationFailed(),
-    PoolThreadingFailed(),
     RegistryAllocationFailed(),
 }
 
@@ -44,8 +43,9 @@ impl IORingRuntime {
 
         let pool = match IORuntimePool::allocate() {
             IORuntimePoolAllocation::Succeeded(pool) => pool,
-            IORuntimePoolAllocation::ThreadingFailed(_) => return IORingRuntimeAllocate::PoolThreadingFailed(),
+            IORuntimePoolAllocation::ThreadingFailed(_) => return IORingRuntimeAllocate::PoolAllocationFailed(),
             IORuntimePoolAllocation::AllocationFailed(_) => return IORingRuntimeAllocate::PoolAllocationFailed(),
+            IORuntimePoolAllocation::QueueFailed(_) => return IORingRuntimeAllocate::PoolAllocationFailed(),
         };
 
         // I/O Ring needs initialization
@@ -75,7 +75,7 @@ impl IORingRuntime {
         let ptr = waker.as_raw().data() as *mut IORingRuntimeContext;
         let context = unsafe { &mut *ptr };
 
-        trace1(b"reconstructing context; addr=%x\n", ptr);
+        trace1(b"reconstructing context; addr=%x\n", ptr as *mut ());
         return context;
     }
 
@@ -87,7 +87,7 @@ impl IORingRuntime {
         let data = &context as *const IORingRuntimeContext;
         let waker = unsafe { Waker::from_raw(make_waker(data as *const ())) };
 
-        trace2(b"# polling task; tid=%d, ctx=%x\n", context.task.tid(), data);
+        trace2(b"# polling task; tid=%d, ctx=%x\n", context.task.tid(), data as *const ());
         let mut cx = Context::from_waker(&waker);
 
         // we always poll through registry to not expose details
@@ -162,7 +162,7 @@ pub enum IORingRuntimeExecute {
 }
 
 impl IORingRuntime {
-    fn execute(&mut self, task: &IORingTaskRef, callable: &CallableTarget<24>) -> IORingRuntimeExecute {
+    fn execute(&mut self, task: &IORingTaskRef, callable: &CallableTarget) -> IORingRuntimeExecute {
         let queued = match self.registry.append_completer(task.clone()) {
             IORingRegistryAppend::Succeeded(completer) => completer,
             IORingRegistryAppend::NotEnoughSlots() => return IORingRuntimeExecute::NotEnoughSlots(),
@@ -186,7 +186,7 @@ impl IORingRuntime {
 }
 
 impl IORingRuntimeContext {
-    pub fn execute(&mut self, callable: &CallableTarget<24>) -> IORingRuntimeExecute {
+    pub fn execute(&mut self, callable: &CallableTarget) -> IORingRuntimeExecute {
         unsafe { (*self.runtime).execute(&self.task, callable) }
     }
 }
