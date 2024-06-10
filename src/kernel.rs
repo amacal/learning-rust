@@ -8,6 +8,11 @@ pub const F_SETFL: u32 = 4;
 pub const O_NONBLOCK: u32 = 0x0800;
 pub const O_DIRECT: u32 = 0x4000;
 
+pub const PROT_READ: usize = 0x00000001;
+pub const PROT_WRITE: usize = 0x00000002;
+pub const MAP_PRIVATE: usize = 0x00000002;
+pub const MAP_ANONYMOUS: usize = 0x00000020;
+
 pub const CLONE_VM: u64 = 0x00000100;
 pub const CLONE_FS: u64 = 0x00000200;
 pub const CLONE_FILES: u64 = 0x00000400;

@@ -2,14 +2,14 @@ use ::core::mem;
 
 use super::erase::*;
 use super::refs::*;
+use super::thread::*;
 use crate::heap::*;
+use crate::pipe::*;
 use crate::syscall::*;
-use crate::thread::*;
 use crate::trace::*;
 use crate::uring::*;
-use crate::pipe::*;
 
-const WORKERS_COUNT: usize = 1;
+const WORKERS_COUNT: usize = 12;
 
 pub struct IORuntimePool {
     workers_completers: [Option<u64>; WORKERS_COUNT],
@@ -52,6 +52,7 @@ impl IORuntimePool {
             instance.workers_slots[i] = i;
         }
 
+        // extract channel into its primitives pipes
         let (incoming, outgoing) = queue.extract();
 
         instance.queue_counter = 0;
@@ -96,6 +97,8 @@ impl IORuntimePool {
     ) -> IORuntimePoolExecute {
         // acquire worker
         if let Some(slot) = self.workers_slots.get(self.workers_count) {
+            trace1(b"acquired worker; slot=%d\n", *slot);
+
             let worker = match self.workers_array.get_mut(*slot) {
                 Some(Some(worker)) => worker,
                 _ => return IORuntimePoolExecute::InternallyFailed(),
@@ -148,21 +151,15 @@ impl IORuntimePool {
 }
 
 impl IORuntimePool {
-    pub fn queue(&mut self, completer: &IORingCompleterRef) {
+    pub fn enqueue(&mut self, completer: &IORingCompleterRef) {
         self.queue_counter += 1;
-        trace2(b"worker queued; cid=%d, size=%d\n", completer.cid(), self.queue_counter);
+        trace1(b"callable queued; cid=%d\n", completer.cid());
     }
 }
 
-pub enum IORuntimePoolSubmit {
-    Succeeded(),
-    ExecutionFailed(),
-    InternallyFailed(),
-}
-
 impl IORuntimePool {
-    pub fn submit(&mut self, submitter: &mut IORingSubmitter, completer: &IORingCompleterRef) -> IORuntimePoolSubmit {
-        trace1(b"returning worker; cid=%d\n", completer.cid());
+    pub fn release_worker(&mut self, completer: &IORingCompleterRef) -> bool {
+        trace1(b"releasing worker; cid=%d\n", completer.cid());
 
         for slot in 0..WORKERS_COUNT {
             match self.workers_completers.get_mut(slot) {
@@ -174,49 +171,75 @@ impl IORuntimePool {
             self.workers_completers[slot] = None;
             self.workers_slots[self.workers_count] = slot;
 
-            trace1(b"returned worker; idx=%d\n", slot);
-            break;
+            trace2(b"releasing worker; cid=%d, idx=%d\n", completer.cid(), slot);
+            return true;
         }
 
-        if self.queue_counter > 0 {
-            if let Some(slot) = self.workers_slots.get(self.workers_count) {
-                trace1(b"worker would be available; size=%d\n", self.queue_counter);
+        false
+    }
+}
 
-                let mut buffer: [u8; 24] = [0; 24];
-                let ptr = buffer.as_mut_ptr() as *mut ();
+pub enum IORuntimePoolTrigger {
+    Succeeded(bool),
+    ExecutionFailed(),
+    InternallyFailed(),
+}
 
-                let result = sys_read(self.queue_incoming, ptr, 24);
-                trace1(b"worker would be available; res=%d\n", result);
+impl IORuntimePool {
+    pub fn trigger(&mut self, submitter: &mut IORingSubmitter) -> IORuntimePoolTrigger {
+        if self.queue_counter <= 0 {
+            return IORuntimePoolTrigger::Succeeded(false);
+        }
+
+        if let Some(slot) = self.workers_slots.get(self.workers_count) {
+            trace1(b"acquired worker; slot=%d\n", *slot);
+
+            // worker still theoretically may fail
+            let worker = match self.workers_array.get_mut(*slot) {
+                Some(Some(worker)) => worker,
+                _ => return IORuntimePoolTrigger::InternallyFailed(),
+            };
+
+            // buffer is needed to collect data from the pipe
+            let mut buffer: [u8; 24] = [0; 24];
+            let ptr = buffer.as_mut_ptr() as *mut ();
+
+            // we expect to read ptr, len, encoded completer triple from a queue
+            let result = sys_read(self.queue_incoming, ptr, 24);
+            trace1(b"acquired callable; res=%d\n", result);
+
+            if result != 24 {
+                return IORuntimePoolTrigger::InternallyFailed();
+            } else {
                 self.queue_counter -= 1;
-
-                let ptr = ptr as *const usize;
-                let len = unsafe { ptr.add(1) };
-                let encoded = unsafe { ptr.add(2) as *const u64 };
-
-                let heap = unsafe { Heap::at(*ptr, *len) };
-                let callable: CallableTarget = CallableTarget::from(heap);
-
-                let worker = match self.workers_array.get_mut(*slot) {
-                    Some(Some(worker)) => worker,
-                    _ => return IORuntimePoolSubmit::InternallyFailed(),
-                };
-
-                let op = match worker.execute(&callable) {
-                    WorkerExecute::Succeeded(op) => op,
-                    _ => return IORuntimePoolSubmit::InternallyFailed(),
-                };
-
-                match submitter.submit(unsafe { *encoded }, [op]) {
-                    IORingSubmit::Succeeded(_) => (),
-                    IORingSubmit::SubmissionFailed(_) => return IORuntimePoolSubmit::ExecutionFailed(),
-                    IORingSubmit::SubmissionMismatched(_) => return IORuntimePoolSubmit::ExecutionFailed(),
-                }
-
-                self.workers_completers[*slot] = unsafe { Some(*encoded) };
-                self.workers_count += 1;
             }
+
+            // decoding payload
+            let ptr = ptr as *const usize;
+            let len = unsafe { ptr.add(1) };
+            let encoded = unsafe { ptr.add(2) as *const u64 };
+
+            // rebuilding callable
+            let heap = unsafe { Heap::at(*ptr, *len) };
+            let callable: CallableTarget = CallableTarget::from(heap);
+
+            // then we try to follow known path
+            let op = match worker.execute(&callable) {
+                WorkerExecute::Succeeded(op) => op,
+                _ => return IORuntimePoolTrigger::InternallyFailed(),
+            };
+
+            // by registering it within I/O Ring
+            match submitter.submit(unsafe { *encoded }, [op]) {
+                IORingSubmit::Succeeded(_) => (),
+                _ => return IORuntimePoolTrigger::ExecutionFailed(),
+            }
+
+            // not forgetting about maintaining the state
+            self.workers_completers[*slot] = unsafe { Some(*encoded) };
+            self.workers_count += 1;
         }
 
-        IORuntimePoolSubmit::Succeeded()
+        IORuntimePoolTrigger::Succeeded(true)
     }
 }

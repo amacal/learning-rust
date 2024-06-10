@@ -10,10 +10,12 @@ tracing = []
 
 [profile.dev]
 opt-level = "z"
+panic = "abort"
 strip = false
 debug = true
 
 [profile.release]
 opt-level = "z"
+panic = "abort"
 strip = true
 debug = false

@@ -1,8 +1,9 @@
+use ::core::mem;
 use ::core::ops::Deref;
 use ::core::ops::DerefMut;
 use ::core::ptr;
-use core::mem;
 
+use crate::kernel::*;
 use crate::syscall::*;
 use crate::trace::*;
 
@@ -29,10 +30,7 @@ pub struct Heap {
 
 impl Heap {
     pub fn at(ptr: usize, len: usize) -> Self {
-        Self {
-            ptr: ptr,
-            len: len,
-        }
+        Self { ptr: ptr, len: len }
     }
 }
 
@@ -68,11 +66,6 @@ pub enum MemoryAllocation {
 }
 
 pub fn mem_alloc(len: usize) -> MemoryAllocation {
-    const PROT_READ: usize = 0x00000001;
-    const PROT_WRITE: usize = 0x00000002;
-    const MAP_PRIVATE: usize = 0x00000002;
-    const MAP_ANONYMOUS: usize = 0x00000020;
-
     let prot = PROT_READ | PROT_WRITE;
     let flags = MAP_PRIVATE | MAP_ANONYMOUS;
 
@@ -147,31 +140,9 @@ impl Heap {
         Boxed::at(self.ptr, self.len, self.ptr as *mut T)
     }
 
-    pub fn boxed_at<T: HeapLifetime>(self, offset: usize) -> Boxed<T> {
-        trace3(
-            b"creating boxed; addr=%x, size=%d, offset=%d\n",
-            self.ptr,
-            self.len,
-            offset,
-        );
-
-        Boxed::at(self.ptr, self.len, (self.ptr + offset) as *mut T)
-    }
-
     pub fn view<T>(&self) -> View<T> {
         trace2(b"creating view; addr=%x, size=%d\n", self.ptr, self.len);
         View::at(self.ptr as *mut T)
-    }
-
-    pub fn view_at<T>(&self, offset: usize) -> View<T> {
-        trace3(
-            b"creating view; addr=%x, size=%d, offset=%d\n",
-            self.ptr,
-            self.len,
-            offset,
-        );
-
-        View::at((self.ptr + offset) as *mut T)
     }
 }
 
@@ -225,19 +196,6 @@ impl<T: HeapLifetime> Boxed<T> {
         let val = Boxed { root, ptr, len };
 
         val
-    }
-
-    pub fn append<K: HeapLifetime>(self, src: K) -> Boxed<K> {
-        let ptr = unsafe { self.ptr.add(1) };
-        let ptr = ptr as *mut () as *mut K;
-
-        unsafe { ptr::write(ptr, src) };
-
-        Boxed {
-            root: self.root,
-            len: self.len,
-            ptr,
-        }
     }
 }
 

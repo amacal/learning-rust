@@ -1,10 +1,10 @@
 use core::task::Waker;
 
 use super::core::*;
+use super::erase::*;
 use super::pin::*;
 use super::refs::*;
 use crate::uring::*;
-use super::erase::*;
 
 pub struct IORingTaskToken {
     kind: IORingTaskTokenKind,
@@ -63,11 +63,13 @@ impl IORingTaskToken {
         };
 
         if let IORingTaskTokenKind::Queue = self.kind {
-            context.queue(&self.completer);
+            // enqueue sent callable
+            context.enqueue(&self.completer);
         }
 
         if let IORingTaskTokenKind::Execute = self.kind {
-            context.decrease(&self.completer);
+            // trigger awaiting callable
+            context.trigger(&self.completer);
         }
 
         IORingTaskTokenExtract::Succeeded(value)
@@ -92,7 +94,9 @@ impl IORingTaskToken {
             _ => false,
         }
     }
+}
 
+impl IORingTaskToken {
     pub fn execute(waker: &Waker, task: &CallableTarget) -> Option<(IORingTaskToken, IORingTaskToken)> {
         match Self::context(waker).execute(task) {
             IORingRuntimeExecute::Queued(queued, executed) => Some((

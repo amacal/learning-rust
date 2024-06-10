@@ -10,6 +10,7 @@ mod refs;
 mod registry;
 mod spawn;
 mod stdout;
+mod thread;
 mod time;
 mod token;
 mod utils;

@@ -13,7 +13,6 @@ mod proc;
 mod runtime;
 mod sha1;
 mod syscall;
-mod thread;
 mod trace;
 mod uring;
 
@@ -44,7 +43,7 @@ extern "C" fn main(args: &'static ProcessArguments) -> ! {
         Some(b"sha1sum") => runtime.run(Sha1Command { args: args }.execute()),
         Some(b"spawn") => runtime.run(SpawnCommand { times: 30, delay: 3 }.execute()),
         Some(b"sync") => runtime.run(SyncCommand { msg: b"Hello, World!\n" }.execute()),
-        Some(b"thread") => runtime.run(ThreadCommand { ios: 100, cpus: 1000 }.execute()),
+        Some(b"thread") => runtime.run(ThreadCommand { ios: 100, cpus: 100 }.execute()),
         Some(b"tick") => runtime.run(TickCommand { ticks: 2, delay: 1 }.execute()),
         _ => fail(-2, b"I/O Runtime: Unrecognized command.\n"),
     };
@@ -73,5 +72,5 @@ fn fail(status: i32, msg: &'static [u8]) -> ! {
 #[inline(never)]
 #[panic_handler]
 fn panic(_panic: &panic::PanicInfo<'_>) -> ! {
-    sys_exit(-1)
+   sys_exit(-1)
 }

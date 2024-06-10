@@ -6,6 +6,7 @@ use crate::kernel::*;
 use crate::syscall::*;
 use crate::trace::*;
 use crate::uring::*;
+use crate::pipe::*;
 
 use crate::runtime::CallableTarget;
 

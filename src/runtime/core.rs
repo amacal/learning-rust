@@ -381,27 +381,34 @@ impl IORingRuntimeContext {
 }
 
 impl IORingRuntime {
-    fn queue(&mut self, completer: &IORingCompleterRef) {
-        self.pool.queue(completer);
-        self.pool.submit(&mut self.submitter, completer);
+    fn enqueue(&mut self, completer: &IORingCompleterRef) {
+        // first making a callable visible
+        self.pool.enqueue(completer);
+
+        // possibly it will be triggered now
+        self.pool.trigger(&mut self.submitter);
     }
 }
 
 impl IORingRuntimeContext {
-    pub fn queue(&mut self, completer: &IORingCompleterRef) {
-        unsafe { (*self.runtime).queue(completer) }
+    pub fn enqueue(&mut self, completer: &IORingCompleterRef) {
+        unsafe { (*self.runtime).enqueue(completer) }
     }
 }
 
 impl IORingRuntime {
-    fn decrease(&mut self, completer: &IORingCompleterRef) {
-        self.pool.submit(&mut self.submitter, completer);
+    fn trigger(&mut self, completer: &IORingCompleterRef) {
+        // first release worker behind completer
+        self.pool.release_worker(completer);
+
+        // then trigger likely pending callable
+        self.pool.trigger(&mut self.submitter);
     }
 }
 
 impl IORingRuntimeContext {
-    pub fn decrease(&mut self, completer: &IORingCompleterRef) {
-        unsafe { (*self.runtime).decrease(completer) }
+    pub fn trigger(&mut self, completer: &IORingCompleterRef) {
+        unsafe { (*self.runtime).trigger(completer) }
     }
 }
 
