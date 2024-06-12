@@ -1,14 +1,12 @@
 use ::core::arch;
 use ::core::mem;
 
+use super::erase::*;
 use crate::heap::*;
 use crate::kernel::*;
 use crate::syscall::*;
 use crate::trace::*;
 use crate::uring::*;
-use crate::pipe::*;
-
-use crate::runtime::CallableTarget;
 
 arch::global_asm!(
     "
@@ -154,7 +152,7 @@ impl Worker {
 
 pub enum WorkerExecute {
     Succeeded(IORingSubmitEntry<*const u8>),
-    OutgoingPipeFailed(isize)
+    OutgoingPipeFailed(isize),
 }
 
 impl Worker {
