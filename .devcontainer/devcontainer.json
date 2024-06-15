@@ -1,18 +1,25 @@
 {
 	"name": "Rust",
-	"image": "mcr.microsoft.com/devcontainers/rust:0-1-bullseye",
-	"runArgs": [
-        "--network=host"
-    ],
+	"build": {
+		"dockerfile": "Dockerfile",
+		"context": ".."
+	},
 	"containerEnv": {
 		"CARGO_TARGET_DIR": "/tmp/cargo"
 	},
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"swellaby.vscode-rust-test-adapter",
-				"ms-vscode.test-adapter-converter"
-			]
+                "rust-lang.rust-analyzer"
+			],
+			"settings": {
+				"files.trimTrailingWhitespace": true,
+				"files.trimFinalNewlines": true,
+				"files.insertFinalNewline": true,
+				"rust-analyzer.cargo.features": [],
+				"rust-analyzer.cargo.target": "x86_64-unknown-linux-gnu",
+				"rust-analyzer.checkOnSave.allTargets": false
+			}
 		}
 	}
 }

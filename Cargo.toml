@@ -1,28 +1,4 @@
 [package]
-name = "bitstream"
+name = "sha1"
 version = "0.1.0"
 edition = "2021"
-
-[dependencies]
-bitstream-io = { version = "1.7.0" }
-criterion = { version = "0.5.1" }
-
-[[bench]]
-name = "cargo"
-harness = false
-
-[[bench]]
-name = "current"
-harness = false
-
-[[bench]]
-name = "inline"
-harness = false
-
-[[bench]]
-name = "slice"
-harness = false
-
-[[bench]]
-name = "value"
-harness = false
