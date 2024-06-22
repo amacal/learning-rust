@@ -4,6 +4,10 @@ version = "0.0.0"
 edition = "2021"
 authors = ["Adrian Macal <adma@amacal.pl>"]
 
+[dependencies]
+adma-trace = { path = "../adma-trace", default-features = false }
+
 [features]
 std = []
-tracing = []
+default = []
+tracing = ["adma-trace/tracing"]

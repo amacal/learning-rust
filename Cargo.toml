@@ -1,5 +1,7 @@
 [workspace]
+resolver = "2"
 members = [
     "src/apps/demo",
-    "src/shared/adma-io"
+    "src/shared/adma-io",
+    "src/shared/adma-trace",
 ]

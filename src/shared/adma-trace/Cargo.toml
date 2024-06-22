@@ -1,0 +1,9 @@
+[package]
+name = "adma-trace"
+version = "0.0.0"
+edition = "2021"
+authors = ["Adrian Macal <adma@amacal.pl>"]
+
+[features]
+std = []
+tracing = []
