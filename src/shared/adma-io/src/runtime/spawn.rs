@@ -5,44 +5,17 @@ use ::core::task::Context;
 use ::core::task::Poll;
 
 use super::erase::*;
+use super::ops::*;
 use super::pin::*;
 use super::token::*;
+use crate::heap::*;
 use crate::trace::*;
 
-pub fn spawn<F>(target: F) -> Spawn
-where
-    F: Future<Output = Option<&'static [u8]>> + Send,
-{
-    Spawn {
-        task: match IORingPin::allocate(target) {
-            IORingPinAllocate::Succeeded(task) => Some(task),
-            IORingPinAllocate::AllocationFailed(_) => None,
-        },
-    }
-}
-
-pub fn spawn_cpu<'a, F, R, E>(target: F) -> Option<SpawnCPU<'a, F, R, E>>
-where
-    F: FnOnce() -> Result<R, E> + Unpin + Send + 'a,
-    R: Unpin + Send,
-    E: Unpin + Send,
-{
-    let task = match CallableTarget::allocate(target) {
-        CallableTargetAllocate::Succeeded(target) => target,
-        CallableTargetAllocate::AllocationFailed(_) => return None,
-    };
-
-    Some(SpawnCPU {
-        queued: None,
-        executed: None,
-        phantom: PhantomData,
-        task: Some(task),
-    })
-}
-
 pub struct Spawn {
-    task: Option<IORingPin>,
+    pub task: Option<IORingPin>,
 }
+
+unsafe impl Send for Spawn {}
 
 pub enum SpawnResult {
     Succeeded(),
@@ -77,10 +50,11 @@ where
     F: Unpin,
     R: Unpin,
 {
-    task: Option<CallableTarget>,
-    queued: Option<IORingTaskToken>,
-    executed: Option<IORingTaskToken>,
-    phantom: PhantomData<(&'a F, R, E)>,
+    pub ctx: Smart<IORuntimeContext>,
+    pub task: Option<CallableTarget>,
+    pub queued: Option<IORingTaskToken>,
+    pub executed: Option<IORingTaskToken>,
+    pub phantom: PhantomData<(&'a F, R, E)>,
 }
 
 pub enum SpawnCPUResult<R, E> {
@@ -138,7 +112,7 @@ where
                     trace1(b"# polling spawn-cpu; stage=executed, res=%d\n", result);
                     let result = match this.task.take() {
                         None => SpawnCPUResult::InternallyFailed(),
-                        Some(task) => SpawnCPUResult::Succeeded(task.result::<F, R, E>()),
+                        Some(task) => SpawnCPUResult::Succeeded(task.result::<F, R, E>(&mut this.ctx.heap_pool)),
                     };
 
                     Poll::Ready(result)
@@ -179,7 +153,7 @@ where
         if let Some(task) = self.task.take() {
             let (ptr, len) = task.as_ptr();
             trace2(b"callable; releasing task, heap=%x, size=%d\n", ptr, len);
-            task.release();
+            task.release(&mut self.ctx.heap_pool);
         }
     }
 }

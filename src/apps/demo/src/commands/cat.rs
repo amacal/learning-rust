@@ -1,14 +1,13 @@
 use super::errno::*;
-use crate::heap::*;
-use crate::proc::*;
-use crate::runtime::*;
+use adma_io::heap::*;
+use adma_io::proc::*;
+use adma_io::runtime::*;
 
-pub struct FasterCommand {
+pub struct CatCommand {
     pub args: &'static ProcessArguments,
-    pub delay: u32,
 }
 
-impl FasterCommand {
+impl CatCommand {
     pub async fn execute(self) -> Option<&'static [u8]> {
         let mut buffer = match mem_alloc(32 * 4096) {
             MemoryAllocation::Failed(_) => return Some(APP_MEMORY_ALLOC_FAILED),
@@ -28,27 +27,14 @@ impl FasterCommand {
         };
 
         let mut offset = 0;
-        let mut timeout = timeout(self.delay);
 
         loop {
-            let read = read_file(&file, buffer, offset);
-            let (result, returned) = match select(timeout, read).await {
-                SelectResult::Failed() => return Some(APP_SELECT_FAILED),
-                SelectResult::Result2(result, timeout) => (result, timeout),
-                SelectResult::Result1(result, _) => match result {
-                    TimeoutResult::Succeeded() => break,
-                    TimeoutResult::OperationFailed(_) => return Some(APP_DELAY_FAILED),
-                    TimeoutResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
-                },
-            };
-
-            let (buf, read) = match result {
+            let (buf, read) = match read_file(&file, buffer, offset).await {
                 FileReadResult::Succeeded(buffer, read) => (buffer, read),
                 FileReadResult::OperationFailed(_, _) => return Some(APP_FILE_READING_FAILED),
                 FileReadResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
             };
 
-            timeout = returned;
             offset += read as u64;
             buffer = buf;
 
@@ -67,7 +53,7 @@ impl FasterCommand {
 
                 let written = match write_stdout(&stdout, &slice).await {
                     StdOutWriteResult::Succeeded(_, written) => written as usize,
-                    StdOutWriteResult::OperationFailed(_, _) => return Some(APP_STDOUT_FAILED),
+                    StdOutWriteResult::OperationFailed(_, _) => return Some(APP_FILE_WRITING_FAILED),
                     StdOutWriteResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
                 };
 
@@ -79,6 +65,10 @@ impl FasterCommand {
             }
         }
 
-        None
+        match close_file(file).await {
+            FileCloseResult::Succeeded() => None,
+            FileCloseResult::OperationFailed(_) => Some(APP_FILE_CLOSING_FAILED),
+            FileCloseResult::InternallyFailed() => Some(APP_INTERNALLY_FAILED),
+        }
     }
 }

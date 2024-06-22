@@ -11,6 +11,7 @@ use super::registry::*;
 use crate::heap::*;
 use crate::trace::*;
 use crate::uring::*;
+use super::ops::*;
 
 pub struct IORingRuntime {
     iteration: usize,
@@ -18,6 +19,8 @@ pub struct IORingRuntime {
     completer: IORingCompleter,
     registry: Boxed<IORingRegistry>,
     pool: Boxed<IORuntimePool>,
+    ops: IORuntimeOps,
+    entries: [IORingCompleteEntry; 16],
 }
 
 pub struct IORingRuntimeContext {
@@ -56,6 +59,11 @@ impl IORingRuntime {
             IORingInit::MappingFailed(_, _) => return IORingRuntimeAllocate::RingAllocationFailed(),
         };
 
+        let ops = match IORuntimeOps::allocate() {
+            Some(ops) => ops,
+            None => return IORingRuntimeAllocate::PoolAllocationFailed(),
+        };
+
         // if everying is ready we just need to collect created components
         let runtime = Self {
             iteration: 0,
@@ -63,6 +71,8 @@ impl IORingRuntime {
             completer: completer,
             registry: registry,
             pool: pool,
+            ops: ops,
+            entries: [IORingCompleteEntry::default(); 16]
         };
 
         IORingRuntimeAllocate::Succeeded(runtime)
@@ -193,6 +203,7 @@ impl IORingRuntimeContext {
 
 #[allow(dead_code)]
 enum IORingRuntimeTick {
+    Succeeded(),
     Empty(),
     Pending(IORingTaskRef),
     Draining(IORingTaskRef),
@@ -219,20 +230,38 @@ impl IORingRuntime {
         self.iteration += 1;
 
         // and wait for some event
-        let entry = loop {
+        let cnt = loop {
             // sometimes we may end up in unexpected empty shot
-            match self.completer.complete() {
+            match self.completer.complete(&mut self.entries) {
                 IORingComplete::UnexpectedEmpty(_) => continue,
-                IORingComplete::Succeeded(entry) => break entry,
+                IORingComplete::Succeeded(cnt) => break cnt,
                 IORingComplete::CompletionFailed(err) => return IORingRuntimeTick::CompletionFailed(err),
             }
         };
 
+        for i in 0..cnt {
+            let entry = self.entries[i];
+
+            match self.complete(IORingCompleterRef::decode(entry.user_data), &entry) {
+                IORingRuntimeTick::Succeeded() => (),
+                IORingRuntimeTick::Empty() => (),
+                IORingRuntimeTick::Pending(_) => (),
+                IORingRuntimeTick::Draining(_) => (),
+                IORingRuntimeTick::Completed(_, _) => (),
+                val => return val,
+            }
+        }
         // user data contains encoded completion
-        self.complete(IORingCompleterRef::decode(entry.user_data), entry)
+
+        match self.submitter.flush() {
+            IORingSubmit::Succeeded(_) => (),
+            _ => return IORingRuntimeTick::InternallyFailed(),
+        }
+
+        IORingRuntimeTick::Succeeded()
     }
 
-    fn complete(&mut self, completer: IORingCompleterRef, entry: IORingCompleteEntry) -> IORingRuntimeTick {
+    fn complete(&mut self, completer: IORingCompleterRef, entry: &IORingCompleteEntry) -> IORingRuntimeTick {
         trace2(
             b"looking for completions; cidx=%d, cid=%d\n",
             completer.cidx(),
@@ -284,12 +313,16 @@ pub enum IORingRuntimeRun {
 }
 
 impl IORingRuntime {
-    pub fn run<F>(&mut self, future: F) -> IORingRuntimeRun
+    pub fn run<'a, F, C>(&mut self, target: C) -> IORingRuntimeRun
     where
-        F: Future<Output = Option<&'static [u8]>>,
+        F: Future<Output = Option<&'static [u8]>> + Send + 'a,
+        C: FnOnce(IORuntimeOps) -> F + Unpin + Send + 'a,
     {
+        let ops = self.ops.duplicate();
+        let target = target.call_once((ops,));
+
         trace0(b"allocating memory to pin a future\n");
-        let pinned = match IORingPin::allocate(future) {
+        let pinned = match IORingPin::allocate(&mut self.ops.ctx.heap_pool ,target) {
             IORingPinAllocate::Succeeded(pinned) => pinned,
             IORingPinAllocate::AllocationFailed(err) => return IORingRuntimeRun::AllocationFailed(err),
         };
@@ -309,9 +342,15 @@ impl IORingRuntime {
             }
         };
 
+        match self.submitter.flush() {
+            IORingSubmit::Succeeded(_) => (),
+            _ => return IORingRuntimeRun::InternallyFailed(),
+        }
+
         loop {
             match self.tick() {
                 IORingRuntimeTick::Empty() => break,
+                IORingRuntimeTick::Succeeded() => continue,
                 IORingRuntimeTick::Pending(_) => continue,
                 IORingRuntimeTick::Draining(_) => continue,
                 IORingRuntimeTick::Completed(task, res) => {
@@ -476,7 +515,7 @@ pub enum IORingRuntimeShutdown {
 }
 
 impl IORingRuntime {
-    pub fn shutdown(mut self) -> IORingRuntimeShutdown {
+    pub fn shutdown(self) -> IORingRuntimeShutdown {
         // we need to consolidate the ring first
         let ring = match IORing::join(self.submitter, self.completer) {
             IORingJoin::Succeeded(ring) => ring,

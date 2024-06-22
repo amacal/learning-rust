@@ -1,20 +1,20 @@
 use super::errno::*;
-use crate::core::*;
-use crate::heap::*;
-use crate::proc::*;
-use crate::runtime::*;
-use crate::sha1::*;
-use crate::trace::*;
+use adma_io::core::*;
+use adma_io::heap::*;
+use adma_io::proc::*;
+use adma_io::runtime::*;
+use adma_io::sha1::*;
+use adma_io::trace::*;
 
 pub struct Sha1Command {
     pub args: &'static ProcessArguments,
 }
 
 impl Sha1Command {
-    pub async fn execute(self) -> Option<&'static [u8]> {
+    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
         for arg in 2..self.args.len() {
             // a task will be spawned for each argument
-            let task = spawn(async move {
+            let task = ops.spawn_io(move |mut ops| async move {
                 // an auto dropped memory for a buffer
                 let buffer: Droplet<Heap> = match mem_alloc(32 * 4096) {
                     MemoryAllocation::Succeeded(value) => value.droplet(),
@@ -68,7 +68,7 @@ impl Sha1Command {
                     };
 
                     // to process it outside event loop
-                    let task = spawn_cpu(move || -> Result<Sha1, ()> {
+                    let task = ops.spawn_cpu(move || -> Result<Sha1, ()> {
                         // just processing a slice and returning new self
                         Ok(sha1.update(slice.ptr() as *const u8, slice.len()))
                     });
@@ -105,7 +105,7 @@ impl Sha1Command {
                 };
 
                 // a cpu task has to be awaited
-                let hash: [u32; 5] = match spawn_cpu(task) {
+                let hash: [u32; 5] = match ops.spawn_cpu(task) {
                     None => return Some(APP_CPU_SPAWNING_FAILED),
                     Some(task) => match task.await {
                         SpawnCPUResult::Succeeded(Some(Ok(hash))) => hash,

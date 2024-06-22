@@ -1,7 +1,10 @@
 [build]
-target = ["x86_64-unknown-none"]
 rustflags = [
     "-C", "target-cpu=native",
     "-C", "code-model=kernel",
     "-C", "relocation-model=static",
 ]
+
+[alias]
+run-demo = "run --target x86_64-unknown-none -p demo"
+test-io = "test --target x86_64-unknown-linux-gnu -p adma-io"

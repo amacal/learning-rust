@@ -1,6 +1,6 @@
 use super::errno::*;
-use crate::runtime::*;
-use crate::trace::*;
+use adma_io::runtime::*;
+use adma_io::trace::*;
 
 pub struct ThreadCommand {
     pub ios: u32,
@@ -8,11 +8,11 @@ pub struct ThreadCommand {
 }
 
 impl ThreadCommand {
-    pub async fn execute(self) -> Option<&'static [u8]> {
+    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
         for j in 0..self.ios {
-            let task = spawn(async move {
+            let task = ops.spawn_io(move |mut ops| async move {
                 for i in 0..self.cpus {
-                    let value = match spawn_cpu(move || -> Result<u32, ()> { Ok(i + j) }) {
+                    let value = match ops.spawn_cpu(move || -> Result<u32, ()> { Ok(i + j) }) {
                         None => return Some(APP_CPU_SPAWNING_FAILED),
                         Some(task) => match task.await {
                             SpawnCPUResult::Succeeded(value) => value,

@@ -1,5 +1,5 @@
 use super::errno::*;
-use crate::runtime::*;
+use adma_io::runtime::*;
 
 pub struct TickCommand {
     pub ticks: u32,

@@ -1,5 +1,5 @@
 use super::errno::*;
-use crate::runtime::*;
+use adma_io::runtime::*;
 
 pub struct SpawnCommand {
     pub times: u32,
@@ -7,7 +7,7 @@ pub struct SpawnCommand {
 }
 
 impl SpawnCommand {
-    pub async fn execute(self) -> Option<&'static [u8]> {
+    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
         let stdout = open_stdout();
 
         for i in 0..self.times {
@@ -17,7 +17,7 @@ impl SpawnCommand {
                 TimeoutResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
             };
 
-                let spawned = spawn(async move {
+            let spawned = ops.spawn_io(move |_| async move {
                 for _ in 0..i + 1 {
                     let msg: Option<&'static [u8]> = match timeout(5).await {
                         TimeoutResult::Succeeded() => continue,

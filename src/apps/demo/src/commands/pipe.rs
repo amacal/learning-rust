@@ -1,20 +1,20 @@
 use super::errno::*;
-use crate::heap::*;
-use crate::runtime::*;
+use adma_io::heap::*;
+use adma_io::runtime::*;
 
 pub struct PipeCommand {
     pub msg: &'static [u8],
 }
 
 impl PipeCommand {
-    pub async fn execute(self) -> Option<&'static [u8]> {
+    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
         let stdout = open_stdout();
         let (reader, writer) = match create_pipe() {
             CreatePipe::Succeeded((reader, writer)) => (reader, writer),
             _ => return Some(APP_PIPE_CREATING_FAILED),
         };
 
-        let reader = spawn(async move {
+        let reader = ops.spawn_io(move |_| async move {
             let buffer = match mem_alloc(1 * 4096) {
                 MemoryAllocation::Failed(_) => return Some(APP_MEMORY_ALLOC_FAILED),
                 MemoryAllocation::Succeeded(value) => value.droplet(),
@@ -45,7 +45,7 @@ impl PipeCommand {
             }
         });
 
-        let writer = spawn(async move {
+        let writer = ops.spawn_io(move |_| async move {
             match write_pipe(&writer, self.msg).await {
                 PipeWriteResult::Succeeded(_, _) => (),
                 _ => return Some(APP_PIPE_WRITING_FAILED),

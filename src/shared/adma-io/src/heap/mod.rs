@@ -1,3 +1,6 @@
+mod pool;
+mod smart;
+
 use ::core::mem;
 use ::core::ops::Deref;
 use ::core::ops::DerefMut;
@@ -6,6 +9,9 @@ use ::core::ptr;
 use crate::kernel::*;
 use crate::syscall::*;
 use crate::trace::*;
+
+pub use self::pool::*;
+pub use self::smart::*;
 
 pub struct HeapSlice<'a> {
     src: &'a Heap,
@@ -31,6 +37,14 @@ pub struct Heap {
 impl Heap {
     pub fn at(ptr: usize, len: usize) -> Self {
         Self { ptr: ptr, len: len }
+    }
+
+    pub fn from(src: HeapRef) -> Self {
+        Self { ptr: src.ptr, len: src.len }
+    }
+
+    pub fn as_ref(&self) -> HeapRef {
+        HeapRef::new(self.ptr, self.len)
     }
 }
 
@@ -68,6 +82,7 @@ pub enum MemoryAllocation {
 pub fn mem_alloc(len: usize) -> MemoryAllocation {
     let prot = PROT_READ | PROT_WRITE;
     let flags = MAP_PRIVATE | MAP_ANONYMOUS;
+    let len = len / 4096 * 4096 + 4096;
 
     let addr = ptr::null_mut();
     let addr = match sys_mmap(addr, len, prot, flags, 0, 0) {

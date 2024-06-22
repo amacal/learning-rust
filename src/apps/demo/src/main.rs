@@ -1,28 +1,17 @@
 #![no_std]
 #![no_main]
 
-#![feature(fn_traits)]
-#![feature(waker_getters)]
-
 mod commands;
-mod core;
-mod heap;
-mod kernel;
-mod pipe;
-mod proc;
-mod runtime;
-mod sha1;
-mod syscall;
-mod trace;
-mod uring;
+mod start;
 
 use ::core::panic;
 
+use adma_io::proc::*;
+use adma_io::runtime::*;
+use adma_io::syscall::*;
+use adma_io::trace::*;
+
 use crate::commands::*;
-use crate::proc::*;
-use crate::runtime::*;
-use crate::syscall::*;
-use crate::trace::*;
 
 #[no_mangle]
 extern "C" fn main(args: &'static ProcessArguments) -> ! {
@@ -36,15 +25,15 @@ extern "C" fn main(args: &'static ProcessArguments) -> ! {
     let commands: [&'static [u8]; 9] = [b"cat", b"faster", b"hello", b"pipe", b"sha1sum", b"spawn", b"sync", b"thread", b"tick"];
 
     let result = match args.select(1, commands) {
-        Some(b"cat") => runtime.run(CatCommand { args: args }.execute()),
-        Some(b"faster") => runtime.run(FasterCommand { args: args, delay: 4 }.execute()),
-        Some(b"hello") => runtime.run(HelloCommand { msg: b"Hello, World!\n" }.execute()),
-        Some(b"pipe") => runtime.run(PipeCommand { msg: b"Hello, World!\n" }.execute()),
-        Some(b"sha1sum") => runtime.run(Sha1Command { args: args }.execute()),
-        Some(b"spawn") => runtime.run(SpawnCommand { times: 30, delay: 3 }.execute()),
-        Some(b"sync") => runtime.run(SyncCommand { msg: b"Hello, World!\n" }.execute()),
-        Some(b"thread") => runtime.run(ThreadCommand { ios: 100, cpus: 100 }.execute()),
-        Some(b"tick") => runtime.run(TickCommand { ticks: 2, delay: 1 }.execute()),
+        Some(b"cat") => runtime.run(|_| CatCommand { args: args }.execute()),
+        Some(b"faster") => runtime.run(|_| FasterCommand { args: args, delay: 4 }.execute()),
+        Some(b"hello") => runtime.run(|_| HelloCommand { msg: b"Hello, World!\n" }.execute()),
+        Some(b"pipe") => runtime.run(|ops| PipeCommand { msg: b"Hello, World!\n" }.execute(ops)),
+        Some(b"sha1sum") => runtime.run(|ops| Sha1Command { args: args }.execute(ops)),
+        Some(b"spawn") => runtime.run(|ops| SpawnCommand { times: 30, delay: 3 }.execute(ops)),
+        Some(b"sync") => runtime.run(|_| SyncCommand { msg: b"Hello, World!\n" }.execute()),
+        Some(b"thread") => runtime.run(|ops| ThreadCommand { ios: 100, cpus: 100 }.execute(ops)),
+        Some(b"tick") => runtime.run(|_| TickCommand { ticks: 2, delay: 1 }.execute()),
         _ => fail(-2, b"I/O Runtime: Unrecognized command.\n"),
     };
 

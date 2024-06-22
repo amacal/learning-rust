@@ -101,7 +101,7 @@ pub enum CallableTargetAllocate {
 }
 
 impl CallableTarget {
-    pub fn allocate<F, R, E>(target: F) -> CallableTargetAllocate
+    pub fn allocate<const T: usize, F, R, E>(pool: &mut HeapPool<T>, target: F) -> CallableTargetAllocate
     where
         F: FnOnce() -> Result<R, E> + Send,
     {
@@ -116,12 +116,22 @@ impl CallableTarget {
         }
 
         let len = mem::size_of::<CallableArgs<F, R, E>>();
-        trace1(b"allocating callable; size=%d\n", len);
+        trace1(b"allocating callable; soft, size=%d\n", len);
 
-        let ((ptr, len), mut data) = match mem_alloc(len) {
-            MemoryAllocation::Succeeded(heap) => (heap.as_ptr(), heap.boxed::<CallableArgs<F, R, E>>()),
-            MemoryAllocation::Failed(err) => return CallableTargetAllocate::AllocationFailed(err),
+        let heap = match pool.acquire(len) {
+            Some(reference) => Heap::from(reference),
+            None => {
+                trace1(b"allocating callable; hard, size=%d\n", len);
+
+                match mem_alloc(len) {
+                    MemoryAllocation::Succeeded(heap) => heap,
+                    MemoryAllocation::Failed(err) => return CallableTargetAllocate::AllocationFailed(err),
+                }
+            }
         };
+
+        let (ptr, len) = heap.as_ptr();
+        let mut data = heap.boxed::<CallableArgs<F, R, E>>();
 
         data.result = None;
         data.target = Some(target);
@@ -136,9 +146,13 @@ impl CallableTarget {
         })
     }
 
-    pub fn release(mut self) {
-        trace1(b"releasing callable; addr=%x\n", self.target.ptr);
-        mem_free(&mut self.target);
+    pub fn release(mut self, pool: &mut HeapPool<16>) {
+        trace1(b"releasing callable; soft, addr=%x\n", self.target.ptr);
+
+        if let Some(_) = pool.release(self.target.as_ref()) {
+            trace1(b"releasing callable; hard, addr=%x\n", self.target.ptr);
+            mem_free(&mut self.target);
+        }
     }
 }
 
@@ -153,12 +167,12 @@ impl CallableTarget {
         (self.call)(&mut self.target)
     }
 
-    pub fn result<F, R, E>(self) -> Option<Result<R, E>>
+    pub fn result<F, R, E>(self, pool: &mut HeapPool<16>) -> Option<Result<R, E>>
     where
         F: FnOnce() -> Result<R, E>,
     {
         let value = self.target.view::<CallableArgs<F, R, E>>().result.take();
-        self.release();
+        self.release(pool);
         value
     }
 }

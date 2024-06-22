@@ -16,7 +16,8 @@ pub struct IORing {
 
 pub struct IORingSubmitter {
     fd: u32,
-    cnt: usize,
+    cnt_total: usize,
+    cnt_queued: usize,
     sq_ptr: *mut (),
     sq_ptr_len: usize,
     sq_tail: *mut u32,
@@ -129,7 +130,8 @@ impl IORing {
 
         let submitter = IORingSubmitter {
             fd: fd,
-            cnt: 0,
+            cnt_total: 0,
+            cnt_queued: 0,
             sq_ptr: sq_ptr,
             sq_ptr_len: sq_ptr_len,
             sq_tail: sq_tail,
@@ -252,8 +254,7 @@ impl IORingSubmitter {
     where
         T: IORingSubmitBuffer,
     {
-        let min_complete = 0;
-        let to_submit = entries.len() as u32;
+        let to_submit = entries.len();
 
         for entry in entries.into_iter() {
             let ring_mask = unsafe { read_volatile(self.sq_ring_mask) };
@@ -278,22 +279,25 @@ impl IORingSubmitter {
                 IORingSubmitEntry::Read(data) => {
                     /* fmt */
                     (IORing::IORING_OP_READ, data.fd, data.buf, data.len, data.off)
-                },
+                }
                 IORingSubmitEntry::Write(data) => {
                     /* fmt */
                     (IORing::IORING_OP_WRITE, data.fd, data.buf, data.len, data.off)
-                },
+                }
             };
 
             unsafe {
-                self.cnt += 1;
+                self.cnt_total += 1;
+                self.cnt_queued += 1;
+
                 let sqe = self.sq_sqes.offset(sq_tail as isize);
 
-                trace3(
-                    b"submitting ring operation; op=%d, user=%d, cnt=%d\n",
+                trace4(
+                    b"submitting ring operation; op=%d, user=%d, total=%d, queued=%d\n",
                     opcode,
                     user_data,
-                    self.cnt,
+                    self.cnt_total,
+                    self.cnt_queued,
                 );
 
                 (*sqe).opcode = opcode;
@@ -308,28 +312,45 @@ impl IORingSubmitter {
             }
         }
 
-        let submitted = match sys_io_uring_enter(self.fd, to_submit, min_complete, 0, null(), 0) {
-            value if value < 0 => return IORingSubmit::SubmissionFailed(value),
-            value => value as usize,
-        };
+        IORingSubmit::Succeeded(to_submit)
+    }
 
-        if submitted != to_submit as usize {
-            IORingSubmit::SubmissionMismatched(submitted)
-        } else {
-            IORingSubmit::Succeeded(submitted)
+    pub fn flush(&mut self) -> IORingSubmit {
+        let min_complete = 0;
+        let to_submit = self.cnt_queued as u32;
+
+        trace2(
+            b"flushing ring operation; total=%d, queued=%d\n",
+            self.cnt_total,
+            self.cnt_queued,
+        );
+
+        if self.cnt_queued > 0 {
+            let submitted = match sys_io_uring_enter(self.fd, to_submit, min_complete, 0, null(), 0) {
+                value if value < 0 => return IORingSubmit::SubmissionFailed(value),
+                value => value as usize,
+            };
+
+            self.cnt_queued = 0;
+
+            if submitted != to_submit as usize {
+                return IORingSubmit::SubmissionMismatched(submitted);
+            }
         }
+
+        IORingSubmit::Succeeded(self.cnt_queued)
     }
 }
 
 #[allow(dead_code)]
 pub enum IORingComplete {
-    Succeeded(IORingCompleteEntry),
+    Succeeded(usize),
     UnexpectedEmpty(usize),
     CompletionFailed(isize),
 }
 
 #[allow(dead_code)]
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct IORingCompleteEntry {
     pub res: i32,
     pub flags: u32,
@@ -337,30 +358,38 @@ pub struct IORingCompleteEntry {
 }
 
 impl IORingCompleter {
-    fn extract(&self) -> Option<IORingCompleteEntry> {
+    fn extract<const T: usize>(&self, entries: &mut [IORingCompleteEntry; T]) -> usize {
         let ring_mask = unsafe { read_volatile(self.cq_ring_mask) };
-        let cq_head = unsafe { read_volatile(self.cq_head) };
-        let cq_tail = unsafe { read_volatile(self.cq_tail) };
+        let mut cnt = 0;
 
-        if cq_head == cq_tail {
-            return None;
+        while cnt < T {
+            let cq_head = unsafe { read_volatile(self.cq_head) };
+            let cq_tail = unsafe { read_volatile(self.cq_tail) };
+
+            if cq_head == cq_tail {
+                return cnt;
+            }
+
+            let index = cq_head & ring_mask;
+            let entry = unsafe { self.cq_cqes.offset(index as isize) };
+
+            entries[cnt] = IORingCompleteEntry {
+                res: unsafe { (*entry).res },
+                flags: unsafe { (*entry).flags },
+                user_data: unsafe { (*entry).user_data },
+            };
+
+            cnt += 1;
+            unsafe { write_volatile(self.cq_head, cq_head + 1) };
         }
 
-        let index = cq_head & ring_mask;
-        let entry = unsafe { self.cq_cqes.offset(index as isize) };
-        let entry = IORingCompleteEntry {
-            res: unsafe { (*entry).res },
-            flags: unsafe { (*entry).flags },
-            user_data: unsafe { (*entry).user_data },
-        };
-
-        unsafe { write_volatile(self.cq_head, cq_head + 1) };
-        Some(entry)
+        cnt
     }
 
-    pub fn complete(&self) -> IORingComplete {
-        if let Some(entry) = self.extract() {
-            return IORingComplete::Succeeded(entry);
+    pub fn complete<const T: usize>(&self, entries: &mut [IORingCompleteEntry; T]) -> IORingComplete {
+        let cnt = self.extract(entries);
+        if cnt > 0 {
+            return IORingComplete::Succeeded(cnt);
         }
 
         let to_submit = 0;
@@ -372,8 +401,10 @@ impl IORingCompleter {
             value => value as usize,
         };
 
-        if let Some(entry) = self.extract() {
-            IORingComplete::Succeeded(entry)
+        let cnt = self.extract(entries);
+
+        if cnt > 0 {
+            IORingComplete::Succeeded(cnt)
         } else {
             IORingComplete::UnexpectedEmpty(count)
         }
