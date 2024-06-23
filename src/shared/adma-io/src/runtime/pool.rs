@@ -35,9 +35,9 @@ impl IORuntimePool {
             Err(err) => return IORuntimePoolAllocation::QueueFailed(err),
         };
 
-        let mut instance: Boxed<IORuntimePool> = match mem_alloc(mem::size_of::<IORuntimePool>()) {
-            MemoryAllocation::Succeeded(heap) => heap.boxed(),
-            MemoryAllocation::Failed(err) => return IORuntimePoolAllocation::AllocationFailed(err),
+        let mut instance: Boxed<IORuntimePool> = match Heap::allocate(mem::size_of::<IORuntimePool>()) {
+            Ok(heap) => heap.boxed(),
+            Err(err) => return IORuntimePoolAllocation::AllocationFailed(err),
         };
 
         for i in 0..WORKERS_COUNT {

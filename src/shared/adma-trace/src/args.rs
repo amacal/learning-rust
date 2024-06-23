@@ -1,6 +1,5 @@
 use ::core::ptr;
 
-#[allow(dead_code)]
 pub trait FormatArg {
     fn to_number(self) -> Option<impl FormatNumber>;
     fn to_string(self) -> Option<impl FormatString>;
@@ -231,78 +230,4 @@ impl FormatArg for isize {
     fn to_string(self) -> Option<impl FormatString> {
         None::<Nope>
     }
-}
-
-#[allow(dead_code)]
-#[inline(never)]
-pub fn format_string<T: FormatString>(msg: *mut u8, mut idx: usize, max: usize, val: T) -> usize {
-    let len = val.len();
-    let val = val.ptr();
-    let mut off = 0;
-
-    unsafe {
-        while off < len && idx < max && *val.add(off) != 0 {
-            *msg.add(idx) = *val.add(off);
-            off += 1;
-            idx += 1;
-        }
-    }
-
-    idx
-}
-
-#[allow(dead_code)]
-#[inline(never)]
-pub fn format_number<T: FormatNumber, const B: u8, const L: usize>(
-    msg: *mut u8,
-    mut idx: usize,
-    max: usize,
-    val: T,
-) -> usize {
-    let neg = val.is_negative();
-    let zero = val.is_zero();
-    let mut val = val.absolute();
-
-    let mut buf = [0; 10];
-    let buf = buf.as_mut_ptr();
-    let mut buf_idx = 0;
-
-    while buf_idx < 10 && idx < max && (!val.is_zero() || buf_idx < L) {
-        let (next, remainder) = val.divide::<B>();
-        let character = match remainder {
-            value if value <= 9 => b'0' + value,
-            value => b'a' + value - 10,
-        };
-
-        unsafe {
-            *buf.add(buf_idx) = character;
-            buf_idx += 1;
-        }
-
-        val = next;
-    }
-
-    unsafe {
-        if val.is_zero() {
-            if neg {
-                *msg.add(idx) = b'-';
-                idx += 1;
-            }
-
-            if zero {
-                *msg.add(idx) = b'0';
-                idx += 1;
-            }
-
-            for i in (0..buf_idx).rev() {
-                *msg.add(idx) = *buf.add(i);
-                idx += 1;
-            }
-        } else {
-            *msg.add(idx) = b'?';
-            idx += 1;
-        }
-    }
-
-    idx
 }

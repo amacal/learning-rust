@@ -9,7 +9,9 @@ adma-io = { path = "../../shared/adma-io", default-features = false }
 
 [features]
 default = []
-tracing = ["adma-io/tracing"]
+tracing = ["io-tracing", "heap-tracing"]
+io-tracing = ["adma-io/tracing"]
+heap-tracing = ["adma-io/heap-tracing"]
 
 [profile.dev]
 opt-level = "z"

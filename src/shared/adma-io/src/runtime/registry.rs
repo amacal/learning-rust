@@ -39,7 +39,7 @@ impl IORingTask {
     }
 
     pub fn release(mut self) -> Option<&'static [u8]> {
-        mem_free(&mut self.heap);
+        self.heap.free();
         return self.result.take();
     }
 }
@@ -96,9 +96,9 @@ pub enum IORingRegistryAllocation {
 
 impl IORingRegistry {
     pub fn allocate() -> IORingRegistryAllocation {
-        match mem_alloc(mem::size_of::<IORingRegistry>()) {
-            MemoryAllocation::Succeeded(heap) => IORingRegistryAllocation::Succeeded(heap.boxed()),
-            MemoryAllocation::Failed(err) => IORingRegistryAllocation::AllocationFailed(err),
+        match Heap::allocate(mem::size_of::<IORingRegistry>()) {
+            Ok(heap) => IORingRegistryAllocation::Succeeded(heap.boxed()),
+            Err(err) => IORingRegistryAllocation::AllocationFailed(err),
         }
     }
 }
@@ -124,7 +124,7 @@ impl IORingRegistry {
 
         let (heap, target) = match pinned.components() {
             Some((heap, target)) => {
-                trace2(b"appending task to registry; tidx=%d, addr=%x\n", tidx, heap.ptr);
+                trace2(b"appending task to registry; tidx=%d, addr=%x\n", tidx, heap.ptr());
                 (heap, target)
             }
             None => {

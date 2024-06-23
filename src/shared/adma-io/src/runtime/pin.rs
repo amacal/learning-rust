@@ -31,12 +31,12 @@ impl IORingPin {
         let size = mem::size_of::<F>() / 8 * 8 + 8;
         trace1(b"allocating memory to pin a future; size=%d\n", size);
 
-        let heap = match mem_alloc(size) {
-            MemoryAllocation::Succeeded(value) => {
-                trace2(b"allocating memory to pin a future; size=%d, addr=%x\n", size, value.ptr);
+        let heap = match Heap::allocate(size) {
+            Ok(value) => {
+                trace2(b"allocating memory to pin a future; size=%d, addr=%x\n", size, value.ptr());
                 value
             }
-            MemoryAllocation::Failed(err) => {
+            Err(err) => {
                 trace2(b"allocating memory to pin a future; size=%d,s err=%d\n", size, err);
                 return IORingPinAllocate::AllocationFailed(err);
             }
@@ -44,7 +44,7 @@ impl IORingPin {
 
         unsafe {
             // copy future to the heap
-            let allocated = heap.ptr as *mut F;
+            let allocated = heap.ptr() as *mut F;
             ptr::write(allocated, target);
 
             // and out such pointer create erasure
@@ -62,8 +62,8 @@ impl IORingPin {
 
 impl Drop for IORingPin {
     fn drop(&mut self) {
-        if let Some((heap, _)) = &mut self.value {
-            mem_free(heap);
+        if let Some((heap, _)) = self.value.take() {
+            heap.free();
             self.value = None;
         }
     }

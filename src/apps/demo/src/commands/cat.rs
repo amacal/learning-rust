@@ -9,9 +9,9 @@ pub struct CatCommand {
 
 impl CatCommand {
     pub async fn execute(self) -> Option<&'static [u8]> {
-        let mut buffer = match mem_alloc(32 * 4096) {
-            MemoryAllocation::Failed(_) => return Some(APP_MEMORY_ALLOC_FAILED),
-            MemoryAllocation::Succeeded(value) => value.droplet(),
+        let mut buffer = match Heap::allocate(32 * 4096) {
+            Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
+            Ok(value) => value.droplet(),
         };
 
         let stdout = open_stdout();
@@ -47,8 +47,8 @@ impl CatCommand {
             while remaining > 0 {
                 let offset = read as usize - remaining;
                 let slice = match buffer.between(offset, remaining) {
-                    HeapSlicing::Succeeded(value) => value,
-                    _ => return Some(APP_MEMORY_SLICE_FAILED),
+                    Ok(value) => value,
+                    Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
                 };
 
                 let written = match write_stdout(&stdout, &slice).await {

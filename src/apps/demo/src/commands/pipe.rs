@@ -15,9 +15,9 @@ impl PipeCommand {
         };
 
         let reader = ops.spawn_io(move |_| async move {
-            let buffer = match mem_alloc(1 * 4096) {
-                MemoryAllocation::Failed(_) => return Some(APP_MEMORY_ALLOC_FAILED),
-                MemoryAllocation::Succeeded(value) => value.droplet(),
+            let buffer = match Heap::allocate(1 * 4096) {
+                Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
+                Ok(value) => value.droplet(),
             };
 
             let (buffer, cnt) = match read_pipe(&reader, buffer).await {
@@ -26,8 +26,8 @@ impl PipeCommand {
             };
 
             let slice = match buffer.between(0, cnt as usize) {
-                HeapSlicing::Succeeded(value) => value,
-                _ => return Some(APP_MEMORY_SLICE_FAILED),
+                Ok(value) => value,
+                Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
             };
 
             let written = match write_stdout(&stdout, &slice).await {

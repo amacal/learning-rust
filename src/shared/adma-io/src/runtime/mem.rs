@@ -3,13 +3,13 @@ use crate::uring::*;
 
 impl IORingSubmitBuffer for Droplet<Heap> {
     fn extract(&self) -> (*const u8, usize) {
-        (self.ptr as *const u8, self.len)
+        (self.ptr() as *const u8, self.len())
     }
 }
 
 impl IORingSubmitBuffer for &Droplet<Heap> {
     fn extract(&self) -> (*const u8, usize) {
-        (self.ptr as *const u8, self.len)
+        (self.ptr() as *const u8, self.len())
     }
 }
 

@@ -84,7 +84,7 @@ impl CallableTarget {
     }
 
     pub fn as_ptr(&self) -> (usize, usize) {
-        (self.target.ptr, self.target.len)
+        self.target.as_ptr()
     }
 
     pub fn from(heap: Heap) -> Self {
@@ -123,9 +123,9 @@ impl CallableTarget {
             None => {
                 trace1(b"allocating callable; hard, size=%d\n", len);
 
-                match mem_alloc(len) {
-                    MemoryAllocation::Succeeded(heap) => heap,
-                    MemoryAllocation::Failed(err) => return CallableTargetAllocate::AllocationFailed(err),
+                match Heap::allocate(len) {
+                    Ok(heap) => heap,
+                    Err(err) => return CallableTargetAllocate::AllocationFailed(err),
                 }
             }
         };
@@ -146,12 +146,12 @@ impl CallableTarget {
         })
     }
 
-    pub fn release(mut self, pool: &mut HeapPool<16>) {
-        trace1(b"releasing callable; soft, addr=%x\n", self.target.ptr);
+    pub fn release(self, pool: &mut HeapPool<16>) {
+        trace1(b"releasing callable; soft, addr=%x\n", self.target.ptr());
 
         if let Some(_) = pool.release(self.target.as_ref()) {
-            trace1(b"releasing callable; hard, addr=%x\n", self.target.ptr);
-            mem_free(&mut self.target);
+            trace1(b"releasing callable; hard, addr=%x\n", self.target.ptr());
+            self.target.free();
         }
     }
 }
@@ -160,8 +160,8 @@ impl CallableTarget {
     pub fn call(&mut self) -> Option<&'static [u8]> {
         trace2(
             b"dispatching callable; target=%x, size=%d\n",
-            self.target.ptr,
-            self.target.len,
+            self.target.ptr(),
+            self.target.len(),
         );
 
         (self.call)(&mut self.target)

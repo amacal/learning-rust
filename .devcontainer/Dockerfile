@@ -10,4 +10,4 @@ RUN rustup update nightly
 RUN rustup default nightly
 RUN rustup component add rustfmt
 RUN rustup target add x86_64-unknown-none
-RUN cargo install cargo-expand flamegraph
+RUN cargo install cargo-expand flamegraph cargo-tarpaulin

@@ -16,9 +16,9 @@ impl Sha1Command {
             // a task will be spawned for each argument
             let task = ops.spawn_io(move |mut ops| async move {
                 // an auto dropped memory for a buffer
-                let buffer: Droplet<Heap> = match mem_alloc(32 * 4096) {
-                    MemoryAllocation::Succeeded(value) => value.droplet(),
-                    MemoryAllocation::Failed(_) => return Some(APP_MEMORY_ALLOC_FAILED),
+                let buffer: Droplet<Heap> = match Heap::allocate(32 * 4096) {
+                    Ok(value) => value.droplet(),
+                    Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
                 };
 
                 // a path of the file to hash
@@ -38,11 +38,11 @@ impl Sha1Command {
                 let mut sha1 = Sha1::new();
 
                 loop {
-                    while buffer_offset < buffer.len {
+                    while buffer_offset < buffer.len() {
                         // slice a buffer to try it fill till the end
-                        let buffer: HeapSlice = match buffer.between(buffer_offset, buffer.len) {
-                            HeapSlicing::Succeeded(value) => value,
-                            _ => return Some(APP_MEMORY_SLICE_FAILED),
+                        let buffer: HeapSlice = match buffer.between(buffer_offset, buffer.len()) {
+                            Ok(value) => value,
+                            Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
                         };
 
                         // and read bytes into sliced memory from a given file offset
@@ -63,8 +63,8 @@ impl Sha1Command {
 
                     // let's slice till 512-bits boundary, as sha1 requires
                     let slice = match buffer.between(0, buffer_offset / 64 * 64) {
-                        HeapSlicing::Succeeded(val) => val,
-                        _ => return Some(APP_MEMORY_SLICE_FAILED),
+                        Ok(val) => val,
+                        Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
                     };
 
                     // to process it outside event loop
@@ -84,7 +84,7 @@ impl Sha1Command {
 
                     // and in case we didn't full entire buffer
                     // we may assume the file is completed
-                    if buffer_offset < buffer.len {
+                    if buffer_offset < buffer.len() {
                         break;
                     }
 
@@ -94,8 +94,8 @@ impl Sha1Command {
 
                 // the buffer may have remainder between 0 and 63 bytes
                 let slice: HeapSlice = match buffer.between(buffer_offset / 64 * 64, buffer_offset) {
-                    HeapSlicing::Succeeded(slice) => slice,
-                    _ => return Some(APP_MEMORY_SLICE_FAILED),
+                    Ok(slice) => slice,
+                    Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
                 };
 
                 // which needs to be finalized

@@ -42,7 +42,7 @@ unsafe fn start_thread(heap: &Heap, func: extern "C" fn(&WorkerArgs) -> !, args:
 
     // pointing at the end of the created stack
     let size = mem::size_of::<WorkerArgs>();
-    let stack = (heap.ptr as *mut u8).add(heap.len - size);
+    let stack = (heap.ptr() as *mut u8).add(heap.len() - size);
 
     // copy worker args on new stack
     *(stack as *mut WorkerArgs) = args;
@@ -100,9 +100,9 @@ impl Worker {
         }
 
         // we need to have a stack
-        let mut heap = match mem_alloc(4096) {
-            MemoryAllocation::Succeeded(heap) => heap,
-            MemoryAllocation::Failed(err) => {
+        let mut heap = match Heap::allocate(4096) {
+            Ok(heap) => heap,
+            Err(err) => {
                 release_pipes(err, pipefd);
                 return WorkerStart::StackFailed(err);
             }
@@ -111,8 +111,8 @@ impl Worker {
         // args will be passed directly to newly created thread
         // and must contain incoming and outgoing pipes
         let args = WorkerArgs {
-            stack_ptr: heap.ptr,
-            stack_len: heap.len,
+            stack_ptr: heap.ptr(),
+            stack_len: heap.len(),
             incoming: pipefd[0],
             outgoing: pipefd[3],
         };
@@ -121,7 +121,7 @@ impl Worker {
         let tid = match unsafe { start_thread(&heap, worker_callback, args) } {
             result if result > 0 => result as u32,
             result => {
-                mem_free(&mut heap);
+                heap.free();
                 release_pipes(result, pipefd);
 
                 return WorkerStart::StartFailed(result);
@@ -131,7 +131,7 @@ impl Worker {
         trace4(
             b"worker spawned; tid=%d, heap=%x, in=%d, out=%d\n",
             tid,
-            heap.ptr,
+            heap.ptr(),
             pipefd[3],
             pipefd[1],
         );
