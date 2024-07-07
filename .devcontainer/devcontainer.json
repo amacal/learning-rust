@@ -18,7 +18,8 @@
 				"files.insertFinalNewline": true,
 				"rust-analyzer.cargo.features": [],
 				"rust-analyzer.cargo.target": "x86_64-unknown-linux-gnu",
-				"rust-analyzer.checkOnSave": false
+				"rust-analyzer.checkOnSave": true,
+				"rust-analyzer.checkOnSave.allTargets": false
 			}
 		}
 	}

@@ -84,20 +84,20 @@ macro_rules! trace {
 #[macro_export]
 macro_rules! tracing {
     ($feature:literal) => {
-        format!(format0);
-        format!(format1, (0, v0, T0));
-        format!(format2, (0, v0, T0), (1, v1, T1));
-        format!(format3, (0, v0, T0), (1, v1, T1), (2, v2, T2));
-        format!(format4, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3));
-        format!(format5, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3), (4, v4, T4));
-        format!(format6, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3), (4, v4, T4), (5, v5, T5));
+        self::format!(format0);
+        self::format!(format1, (0, v0, T0));
+        self::format!(format2, (0, v0, T0), (1, v1, T1));
+        self::format!(format3, (0, v0, T0), (1, v1, T1), (2, v2, T2));
+        self::format!(format4, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3));
+        self::format!(format5, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3), (4, v4, T4));
+        self::format!(format6, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3), (4, v4, T4), (5, v5, T5));
 
-        trace!(trace0, format0, $feature);
-        trace!(trace1, format1, $feature, (0, v0, T0));
-        trace!(trace2, format2, $feature, (0, v0, T0), (1, v1, T1));
-        trace!(trace3, format3, $feature, (0, v0, T0), (1, v1, T1), (2, v2, T2));
-        trace!(trace4, format4, $feature, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3));
-        trace!(trace5, format5, $feature, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3), (4, v4, T4));
-        trace!(trace6, format6, $feature, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3), (4, v4, T4), (5, v5, T5));
+        self::trace!(trace0, format0, $feature);
+        self::trace!(trace1, format1, $feature, (0, v0, T0));
+        self::trace!(trace2, format2, $feature, (0, v0, T0), (1, v1, T1));
+        self::trace!(trace3, format3, $feature, (0, v0, T0), (1, v1, T1), (2, v2, T2));
+        self::trace!(trace4, format4, $feature, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3));
+        self::trace!(trace5, format5, $feature, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3), (4, v4, T4));
+        self::trace!(trace6, format6, $feature, (0, v0, T0), (1, v1, T1), (2, v2, T2), (3, v3, T3), (4, v4, T4), (5, v5, T5));
     };
 }

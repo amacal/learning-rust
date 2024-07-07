@@ -77,7 +77,7 @@ impl IORingTaskToken {
 }
 
 impl IORingTaskToken {
-    pub fn submit<T: IORingSubmitBuffer>(waker: &Waker, entry: IORingSubmitEntry<T>) -> Option<IORingTaskToken> {
+    pub fn submit(waker: &Waker, entry: IORingSubmitEntry) -> Option<IORingTaskToken> {
         match Self::context(waker).submit(entry) {
             IORingRuntimeSubmit::Succeeded(completer) => Some(IORingTaskToken::from_op(completer)),
             IORingRuntimeSubmit::SubmissionFailed(_) => None,

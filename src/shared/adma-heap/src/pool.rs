@@ -1,5 +1,3 @@
-use crate::trace::*;
-
 use super::*;
 
 impl<const T: usize> HeapPool<T> {
@@ -53,7 +51,7 @@ mod tests {
             Err(_) => return assert!(false),
         };
 
-        if let Some(heap) = pool.release(heap) {
+        if let Some(_) = pool.release(heap) {
             assert!(false);
         }
     }
@@ -66,7 +64,7 @@ mod tests {
             Err(_) => return assert!(false),
         };
 
-        if let Some(heap) = pool.release(heap) {
+        if let Some(_) = pool.release(heap) {
             assert!(false);
         }
 
@@ -89,7 +87,7 @@ mod tests {
             Err(_) => return assert!(false),
         };
 
-        if let Some(heap) = pool.release(heap) {
+        if let Some(_) = pool.release(heap) {
             assert!(false);
         }
 

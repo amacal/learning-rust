@@ -1,6 +1,10 @@
 use crate::heap::*;
 use crate::uring::*;
 
+pub trait IORingSubmitBuffer {
+    fn extract(&self) -> (*const u8, usize);
+}
+
 impl IORingSubmitBuffer for Droplet<Heap> {
     fn extract(&self) -> (*const u8, usize) {
         (self.ptr() as *const u8, self.len())

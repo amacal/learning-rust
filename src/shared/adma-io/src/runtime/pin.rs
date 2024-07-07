@@ -24,7 +24,7 @@ pub enum IORingPinAllocate {
 }
 
 impl IORingPin {
-    pub fn allocate<const T: usize, F>(pool: &mut HeapPool<T>, target: F) -> IORingPinAllocate
+    pub fn allocate<const T: usize, F>(_pool: &mut HeapPool<T>, target: F) -> IORingPinAllocate
     where
         F: Future<Output = Option<&'static [u8]>>,
     {

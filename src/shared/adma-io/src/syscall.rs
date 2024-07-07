@@ -136,27 +136,6 @@ pub fn sys_munmap(addr: *mut (), len: usize) -> isize {
 
 #[allow(dead_code)]
 #[inline(never)]
-pub fn sys_nanosleep(timespec: *const timespec) -> isize {
-    unsafe {
-        let ret: isize;
-
-        asm!(
-            "syscall",
-            in("rax") 35,
-            in("rdi") timespec,
-            in("rsi") 0,
-            lateout("rcx") _,
-            lateout("r11") _,
-            lateout("rax") ret,
-            options(nostack)
-        );
-
-        ret
-    }
-}
-
-#[allow(dead_code)]
-#[inline(never)]
 pub fn sys_exit(status: i32) -> ! {
     unsafe {
         asm!(
@@ -248,52 +227,6 @@ pub fn sys_pipe2(pipefd: *mut u32, flags: u32) -> isize {
             in("rax") 293,
             in("rdi") pipefd,
             in("rsi") flags,
-            lateout("rcx") _,
-            lateout("r11") _,
-            lateout("rax") ret,
-            options(nostack)
-        );
-
-        ret
-    }
-}
-
-#[allow(dead_code)]
-#[inline(never)]
-pub fn sys_io_uring_setup(entries: u32, params: *mut io_uring_params) -> isize {
-    unsafe {
-        let ret;
-
-        asm!(
-            "syscall",
-            in("rax") 425,
-            in("rdi") entries,
-            in("rsi") params,
-            lateout("rcx") _,
-            lateout("r11") _,
-            lateout("rax") ret,
-            options(nostack)
-        );
-
-        ret
-    }
-}
-
-#[allow(dead_code)]
-#[inline(never)]
-pub fn sys_io_uring_enter(fd: u32, to_submit: u32, min_complete: u32, flags: u32, argp: *const u8, args: u32) -> isize {
-    unsafe {
-        let ret;
-
-        asm!(
-            "syscall",
-            in("rax") 426,
-            in("rdi") fd,
-            in("rsi") to_submit,
-            in("rdx") min_complete,
-            in("r10") flags,
-            in("r8") argp,
-            in("r9") args,
             lateout("rcx") _,
             lateout("r11") _,
             lateout("rax") ret,

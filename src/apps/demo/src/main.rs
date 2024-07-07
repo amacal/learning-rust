@@ -4,8 +4,6 @@
 mod commands;
 mod start;
 
-use ::core::panic;
-
 use adma_io::proc::*;
 use adma_io::runtime::*;
 use adma_io::syscall::*;
@@ -59,7 +57,8 @@ fn fail(status: i32, msg: &'static [u8]) -> ! {
 }
 
 #[inline(never)]
+#[cfg(not(test))]
 #[panic_handler]
-fn panic(_panic: &panic::PanicInfo<'_>) -> ! {
+fn panic(_panic: &::core::panic::PanicInfo<'_>) -> ! {
    sys_exit(-1)
 }

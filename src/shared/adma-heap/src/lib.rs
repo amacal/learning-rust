@@ -10,6 +10,7 @@ mod slice;
 mod smart;
 mod syscall;
 mod trace;
+mod view;
 
 use ::core::marker::*;
 use ::core::mem;
@@ -57,11 +58,6 @@ impl Heap {
         trace2(b"creating boxed; addr=%x, size=%d\n", self.ptr, self.len);
         Boxed::at(self.ptr, self.len, self.ptr as *mut T)
     }
-
-    pub fn view<T>(&self) -> View<T> {
-        trace2(b"creating view; addr=%x, size=%d\n", self.ptr, self.len);
-        View::at(self.ptr as *mut T)
-    }
 }
 
 pub struct View<T> {
@@ -72,26 +68,6 @@ pub struct Boxed<T: HeapLifetime> {
     root: usize,
     len: usize,
     ptr: *mut T,
-}
-
-impl<T> View<T> {
-    fn at(ptr: *mut T) -> Self {
-        Self { ptr }
-    }
-}
-
-impl<T> Deref for View<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.ptr }
-    }
-}
-
-impl<T> DerefMut for View<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.ptr }
-    }
 }
 
 impl<T: HeapLifetime> Deref for Boxed<T> {

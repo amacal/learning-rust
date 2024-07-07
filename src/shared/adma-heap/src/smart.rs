@@ -1,10 +1,10 @@
 use ::core::marker::*;
-use ::core::ops::*;
 use ::core::mem;
+use ::core::ops::*;
 
 use super::*;
 
-impl <T> Smart<T> {
+impl<T> Smart<T> {
     fn new(ptr: usize, len: usize) -> Self {
         Self {
             ptr: ptr,
@@ -24,6 +24,7 @@ impl <T> Smart<T> {
             (*(heap.ptr as *mut SmartBox<T>)).cnt = 1;
         }
 
+        trace3(b"allocating smart; addr=%x, size=%d, cnt=%d\n", heap.ptr(), len, 1);
         Some(Smart::new(heap.ptr, heap.len))
     }
 }
@@ -31,15 +32,16 @@ impl <T> Smart<T> {
 impl<T> Smart<T> {
     #[cfg(test)]
     fn counter(&self) -> usize {
-        unsafe {
-            (*(self.ptr as *mut SmartBox<T>)).cnt
-        }
+        unsafe { (*(self.ptr as *mut SmartBox<T>)).cnt }
     }
 
     pub fn duplicate(&self) -> Smart<T> {
-        unsafe {
+        let val = unsafe {
             (*(self.ptr as *mut SmartBox<T>)).cnt += 1;
-        }
+            (*(self.ptr as *mut SmartBox<T>)).cnt
+        };
+
+        trace3(b"duplicating smart; addr=%x, size=%d, cnt=%d\n", self.ptr, self.len, val);
 
         Self {
             ptr: self.ptr,
@@ -51,7 +53,19 @@ impl<T> Smart<T> {
 
 impl<T> Drop for Smart<T> {
     fn drop(&mut self) {
-        unsafe { (*(self.ptr as *mut SmartBox<T>)).cnt -= 1 }
+        let val = unsafe {
+            (*(self.ptr as *mut SmartBox<T>)).cnt -= 1;
+            (*(self.ptr as *mut SmartBox<T>)).cnt
+        };
+
+        trace3(b"dropping smart; addr=%x, size=%d, cnt=%d\n", self.ptr, self.len, val);
+
+        if val == 0 {
+            // in case of error we can only log it, no-way to propagate it to the caller
+            if let Err(_) = Heap::at(self.ptr, self.len).free() {
+                trace3(b"dropping smart; addr=%x, size=%d, cnt=%d, failed\n", self.ptr, self.len, val);
+            }
+        }
     }
 }
 
@@ -78,13 +92,14 @@ impl<T> DerefMut for Smart<T> {
 mod tests {
     use super::*;
 
-    struct Testing {
-        val: usize,
+    struct Pair {
+        first: u32,
+        second: u32,
     }
 
     #[test]
     fn allocate_one_page_rounded_up() {
-        let heap = match Smart::<Testing>::allocate() {
+        let heap = match Smart::<Pair>::allocate() {
             Some(value) => value,
             None => return assert!(false),
         };
@@ -95,8 +110,22 @@ mod tests {
     }
 
     #[test]
+    fn access_created_pointer() {
+        let mut heap = match Smart::<Pair>::allocate() {
+            Some(value) => value,
+            None => return assert!(false),
+        };
+
+        heap.first = 32;
+        heap.second = 64;
+
+        assert_eq!(heap.first, 32);
+        assert_eq!(heap.second, 64);
+    }
+
+    #[test]
     fn duplicate_allocated_smart() {
-        let (first, second) = match Smart::<Testing>::allocate() {
+        let (first, second) = match Smart::<Pair>::allocate() {
             Some(value) => (value.duplicate(), value),
             None => return assert!(false),
         };
@@ -113,7 +142,7 @@ mod tests {
 
     #[test]
     fn release_duplicated_smart() {
-        let (first, second) = match Smart::<Testing>::allocate() {
+        let (first, second) = match Smart::<Pair>::allocate() {
             Some(value) => (value.duplicate(), value),
             None => return assert!(false),
         };

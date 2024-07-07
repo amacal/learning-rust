@@ -3,6 +3,7 @@ use ::core::task::Context;
 use ::core::task::Waker;
 
 use super::erase::*;
+use super::ops::*;
 use super::pin::*;
 use super::pool::*;
 use super::raw::*;
@@ -11,7 +12,6 @@ use super::registry::*;
 use crate::heap::*;
 use crate::trace::*;
 use crate::uring::*;
-use super::ops::*;
 
 pub struct IORingRuntime {
     iteration: usize,
@@ -72,7 +72,7 @@ impl IORingRuntime {
             registry: registry,
             pool: pool,
             ops: ops,
-            entries: [IORingCompleteEntry::default(); 16]
+            entries: [IORingCompleteEntry::default(); 16],
         };
 
         IORingRuntimeAllocate::Succeeded(runtime)
@@ -262,11 +262,7 @@ impl IORingRuntime {
     }
 
     fn complete(&mut self, completer: IORingCompleterRef, entry: &IORingCompleteEntry) -> IORingRuntimeTick {
-        trace2(
-            b"looking for completions; cidx=%d, cid=%d\n",
-            completer.cidx(),
-            completer.cid(),
-        );
+        trace2(b"looking for completions; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
         // complete received completer idx, it will return idx, id, readiness and completers of the found task
         let (task, ready, mut cnt) = match self.registry.complete(completer, entry.res) {
@@ -322,7 +318,7 @@ impl IORingRuntime {
         let target = target.call_once((ops,));
 
         trace0(b"allocating memory to pin a future\n");
-        let pinned = match IORingPin::allocate(&mut self.ops.ctx.heap_pool ,target) {
+        let pinned = match IORingPin::allocate(&mut self.ops.ctx.heap_pool, target) {
             IORingPinAllocate::Succeeded(pinned) => pinned,
             IORingPinAllocate::AllocationFailed(err) => return IORingRuntimeRun::AllocationFailed(err),
         };
@@ -377,21 +373,13 @@ pub enum IORingRuntimeExtract {
 
 impl IORingRuntime {
     fn extract(&mut self, completer: &IORingCompleterRef) -> IORingRuntimeExtract {
-        trace2(
-            b"extracting completer; cidx=%d, cid=%d\n",
-            completer.cidx(),
-            completer.cid(),
-        );
+        trace2(b"extracting completer; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
         let completion = match self.registry.remove_completer(completer) {
             IORingRegistryRemove::Succeeded(completer) => completer,
             IORingRegistryRemove::NotFound() => return IORingRuntimeExtract::NotFound(),
             IORingRegistryRemove::NotReady() => {
-                trace2(
-                    b"removing completer; cidx=%d, cid=%d, not ready\n",
-                    completer.cidx(),
-                    completer.cid(),
-                );
+                trace2(b"removing completer; cidx=%d, cid=%d, not ready\n", completer.cidx(), completer.cid());
 
                 return IORingRuntimeExtract::NotCompleted();
             }
@@ -402,12 +390,7 @@ impl IORingRuntime {
             None => return IORingRuntimeExtract::NotCompleted(),
         };
 
-        trace3(
-            b"removing completer; cidx=%d, cid=%d, res=%d\n",
-            completer.cidx(),
-            completer.cid(),
-            value,
-        );
+        trace3(b"removing completer; cidx=%d, cid=%d, res=%d\n", completer.cidx(), completer.cid(), value);
 
         IORingRuntimeExtract::Succeeded(value)
     }
@@ -460,10 +443,7 @@ pub enum IORingRuntimeSubmit {
 }
 
 impl IORingRuntime {
-    fn submit<T>(&mut self, task: &IORingTaskRef, entry: IORingSubmitEntry<T>) -> IORingRuntimeSubmit
-    where
-        T: IORingSubmitBuffer,
-    {
+    fn submit(&mut self, task: &IORingTaskRef, entry: IORingSubmitEntry) -> IORingRuntimeSubmit {
         trace1(b"appending completer to registry; tid=%d\n", task.tid());
         let completer = match self.registry.append_completer(task.clone()) {
             IORingRegistryAppend::Succeeded(completer) => completer,
@@ -471,11 +451,7 @@ impl IORingRuntime {
             IORingRegistryAppend::InternallyFailed() => return IORingRuntimeSubmit::InternallyFailed(),
         };
 
-        trace2(
-            b"submitting op with uring; cidx=%d, cid=%d\n",
-            completer.cidx(),
-            completer.cid(),
-        );
+        trace2(b"submitting op with uring; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
         let err = match self.submitter.submit(completer.encode(), [entry]) {
             IORingSubmit::Succeeded(_) => {
@@ -500,10 +476,7 @@ impl IORingRuntime {
 }
 
 impl IORingRuntimeContext {
-    pub fn submit<T>(&mut self, entry: IORingSubmitEntry<T>) -> IORingRuntimeSubmit
-    where
-        T: IORingSubmitBuffer,
-    {
+    pub fn submit(&mut self, entry: IORingSubmitEntry) -> IORingRuntimeSubmit {
         unsafe { (*self.runtime).submit(&self.task, entry) }
     }
 }

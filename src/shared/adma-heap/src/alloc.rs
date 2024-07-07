@@ -18,8 +18,10 @@ impl Heap {
     }
 
     pub fn free(self) -> Result<(), isize> {
+        // tracing releases heap may help in any naive troubleshooting
         trace2(b"releasing heap; addr=%x, size=%d\n", self.ptr(), self.len());
 
+        // use syscall to free memory with error propagation
         match sys_munmap(self.ptr, self.len) {
             value if value == 0 => Ok(()),
             value => Err(value),

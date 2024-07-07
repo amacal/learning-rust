@@ -1,0 +1,13 @@
+[package]
+name = "adma-uring"
+version = "0.0.0"
+edition = "2021"
+authors = ["Adrian Macal <adma@amacal.pl>"]
+
+[dependencies]
+adma-trace = { path = "../adma-trace", default-features = false }
+
+[features]
+std = []
+default = []
+tracing = []

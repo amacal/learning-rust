@@ -100,7 +100,7 @@ impl Worker {
         }
 
         // we need to have a stack
-        let mut heap = match Heap::allocate(4096) {
+        let heap = match Heap::allocate(4096) {
             Ok(heap) => heap,
             Err(err) => {
                 release_pipes(err, pipefd);
@@ -151,7 +151,7 @@ impl Worker {
 }
 
 pub enum WorkerExecute {
-    Succeeded(IORingSubmitEntry<*const u8>),
+    Succeeded(IORingSubmitEntry),
     OutgoingPipeFailed(isize),
 }
 

@@ -4,7 +4,6 @@ use ::core::task::Context;
 use ::core::task::Poll;
 
 use super::token::*;
-use crate::kernel::*;
 use crate::trace::*;
 use crate::uring::*;
 
