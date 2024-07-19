@@ -24,7 +24,7 @@ impl<T> Smart<T> {
             (*(heap.ptr as *mut SmartBox<T>)).cnt = 1;
         }
 
-        trace3(b"allocating smart; addr=%x, size=%d, cnt=%d\n", heap.ptr(), len, 1);
+        trace3(b"allocating smart; addr=%x, size=%d, cnt=%d\n", heap.as_ref().ptr(), len, 1);
         Some(Smart::new(heap.ptr, heap.len))
     }
 }

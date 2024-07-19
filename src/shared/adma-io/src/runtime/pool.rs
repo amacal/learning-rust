@@ -132,7 +132,7 @@ impl IORuntimePool {
 
         // append encoded completer to a callable header
         let (ptr, len) = unsafe {
-            let (ptr, _) = callable.as_ptr();
+            let ptr = callable.as_ref().ptr();
             let encoded = (ptr + 16) as *mut u64;
 
             *encoded = completers[1].encode();

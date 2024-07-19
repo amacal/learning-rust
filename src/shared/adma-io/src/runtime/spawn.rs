@@ -151,7 +151,7 @@ where
 {
     fn drop(&mut self) {
         if let Some(task) = self.task.take() {
-            let (ptr, len) = task.as_ptr();
+            let (ptr, len) = task.as_ref().as_ptr();
             trace2(b"callable; releasing task, heap=%x, size=%d\n", ptr, len);
             task.release(&mut self.ctx.heap_pool);
         }

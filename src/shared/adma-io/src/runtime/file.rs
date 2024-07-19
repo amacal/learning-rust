@@ -4,36 +4,37 @@ use ::core::task::Context;
 use ::core::task::Poll;
 
 use super::mem::*;
+use super::ops::*;
 use super::token::*;
 use crate::core::*;
 use crate::trace::*;
 use crate::uring::*;
 
-// a file can be opened from any null terminated string reference
-// because this is a way how I/O Ring accepts it in open_at operation
-pub fn open_file<'a, TPath>(path: &'a TPath) -> FileOpen<'a, TPath>
-where
-    TPath: AsNullTerminatedRef,
-{
-    FileOpen {
-        path: path,
-        token: None,
+impl IORuntimeOps {
+    pub fn open_file<'a, TPath>(&mut self, path: &'a TPath) -> FileOpen<'a, TPath>
+    where
+        TPath: AsNullTerminatedRef,
+    {
+        FileOpen {
+            path: path,
+            token: None,
+        }
     }
-}
 
-pub fn close_file(descriptor: FileDescriptor) -> FileClose {
-    FileClose {
-        descriptor: descriptor,
-        token: None,
+    pub fn close_file(&mut self, descriptor: FileDescriptor) -> FileClose {
+        FileClose {
+            descriptor: descriptor,
+            token: None,
+        }
     }
-}
 
-pub fn read_file<TBuffer>(file: &FileDescriptor, buffer: TBuffer, offset: u64) -> FileRead<TBuffer> {
-    FileRead {
-        fd: file.value,
-        buffer: Some(buffer),
-        offset: offset,
-        token: None,
+    pub fn read_file<TBuffer>(&mut self, file: &FileDescriptor, buffer: TBuffer, offset: u64) -> FileRead<TBuffer> {
+        FileRead {
+            fd: file.value,
+            buffer: Some(buffer),
+            offset: offset,
+            token: None,
+        }
     }
 }
 

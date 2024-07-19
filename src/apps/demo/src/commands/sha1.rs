@@ -28,7 +28,7 @@ impl Sha1Command {
                 };
 
                 // a file descriptor for a file we opened
-                let file: FileDescriptor = match open_file(&path).await {
+                let file: FileDescriptor = match ops.open_file(&path).await {
                     FileOpenResult::Succeeded(value) => value,
                     _ => return Some(APP_FILE_OPENING_FAILED),
                 };
@@ -38,15 +38,15 @@ impl Sha1Command {
                 let mut sha1 = Sha1::new();
 
                 loop {
-                    while buffer_offset < buffer.len() {
+                    while buffer_offset < buffer.as_ref().len() {
                         // slice a buffer to try it fill till the end
-                        let buffer: HeapSlice = match buffer.between(buffer_offset, buffer.len()) {
+                        let buffer: HeapSlice = match buffer.between(buffer_offset, buffer.as_ref().len()) {
                             Ok(value) => value,
                             Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
                         };
 
                         // and read bytes into sliced memory from a given file offset
-                        let read = match read_file(&file, buffer, file_offset).await {
+                        let read = match ops.read_file(&file, buffer, file_offset).await {
                             FileReadResult::Succeeded(_, read) => read as usize,
                             _ => return Some(APP_FILE_READING_FAILED),
                         };
@@ -84,7 +84,7 @@ impl Sha1Command {
 
                     // and in case we didn't full entire buffer
                     // we may assume the file is completed
-                    if buffer_offset < buffer.len() {
+                    if buffer_offset < buffer.as_ref().len() {
                         break;
                     }
 
@@ -127,14 +127,14 @@ impl Sha1Command {
                 );
 
                 // to be printed asynchronously in the stdout
-                let stdout = open_stdout();
-                match write_stdout(&stdout, (msg, len)).await {
+                let stdout = ops.open_stdout();
+                match ops.write_stdout(&stdout, (msg, len)).await {
                     StdOutWriteResult::Succeeded(_, _) => (),
                     _ => return Some(APP_STDOUT_FAILED),
                 }
 
                 // and finally we close a file
-                match close_file(file).await {
+                match ops.close_file(file).await {
                     FileCloseResult::Succeeded() => (),
                     _ => return Some(APP_FILE_CLOSING_FAILED),
                 }

@@ -14,7 +14,6 @@ mod stdout;
 mod thread;
 mod time;
 mod token;
-mod uring;
 mod utils;
 
 pub use self::core::*;

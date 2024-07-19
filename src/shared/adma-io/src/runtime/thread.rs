@@ -42,7 +42,7 @@ unsafe fn start_thread(heap: &Heap, func: extern "C" fn(&WorkerArgs) -> !, args:
 
     // pointing at the end of the created stack
     let size = mem::size_of::<WorkerArgs>();
-    let stack = (heap.ptr() as *mut u8).add(heap.len() - size);
+    let stack = (heap.as_ref().ptr() as *mut u8).add(heap.as_ref().len() - size);
 
     // copy worker args on new stack
     *(stack as *mut WorkerArgs) = args;
@@ -111,8 +111,8 @@ impl Worker {
         // args will be passed directly to newly created thread
         // and must contain incoming and outgoing pipes
         let args = WorkerArgs {
-            stack_ptr: heap.ptr(),
-            stack_len: heap.len(),
+            stack_ptr: heap.as_ref().ptr(),
+            stack_len: heap.as_ref().len(),
             incoming: pipefd[0],
             outgoing: pipefd[3],
         };
@@ -131,7 +131,7 @@ impl Worker {
         trace4(
             b"worker spawned; tid=%d, heap=%x, in=%d, out=%d\n",
             tid,
-            heap.ptr(),
+            heap.as_ref().ptr(),
             pipefd[3],
             pipefd[1],
         );
@@ -157,7 +157,7 @@ pub enum WorkerExecute {
 
 impl Worker {
     pub fn execute(&mut self, callable: &CallableTarget) -> WorkerExecute {
-        let ((ptr, _), len) = (callable.as_ptr(), 16);
+        let (ptr, len) = (callable.as_ref().ptr(), 16);
 
         // we expect here to not have any blocking operation because worker waits for it
         trace2(b"worker sends bytes; ptr=%x, len=%d\n", ptr, len);

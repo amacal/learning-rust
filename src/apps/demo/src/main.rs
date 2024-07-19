@@ -23,15 +23,15 @@ extern "C" fn main(args: &'static ProcessArguments) -> ! {
     let commands: [&'static [u8]; 9] = [b"cat", b"faster", b"hello", b"pipe", b"sha1sum", b"spawn", b"sync", b"thread", b"tick"];
 
     let result = match args.select(1, commands) {
-        Some(b"cat") => runtime.run(|_| CatCommand { args: args }.execute()),
-        Some(b"faster") => runtime.run(|_| FasterCommand { args: args, delay: 4 }.execute()),
-        Some(b"hello") => runtime.run(|_| HelloCommand { msg: b"Hello, World!\n" }.execute()),
+        Some(b"cat") => runtime.run(|ops| CatCommand { args: args }.execute(ops)),
+        Some(b"faster") => runtime.run(|ops| FasterCommand { args: args, delay: 4 }.execute(ops)),
+        Some(b"hello") => runtime.run(|ops| HelloCommand { msg: b"Hello, World!\n" }.execute(ops)),
         Some(b"pipe") => runtime.run(|ops| PipeCommand { msg: b"Hello, World!\n" }.execute(ops)),
         Some(b"sha1sum") => runtime.run(|ops| Sha1Command { args: args }.execute(ops)),
         Some(b"spawn") => runtime.run(|ops| SpawnCommand { times: 30, delay: 3 }.execute(ops)),
         Some(b"sync") => runtime.run(|_| SyncCommand { msg: b"Hello, World!\n" }.execute()),
         Some(b"thread") => runtime.run(|ops| ThreadCommand { ios: 100, cpus: 100 }.execute(ops)),
-        Some(b"tick") => runtime.run(|_| TickCommand { ticks: 2, delay: 1 }.execute()),
+        Some(b"tick") => runtime.run(|ops| TickCommand { ticks: 2, delay: 1 }.execute(ops)),
         _ => fail(-2, b"I/O Runtime: Unrecognized command.\n"),
     };
 

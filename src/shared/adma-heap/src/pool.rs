@@ -69,7 +69,7 @@ mod tests {
         }
 
         let (ptr, heap) = match Heap::allocate(128) {
-            Ok(value) => (value.ptr(), value.as_ref()),
+            Ok(value) => (value.ptr, value.as_ref()),
             Err(_) => return assert!(false),
         };
 
@@ -83,7 +83,7 @@ mod tests {
     fn acquire_heap() {
         let mut pool = HeapPool::<1>::new();
         let (ptr, heap) = match Heap::allocate(128) {
-            Ok(value) => (value.ptr(), value.as_ref()),
+            Ok(value) => (value.ptr, value.as_ref()),
             Err(_) => return assert!(false),
         };
 

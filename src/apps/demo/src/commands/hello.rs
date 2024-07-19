@@ -6,9 +6,9 @@ pub struct HelloCommand {
 }
 
 impl HelloCommand {
-    pub async fn execute(self) -> Option<&'static [u8]> {
-        let stdout = open_stdout();
-        let written = match write_stdout(&stdout, self.msg).await {
+    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
+        let stdout = ops.open_stdout();
+        let written = match ops.write_stdout(&stdout, self.msg).await {
             StdOutWriteResult::Succeeded(_, written) => written,
             StdOutWriteResult::OperationFailed(_, _) => return Some(APP_STDOUT_FAILED),
             StdOutWriteResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),

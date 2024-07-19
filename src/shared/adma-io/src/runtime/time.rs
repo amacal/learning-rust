@@ -3,17 +3,20 @@ use ::core::pin::Pin;
 use ::core::task::Context;
 use ::core::task::Poll;
 
+use super::ops::*;
 use super::token::*;
 use crate::trace::*;
 use crate::uring::*;
 
-pub fn timeout(seconds: u32) -> Timeout {
-    Timeout {
-        timespec: timespec {
-            tv_sec: seconds as i64,
-            tv_nsec: 0,
-        },
-        token: None,
+impl IORuntimeOps {
+    pub fn timeout(&mut self, seconds: u32) -> Timeout {
+        Timeout {
+            timespec: timespec {
+                tv_sec: seconds as i64,
+                tv_nsec: 0,
+            },
+            token: None,
+        }
     }
 }
 

@@ -13,13 +13,13 @@ impl Heap {
             value => Self::at(value as usize, len),
         };
 
-        trace2(b"allocating heap; addr=%x, size=%d\n", addr.ptr(), req);
+        trace2(b"allocating heap; addr=%x, size=%d\n", addr.ptr, req);
         Ok(addr)
     }
 
     pub fn free(self) -> Result<(), isize> {
         // tracing releases heap may help in any naive troubleshooting
-        trace2(b"releasing heap; addr=%x, size=%d\n", self.ptr(), self.len());
+        trace2(b"releasing heap; addr=%x, size=%d\n", self.ptr, self.len);
 
         // use syscall to free memory with error propagation
         match sys_munmap(self.ptr, self.len) {

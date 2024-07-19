@@ -4,19 +4,23 @@ use ::core::task::Context;
 use ::core::task::Poll;
 
 use super::mem::*;
+use super::ops::*;
 use super::token::*;
 use crate::trace::*;
 use crate::uring::*;
 
-pub fn open_stdout() -> StdOutDescriptor {
-    StdOutDescriptor { value: 1 }
-}
+impl IORuntimeOps {
+    pub fn open_stdout(&self) -> StdOutDescriptor {
+        StdOutDescriptor { value: 1 }
+    }
 
-pub fn write_stdout<T>(file: &StdOutDescriptor, buffer: T) -> StdOutWrite<T> {
-    StdOutWrite {
-        fd: file.value,
-        buffer: Some(buffer),
-        token: None,
+    pub fn write_stdout<T>(&mut self, file: &StdOutDescriptor, buffer: T) -> StdOutWrite<T> {
+        StdOutWrite {
+            fd: file.value,
+            ops: self.duplicate(),
+            buffer: Some(buffer),
+            token: None,
+        }
     }
 }
 
@@ -27,11 +31,11 @@ pub struct StdOutDescriptor {
 
 pub struct StdOutWrite<T> {
     fd: u32,
+    ops: IORuntimeOps,
     buffer: Option<T>,
     token: Option<IORingTaskToken>,
 }
 
-#[allow(dead_code)]
 pub enum StdOutWriteResult<T> {
     Succeeded(T, u32),
     OperationFailed(T, i32),

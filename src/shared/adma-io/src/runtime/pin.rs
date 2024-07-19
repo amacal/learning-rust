@@ -33,7 +33,7 @@ impl IORingPin {
 
         let heap = match Heap::allocate(size) {
             Ok(value) => {
-                trace2(b"allocating memory to pin a future; size=%d, addr=%x\n", size, value.ptr());
+                trace2(b"allocating memory to pin a future; size=%d, addr=%x\n", size, value.as_ref().ptr());
                 value
             }
             Err(err) => {
@@ -44,7 +44,7 @@ impl IORingPin {
 
         unsafe {
             // copy future to the heap
-            let allocated = heap.ptr() as *mut F;
+            let allocated = heap.as_ref().ptr() as *mut F;
             ptr::write(allocated, target);
 
             // and out such pointer create erasure

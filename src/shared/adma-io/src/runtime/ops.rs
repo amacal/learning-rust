@@ -35,14 +35,31 @@ impl IORuntimeOps {
         })
     }
 
-    pub fn new(ctx: Smart<IORuntimeContext>) -> Self {
-        Self { ctx }
-    }
-
     pub fn duplicate(&self) -> IORuntimeOps {
         Self {
             ctx: self.ctx.duplicate(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocates_ops() {
+        assert!(IORuntimeOps::allocate().is_some());
+    }
+
+    #[test]
+    fn duplicates_ops() {
+        let first = match IORuntimeOps::allocate() {
+            None => return assert!(false),
+            Some(ops) => ops,
+        };
+
+        let second = first.duplicate();
+        assert!(first.ctx == second.ctx);
     }
 }
 

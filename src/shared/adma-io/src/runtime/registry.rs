@@ -124,7 +124,7 @@ impl IORingRegistry {
 
         let (heap, target) = match pinned.components() {
             Some((heap, target)) => {
-                trace2(b"appending task to registry; tidx=%d, addr=%x\n", tidx, heap.ptr());
+                trace2(b"appending task to registry; tidx=%d, addr=%x\n", tidx, heap.as_ref().ptr());
                 (heap, target)
             }
             None => {

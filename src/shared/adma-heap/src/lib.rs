@@ -47,6 +47,12 @@ pub struct Smart<T> {
     _pd: PhantomData<T>,
 }
 
+impl<T> PartialEq for Smart<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr == other.ptr && self.len == other.len && self._pd == other._pd
+    }
+}
+
 pub struct HeapPool<const T: usize> {
     slots: [Option<HeapRef>; T],
     index: usize,

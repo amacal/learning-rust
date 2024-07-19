@@ -10,53 +10,52 @@ use crate::kernel::*;
 use crate::syscall::*;
 use crate::trace::*;
 use crate::uring::*;
+use super::ops::*;
 
-#[allow(dead_code)]
 pub enum CreatePipe {
     Succeeded((ReadPipeDescriptor, WritePipeDescriptor)),
     Failed(isize),
 }
 
-#[allow(dead_code)]
-pub fn create_pipe() -> CreatePipe {
-    let mut pipefd = [0; 2];
-    let ptr = pipefd.as_mut_ptr();
+impl IORuntimeOps {
+    pub fn create_pipe(&self) -> CreatePipe {
+        let mut pipefd = [0; 2];
+        let ptr = pipefd.as_mut_ptr();
 
-    let flags = O_DIRECT;
-    let result = sys_pipe2(ptr, flags);
+        let flags = O_DIRECT;
+        let result = sys_pipe2(ptr, flags);
 
-    if result == 0 {
-        CreatePipe::Succeeded((
-            ReadPipeDescriptor { value: pipefd[0] },
-            WritePipeDescriptor { value: pipefd[1] },
-        ))
-    } else {
-        CreatePipe::Failed(result)
+        if result == 0 {
+            CreatePipe::Succeeded((
+                ReadPipeDescriptor { value: pipefd[0] },
+                WritePipeDescriptor { value: pipefd[1] },
+            ))
+        } else {
+            CreatePipe::Failed(result)
+        }
     }
-}
 
-pub fn close_pipe(descriptor: impl PipeClosable) -> PipeClose {
-    PipeClose {
-        fd: descriptor.as_fd(),
-        token: None,
+    pub fn close_pipe(&self, descriptor: impl PipeClosable) -> PipeClose {
+        PipeClose {
+            fd: descriptor.as_fd(),
+            token: None,
+        }
     }
-}
 
-#[allow(dead_code)]
-pub fn write_pipe<T>(descriptor: &WritePipeDescriptor, buffer: T) -> PipeWrite<T> {
-    PipeWrite {
-        fd: descriptor.value,
-        buffer: Some(buffer),
-        token: None,
+    pub fn write_pipe<T>(&mut self, descriptor: &WritePipeDescriptor, buffer: T) -> PipeWrite<T> {
+        PipeWrite {
+            fd: descriptor.value,
+            buffer: Some(buffer),
+            token: None,
+        }
     }
-}
 
-#[allow(dead_code)]
-pub fn read_pipe(descriptor: &ReadPipeDescriptor, buffer: Droplet<Heap>) -> PipeRead {
-    PipeRead {
-        fd: descriptor.value,
-        buffer: Some(buffer),
-        token: None,
+    pub fn read_pipe(&mut self, descriptor: &ReadPipeDescriptor, buffer: Droplet<Heap>) -> PipeRead {
+        PipeRead {
+            fd: descriptor.value,
+            buffer: Some(buffer),
+            token: None,
+        }
     }
 }
 

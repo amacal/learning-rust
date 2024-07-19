@@ -83,8 +83,8 @@ impl CallableTarget {
         Self { target, call }
     }
 
-    pub fn as_ptr(&self) -> (usize, usize) {
-        self.target.as_ptr()
+    pub fn as_ref(&self) -> HeapRef {
+        self.target.as_ref()
     }
 
     pub fn from(heap: Heap) -> Self {
@@ -130,7 +130,7 @@ impl CallableTarget {
             }
         };
 
-        let (ptr, len) = heap.as_ptr();
+        let (ptr, len) = heap.as_ref().as_ptr();
         let mut data = heap.boxed::<CallableArgs<F, R, E>>();
 
         data.result = None;
@@ -146,11 +146,11 @@ impl CallableTarget {
         })
     }
 
-    pub fn release(self, pool: &mut HeapPool<16>) {
-        trace1(b"releasing callable; soft, addr=%x\n", self.target.ptr());
+    pub fn release<const T: usize>(self, pool: &mut HeapPool<T>) {
+        trace1(b"releasing callable; soft, addr=%x\n", self.target.as_ref().ptr());
 
         if let Some(_) = pool.release(self.target.as_ref()) {
-            trace1(b"releasing callable; hard, addr=%x\n", self.target.ptr());
+            trace1(b"releasing callable; hard, addr=%x\n", self.target.as_ref().ptr());
             self.target.free();
         }
     }
@@ -158,11 +158,7 @@ impl CallableTarget {
 
 impl CallableTarget {
     pub fn call(&mut self) -> Option<&'static [u8]> {
-        trace2(
-            b"dispatching callable; target=%x, size=%d\n",
-            self.target.ptr(),
-            self.target.len(),
-        );
+        trace2(b"dispatching callable; target=%x, size=%d\n", self.target.as_ref().ptr(), self.target.as_ref().len());
 
         (self.call)(&mut self.target)
     }
@@ -174,5 +170,193 @@ impl CallableTarget {
         let value = self.target.view::<CallableArgs<F, R, E>>().result.take();
         self.release(pool);
         value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocates_callable_once() {
+        let mut pool = HeapPool::<16>::new();
+        let target = || -> Result<(), ()> { Ok(()) };
+
+        let heap = match CallableTarget::allocate(&mut pool, target) {
+            CallableTargetAllocate::Succeeded(val) => val.as_ref(),
+            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+        };
+
+        assert_ne!(heap.ptr(), 0);
+        assert!(heap.len() > 0);
+    }
+
+    #[test]
+    fn allocates_callable_twice() {
+        let mut pool = HeapPool::<1>::new();
+        let target = || -> Result<(), ()> { Ok(()) };
+
+        let first = match CallableTarget::allocate(&mut pool, target) {
+            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            CallableTargetAllocate::Succeeded(val) => {
+                assert_ne!(val.as_ref().ptr(), 0);
+                assert!(val.as_ref().len() > 0);
+
+                val.as_ref().as_ptr()
+            }
+        };
+
+        let second = match CallableTarget::allocate(&mut pool, target) {
+            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            CallableTargetAllocate::Succeeded(val) => {
+                assert_ne!(val.as_ref().ptr(), 0);
+                assert!(val.as_ref().len() > 0);
+
+                val.as_ref().as_ptr()
+            }
+        };
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn allocates_callable_twice_with_release() {
+        let mut pool = HeapPool::<1>::new();
+        let target = || -> Result<(), ()> { Ok(()) };
+
+        let first = match CallableTarget::allocate(&mut pool, target) {
+            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            CallableTargetAllocate::Succeeded(val) => {
+                assert_ne!(val.as_ref().ptr(), 0);
+                assert!(val.as_ref().len() > 0);
+
+                let pair = val.as_ref().as_ptr();
+                val.release(&mut pool);
+
+                pair
+            }
+        };
+
+        let second = match CallableTarget::allocate(&mut pool, target) {
+            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            CallableTargetAllocate::Succeeded(val) => {
+                assert_ne!(val.as_ref().ptr(), 0);
+                assert!(val.as_ref().len() > 0);
+
+                val.as_ref().as_ptr()
+            }
+        };
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn releases_callable() {
+        let mut pool = HeapPool::<16>::new();
+        let target = || -> Result<(), ()> { Ok(()) };
+
+        let callable = match CallableTarget::allocate(&mut pool, target) {
+            CallableTargetAllocate::Succeeded(val) => val,
+            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+        };
+
+        callable.release(&mut pool);
+    }
+
+    #[test]
+    fn calls_callable() {
+        let mut pool = HeapPool::<16>::new();
+        let target = || -> Result<(), ()> { Ok(()) };
+
+        let mut callable = match CallableTarget::allocate(&mut pool, target) {
+            CallableTargetAllocate::Succeeded(val) => val,
+            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+        };
+
+        match callable.call() {
+            Some(_) => assert!(false),
+            None => assert!(true),
+        }
+    }
+
+    #[test]
+    fn results_callable_value() {
+        let mut pool = HeapPool::<16>::new();
+        let target = || -> Result<u8, ()> { Ok(13) };
+
+        fn execute<F>(pool: &mut HeapPool<16>, target: F)
+        where
+            F: FnOnce() -> Result<u8, ()> + Send,
+        {
+            let mut callable = match CallableTarget::allocate(pool, target) {
+                CallableTargetAllocate::Succeeded(val) => val,
+                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            };
+
+            match callable.call() {
+                Some(_) => assert!(false),
+                None => assert!(true),
+            }
+
+            match callable.result::<F, u8, ()>(pool) {
+                Some(Ok(val)) => assert_eq!(val, 13),
+                Some(Err(_)) => assert!(false),
+                None => assert!(false),
+            }
+        }
+
+        execute(&mut pool, target);
+    }
+
+    #[test]
+    fn results_callable_error() {
+        let mut pool = HeapPool::<16>::new();
+        let target = || -> Result<(), u8> { Err(13) };
+
+        fn execute<F>(pool: &mut HeapPool<16>, target: F)
+        where
+            F: FnOnce() -> Result<(), u8> + Send,
+        {
+            let mut callable = match CallableTarget::allocate(pool, target) {
+                CallableTargetAllocate::Succeeded(val) => val,
+                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            };
+
+            match callable.call() {
+                Some(_) => assert!(false),
+                None => assert!(true),
+            }
+
+            match callable.result::<F, (), u8>(pool) {
+                Some(Ok(_)) => assert!(false),
+                Some(Err(err)) => assert_eq!(err, 13),
+                None => assert!(false),
+            }
+        }
+
+        execute(&mut pool, target);
+    }
+
+    #[test]
+    fn fails_callable_if_not_called() {
+        let mut pool = HeapPool::<16>::new();
+        let target = || -> Result<u8, ()> { Ok(13) };
+
+        fn execute<F>(pool: &mut HeapPool<16>, target: F)
+        where
+            F: FnOnce() -> Result<u8, ()> + Send,
+        {
+            let callable = match CallableTarget::allocate(pool, target) {
+                CallableTargetAllocate::Succeeded(val) => val,
+                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            };
+
+            match callable.result::<F, u8, ()>(pool) {
+                Some(_) => assert!(false),
+                None => assert!(true),
+            }
+        }
+
+        execute(&mut pool, target);
     }
 }

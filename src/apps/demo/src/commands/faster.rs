@@ -9,29 +9,29 @@ pub struct FasterCommand {
 }
 
 impl FasterCommand {
-    pub async fn execute(self) -> Option<&'static [u8]> {
+    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
         let mut buffer = match Heap::allocate(32 * 4096) {
             Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
             Ok(heap) => heap.droplet(),
         };
 
-        let stdout = open_stdout();
+        let stdout = ops.open_stdout();
         let path = match self.args.get(2) {
             None => return Some(APP_ARGS_FAILED),
             Some(value) => value,
         };
 
-        let file = match open_file(&path).await {
+        let file = match ops.open_file(&path).await {
             FileOpenResult::Succeeded(value) => value,
             FileOpenResult::OperationFailed(_) => return Some(APP_FILE_OPENING_FAILED),
             FileOpenResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
         };
 
         let mut offset = 0;
-        let mut timeout = timeout(self.delay);
+        let mut timeout = ops.timeout(self.delay);
 
         loop {
-            let read = read_file(&file, buffer, offset);
+            let read = ops.read_file(&file, buffer, offset);
             let (result, returned) = match select(timeout, read).await {
                 SelectResult::Failed() => return Some(APP_SELECT_FAILED),
                 SelectResult::Result2(result, timeout) => (result, timeout),
@@ -65,7 +65,7 @@ impl FasterCommand {
                     Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
                 };
 
-                let written = match write_stdout(&stdout, &slice).await {
+                let written = match ops.write_stdout(&stdout, &slice).await {
                     StdOutWriteResult::Succeeded(_, written) => written as usize,
                     StdOutWriteResult::OperationFailed(_, _) => return Some(APP_STDOUT_FAILED),
                     StdOutWriteResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),

@@ -15,6 +15,12 @@ impl Heap {
     pub fn as_ref(&self) -> HeapRef {
         HeapRef::new(self.ptr, self.len)
     }
+}
+
+impl HeapRef {
+    pub fn new(ptr: usize, len: usize) -> Self {
+        Self { ptr, len }
+    }
 
     pub fn as_ptr(&self) -> (usize, usize) {
         (self.ptr, self.len)
@@ -26,11 +32,5 @@ impl Heap {
 
     pub fn len(&self) -> usize {
         self.len
-    }
-}
-
-impl HeapRef {
-    pub fn new(ptr: usize, len: usize) -> Self {
-        Self { ptr, len }
     }
 }

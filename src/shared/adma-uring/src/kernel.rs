@@ -1,5 +1,24 @@
+pub const IORING_OFF_SQ_RING: usize = 0x00000000;
+pub const IORING_OFF_CQ_RING: usize = 0x08000000;
+pub const IORING_OFF_SQES: usize = 0x010000000;
+pub const IORING_ENTER_GETEVENTS: u32 = 0x00000001;
+
+pub const IORING_OP_NOP: u8 = 0;
+pub const IORING_OP_TIMEOUT: u8 = 11;
+pub const IORING_OP_OPENAT: u8 = 18;
+pub const IORING_OP_CLOSE: u8 = 19;
+pub const IORING_OP_READ: u8 = 22;
+pub const IORING_OP_WRITE: u8 = 23;
+
+pub const AT_FDCWD: i32 = -100;
+
+pub const PROT_READ: usize = 0x00000001;
+pub const PROT_WRITE: usize = 0x00000002;
+
+pub const MAP_SHARED: usize = 0x00000001;
+pub const MAP_POPULATE: usize = 0x00008000;
+
 #[repr(C)]
-#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 #[derive(Default)]
 pub struct io_sqring_offsets {
@@ -15,7 +34,6 @@ pub struct io_sqring_offsets {
 }
 
 #[repr(C)]
-#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 #[derive(Default)]
 pub struct io_cqring_offsets {
@@ -31,7 +49,6 @@ pub struct io_cqring_offsets {
 }
 
 #[repr(C)]
-#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 #[derive(Default)]
 pub struct io_uring_params {
@@ -48,7 +65,6 @@ pub struct io_uring_params {
 }
 
 #[repr(C)]
-#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 pub struct io_uring_sqe {
     pub opcode: u8,
@@ -67,7 +83,6 @@ pub struct io_uring_sqe {
 }
 
 #[repr(C)]
-#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 pub struct io_uring_cqe {
     pub user_data: u64,
@@ -76,7 +91,6 @@ pub struct io_uring_cqe {
 }
 
 #[repr(C)]
-#[allow(dead_code)]
 #[allow(non_camel_case_types)]
 pub struct timespec {
     pub tv_sec: i64,

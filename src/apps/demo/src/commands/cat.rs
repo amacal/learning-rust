@@ -8,19 +8,19 @@ pub struct CatCommand {
 }
 
 impl CatCommand {
-    pub async fn execute(self) -> Option<&'static [u8]> {
+    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
         let mut buffer = match Heap::allocate(32 * 4096) {
             Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
             Ok(value) => value.droplet(),
         };
 
-        let stdout = open_stdout();
+        let stdout = ops.open_stdout();
         let path = match self.args.get(2) {
             None => return Some(APP_ARGS_FAILED),
             Some(value) => value,
         };
 
-        let file = match open_file(&path).await {
+        let file = match ops.open_file(&path).await {
             FileOpenResult::Succeeded(value) => value,
             FileOpenResult::OperationFailed(_) => return Some(APP_FILE_OPENING_FAILED),
             FileOpenResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
@@ -29,7 +29,7 @@ impl CatCommand {
         let mut offset = 0;
 
         loop {
-            let (buf, read) = match read_file(&file, buffer, offset).await {
+            let (buf, read) = match ops.read_file(&file, buffer, offset).await {
                 FileReadResult::Succeeded(buffer, read) => (buffer, read),
                 FileReadResult::OperationFailed(_, _) => return Some(APP_FILE_READING_FAILED),
                 FileReadResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
@@ -51,7 +51,7 @@ impl CatCommand {
                     Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
                 };
 
-                let written = match write_stdout(&stdout, &slice).await {
+                let written = match ops.write_stdout(&stdout, &slice).await {
                     StdOutWriteResult::Succeeded(_, written) => written as usize,
                     StdOutWriteResult::OperationFailed(_, _) => return Some(APP_FILE_WRITING_FAILED),
                     StdOutWriteResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
@@ -65,7 +65,7 @@ impl CatCommand {
             }
         }
 
-        match close_file(file).await {
+        match ops.close_file(file).await {
             FileCloseResult::Succeeded() => None,
             FileCloseResult::OperationFailed(_) => Some(APP_FILE_CLOSING_FAILED),
             FileCloseResult::InternallyFailed() => Some(APP_INTERNALLY_FAILED),

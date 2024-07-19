@@ -8,19 +8,19 @@ pub struct PipeCommand {
 
 impl PipeCommand {
     pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
-        let stdout = open_stdout();
-        let (reader, writer) = match create_pipe() {
+        let stdout = ops.open_stdout();
+        let (reader, writer) = match ops.create_pipe() {
             CreatePipe::Succeeded((reader, writer)) => (reader, writer),
             _ => return Some(APP_PIPE_CREATING_FAILED),
         };
 
-        let reader = ops.spawn_io(move |_| async move {
+        let reader = ops.spawn_io(move |mut ops| async move {
             let buffer = match Heap::allocate(1 * 4096) {
                 Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
                 Ok(value) => value.droplet(),
             };
 
-            let (buffer, cnt) = match read_pipe(&reader, buffer).await {
+            let (buffer, cnt) = match ops.read_pipe(&reader, buffer).await {
                 PipeReadResult::Succeeded(buffer, cnt) => (buffer, cnt),
                 _ => return Some(APP_PIPE_READING_FAILED),
             };
@@ -30,7 +30,7 @@ impl PipeCommand {
                 Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
             };
 
-            let written = match write_stdout(&stdout, &slice).await {
+            let written = match ops.write_stdout(&stdout, &slice).await {
                 StdOutWriteResult::Succeeded(_, written) => written,
                 _ => return Some(APP_STDOUT_FAILED),
             };
@@ -39,19 +39,19 @@ impl PipeCommand {
                 return Some(APP_STDOUT_INCOMPLETE);
             }
 
-            match close_pipe(reader).await {
+            match ops.close_pipe(reader).await {
                 PipeCloseResult::Succeeded() => None,
                 _ => Some(APP_PIPE_CLOSING_FAILED),
             }
         });
 
-        let writer = ops.spawn_io(move |_| async move {
-            match write_pipe(&writer, self.msg).await {
+        let writer = ops.spawn_io(move |mut ops| async move {
+            match ops.write_pipe(&writer, self.msg).await {
                 PipeWriteResult::Succeeded(_, _) => (),
                 _ => return Some(APP_PIPE_WRITING_FAILED),
             }
 
-            match close_pipe(writer).await {
+            match ops.close_pipe(writer).await {
                 PipeCloseResult::Succeeded() => None,
                 _ => Some(APP_PIPE_CLOSING_FAILED),
             }
