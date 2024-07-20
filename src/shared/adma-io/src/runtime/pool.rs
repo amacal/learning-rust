@@ -73,7 +73,7 @@ impl HeapLifetime for IORuntimePool {
         sys_close(self.queue_outgoing);
 
         for i in 0..WORKERS_COUNT {
-            if let Some(worker) = self.workers_array[i].take() {
+            if let Some(mut worker) = self.workers_array[i].take() {
                 worker.release()
             }
         }

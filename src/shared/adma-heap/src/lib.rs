@@ -36,6 +36,12 @@ pub struct HeapSlice<'a> {
     len: usize,
 }
 
+enum DropletTarget<'a, T> {
+    Referenced(&'a mut T),
+    Owned(T),
+}
+
+
 pub struct Droplet<T> {
     target: T,
     destroy: fn(&mut T),

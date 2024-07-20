@@ -264,7 +264,7 @@ mod tests {
     }
 
     #[test]
-    fn calls_callable() {
+    fn calls_callable_once() {
         let mut pool = HeapPool::<16>::new();
         let target = || -> Result<(), ()> { Ok(()) };
 
@@ -276,6 +276,27 @@ mod tests {
         match callable.call() {
             Some(_) => assert!(false),
             None => assert!(true),
+        }
+    }
+
+    #[test]
+    fn calls_callable_twice() {
+        let mut pool = HeapPool::<16>::new();
+        let target = || -> Result<(), ()> { Ok(()) };
+
+        let mut callable = match CallableTarget::allocate(&mut pool, target) {
+            CallableTargetAllocate::Succeeded(val) => val,
+            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+        };
+
+        match callable.call() {
+            Some(_) => assert!(false),
+            None => assert!(true),
+        }
+
+        match callable.call() {
+            Some(_) => assert!(true),
+            None => assert!(false),
         }
     }
 

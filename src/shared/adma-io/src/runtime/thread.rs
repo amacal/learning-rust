@@ -14,8 +14,9 @@ arch::global_asm!(
     .global _stop_thread;
 
     _start_thread:
-        push rdi;           // flags
-        sub rsi, 16;        // stack
+        push rdi;           // flags in parent, seed in child
+        sub rsi, 24;        // stack initially aligned to 16 needs to be aligned to modulo 8
+                            // so that it's aligned to 16 after calling ret
         mov [rsi], rcx;     // seed
         mov [rsi + 8], rdx; // func
         mov rax, 56;
@@ -32,11 +33,11 @@ arch::global_asm!(
 );
 
 extern "C" {
-    fn _start_thread(flags: u64, stack: *mut (), func: extern "C" fn(&WorkerArgs) -> !, seed: u64) -> isize;
+    fn _start_thread(flags: u64, stack: *mut (), func: extern "C" fn(&mut WorkerArgs) -> !, seed: usize) -> isize;
     fn _stop_thread(stack_ptr: usize, stack_len: usize) -> !;
 }
 
-unsafe fn start_thread(heap: &Heap, func: extern "C" fn(&WorkerArgs) -> !, args: WorkerArgs) -> isize {
+unsafe fn start_thread(heap: &Heap, func: extern "C" fn(&mut WorkerArgs) -> !, args: WorkerArgs) -> isize {
     // preparing flags to clone as thread
     let flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD;
 
@@ -48,8 +49,8 @@ unsafe fn start_thread(heap: &Heap, func: extern "C" fn(&WorkerArgs) -> !, args:
     *(stack as *mut WorkerArgs) = args;
 
     // we don't care about handing negative results here
-    let res = _start_thread(flags, stack as *mut (), func, stack as u64);
-    trace1(b"starting thread; res=%d\n", res);
+    let res = _start_thread(flags, stack as *mut (), func, stack as usize);
+    trace3(b"starting thread; res=%d, args=%x, size=%d\n", res, stack as *mut WorkerArgs as *const u8, size);
 
     return res;
 }
@@ -59,8 +60,8 @@ pub struct Worker {
     outgoing: u32,
 }
 
-#[repr(C)]
-struct WorkerArgs {
+#[repr(C, align(16))]
+pub struct WorkerArgs {
     stack_ptr: usize,
     stack_len: usize,
     incoming: u32,
@@ -136,6 +137,9 @@ impl Worker {
             pipefd[1],
         );
 
+        let mut buffer: [u8; 1] = [0; 1];
+        sys_read(pipefd[2], buffer.as_mut_ptr() as *const (), 1);
+
         let worker = Worker {
             incoming: pipefd[2],
             outgoing: pipefd[1],
@@ -144,9 +148,17 @@ impl Worker {
         WorkerStart::Succeeded(worker)
     }
 
-    pub fn release(self) {
-        sys_close(self.incoming);
+    pub fn release(&mut self) {
+        // it will unblock sys_read in the worker
         sys_close(self.outgoing);
+
+        // we need to understand what happened
+        let mut buffer: [u8; 1] = [0; 1];
+        let res = sys_read(self.incoming, buffer.as_mut_ptr() as *const (), 1);
+        trace3(b"parent received notification; val=%d, fd=%d, res=%d\n", buffer[0], self.incoming, res);
+
+        // to finally close the channel
+        sys_close(self.incoming);
     }
 }
 
@@ -174,9 +186,12 @@ impl Worker {
     }
 }
 
-extern "C" fn worker_callback(args: &WorkerArgs) -> ! {
+extern "C" fn worker_callback(args: &mut WorkerArgs) -> ! {
     let mut buffer: [usize; 2] = [0; 2];
     let ptr = buffer.as_mut_ptr() as *mut ();
+
+    let res = sys_write(args.outgoing, [0x01u8].as_ptr() as *const (), 1);
+    trace2(b"worker sent notification; val=1, fd=%d, res=%d\n", args.outgoing, res);
 
     loop {
         // read 16-bytes from the main thread
@@ -184,6 +199,7 @@ extern "C" fn worker_callback(args: &WorkerArgs) -> ! {
         trace2(b"worker received bytes; fd=%d, size=%d\n", args.incoming, received);
 
         if received != 16 {
+            trace0(b"worker leaves infinite loop...\n");
             break;
         }
 
@@ -199,9 +215,12 @@ extern "C" fn worker_callback(args: &WorkerArgs) -> ! {
         }
 
         // reporting one byte
-        let res = sys_write(args.outgoing, ptr, 1);
-        trace1(b"worker completed; res=%d\n", res);
+        let res = sys_write(args.outgoing, [0x03u8].as_ptr() as *const (), 1);
+        trace2(b"worker sent notification; val=3, fd=%d, res=%d\n", args.outgoing, res);
     }
+
+    let res = sys_write(args.outgoing, [0x02u8].as_ptr() as *const (), 1);
+    trace2(b"worker sent notification; val=2, fd=%d, res=%d\n", args.outgoing, res);
 
     let res = sys_close(args.incoming);
     trace2(b"terminating thread; in=%d, res=%d\n", args.incoming, res);
@@ -212,4 +231,81 @@ extern "C" fn worker_callback(args: &WorkerArgs) -> ! {
     // releasing stack memory and exiting current thread
     trace2(b"terminating thread; heap=%x, len=%d\n", args.stack_ptr, args.stack_len);
     unsafe { _stop_thread(args.stack_ptr, args.stack_len) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn starts_and_releases_worker() {
+        let mut worker = match Worker::start() {
+            WorkerStart::Succeeded(worker) => worker,
+            _ => return assert!(false),
+        };
+
+        worker.release();
+    }
+
+    #[test]
+    fn executes_callable() {
+        fn release_worker(worker: &mut Worker) {
+            worker.release();
+        }
+
+        let mut worker = match Worker::start() {
+            WorkerStart::Succeeded(worker) => Droplet::from(worker, release_worker),
+            _ => return assert!(false),
+        };
+
+        let mut pool = HeapPool::<1>::new();
+        let target = || -> Result<u8, ()> { Ok(13) };
+
+        let callable = match CallableTarget::allocate(&mut pool, target) {
+            CallableTargetAllocate::Succeeded(val) => val,
+            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+        };
+
+        let entry = match worker.execute(&callable) {
+            WorkerExecute::Succeeded(entry) => entry,
+            WorkerExecute::OutgoingPipeFailed(_) => return assert!(false),
+        };
+
+        let (ptr, read) = match entry {
+            IORingSubmitEntry::Read(entry) => (entry.buf, entry),
+            _ => return assert!(false),
+        };
+
+        unsafe {
+            assert_eq!(read.fd, worker.incoming);
+            assert_eq!(read.buf as usize / 4096, callable.as_ref().ptr() / 4096);
+            assert_ne!(*ptr, 3);
+        }
+
+        let (rx, mut tx) = match IORing::init(8) {
+            IORingInit::Succeeded(tx, rx) => (rx, tx),
+            _ => return assert!(false),
+        };
+
+        match tx.submit(1, [IORingSubmitEntry::Read(read)]) {
+            IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
+            _ => return assert!(false)
+        }
+
+        match tx.flush() {
+            IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
+            _ => return assert!(false)
+        }
+
+        let mut entries = [IORingCompleteEntry::default(); 1];
+        match rx.complete(&mut entries) {
+            IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
+            _ => return assert!(false)
+        }
+
+        unsafe {
+            assert_eq!(entries[0].res, 1);
+            assert_eq!(*ptr, 3);
+        }
+    }
 }

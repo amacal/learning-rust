@@ -25,6 +25,12 @@ impl<T> Deref for Droplet<T> {
     }
 }
 
+impl<T> DerefMut for Droplet<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.target
+    }
+}
+
 impl Heap {
     pub fn droplet(self) -> Droplet<Heap> {
         fn free(mem: &mut Heap) {
