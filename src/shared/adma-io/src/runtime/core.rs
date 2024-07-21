@@ -2,7 +2,7 @@ use ::core::future::Future;
 use ::core::task::Context;
 use ::core::task::Waker;
 
-use super::erase::*;
+use super::callable::*;
 use super::ops::*;
 use super::pin::*;
 use super::pool::*;

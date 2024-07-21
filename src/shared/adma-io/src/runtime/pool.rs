@@ -1,6 +1,6 @@
 use ::core::mem;
 
-use super::erase::*;
+use super::callable::*;
 use super::refs::*;
 use super::thread::*;
 use crate::heap::*;
@@ -318,7 +318,7 @@ mod tests {
             assert_eq!(entries[0].user_data, second.encode());
 
             match callable.result::<1, F, u8, ()>(heap) {
-                Some(Ok(val)) => assert_eq!(val, 13),
+                Ok(Some(Ok(val))) => assert_eq!(val, 13),
                 _ => assert!(false),
             }
 
@@ -394,7 +394,7 @@ mod tests {
             assert_eq!(entries[0].user_data, second.encode());
 
             match callable1.result::<1, F1, u8, ()>(heap) {
-                Some(Ok(val)) => assert_eq!(val, 13),
+                Ok(Some(Ok(val))) => assert_eq!(val, 13),
                 _ => assert!(false),
             }
 
@@ -421,7 +421,7 @@ mod tests {
             assert_eq!(entries[0].user_data, first.encode());
 
             match callable2.result::<1, F2, u8, ()>(heap) {
-                None => assert!(true),
+                Ok(None) => assert!(true),
                 _ => assert!(false),
             }
 
@@ -499,7 +499,7 @@ mod tests {
             assert_eq!(entries[0].user_data, second.encode());
 
             match callable1.result::<1, F1, u8, ()>(heap) {
-                Some(Ok(val)) => assert_eq!(val, 13),
+                Ok(Some(Ok(val))) => assert_eq!(val, 13),
                 _ => assert!(false),
             }
 
@@ -551,7 +551,7 @@ mod tests {
             assert_eq!(entries[0].user_data, fourth.encode());
 
             match callable2.result::<1, F2, u8, ()>(heap) {
-                Some(Ok(val)) => assert_eq!(val, 17),
+                Ok(Some(Ok(val))) => assert_eq!(val, 17),
                 _ => assert!(false),
             }
 

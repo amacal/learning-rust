@@ -1,7 +1,7 @@
 use core::task::Waker;
 
+use super::callable::*;
 use super::core::*;
-use super::erase::*;
 use super::pin::*;
 use super::refs::*;
 use crate::uring::*;
@@ -99,14 +99,12 @@ impl IORingTaskToken {
 impl IORingTaskToken {
     pub fn execute(waker: &Waker, task: &CallableTarget) -> Option<(IORingTaskToken, IORingTaskToken)> {
         match Self::context(waker).execute(task) {
-            IORingRuntimeExecute::Queued(queued, executed) => Some((
-                IORingTaskToken::from_queue(queued),
-                IORingTaskToken::from_execute(executed),
-            )),
-            IORingRuntimeExecute::Executed(queued, executed) => Some((
-                IORingTaskToken::from_op(queued),
-                IORingTaskToken::from_execute(executed),
-            )),
+            IORingRuntimeExecute::Queued(queued, executed) => {
+                Some((IORingTaskToken::from_queue(queued), IORingTaskToken::from_execute(executed)))
+            }
+            IORingRuntimeExecute::Executed(queued, executed) => {
+                Some((IORingTaskToken::from_op(queued), IORingTaskToken::from_execute(executed)))
+            }
             IORingRuntimeExecute::NotEnoughSlots() => None,
             IORingRuntimeExecute::InternallyFailed() => None,
         }

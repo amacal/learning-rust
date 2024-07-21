@@ -353,3 +353,23 @@ impl IORingRegistry {
         return IORingRegistryComplete::Succeeded(task, is_ready, completions);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocates_registry() {
+        let registry = match IORingRegistry::allocate() {
+            IORingRegistryAllocation::Succeeded(registry) => registry,
+            _ => return assert!(false),
+        };
+
+        assert_eq!(registry.completers_count, 0);
+        assert_eq!(registry.completers_id, 0);
+        assert_eq!(registry.tasks_count, 0);
+        assert_eq!(registry.tasks_id, 0);
+
+        drop(registry);
+    }
+}

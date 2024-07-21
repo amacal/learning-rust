@@ -1,7 +1,7 @@
 use ::core::arch;
 use ::core::mem;
 
-use super::erase::*;
+use super::callable::*;
 use crate::heap::*;
 use crate::kernel::*;
 use crate::syscall::*;
