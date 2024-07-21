@@ -88,8 +88,8 @@ impl IORuntimeOps {
         E: Unpin + Send,
     {
         let task = match CallableTarget::allocate(&mut self.ctx.heap_pool, target) {
-            CallableTargetAllocate::Succeeded(target) => target,
-            CallableTargetAllocate::AllocationFailed(_) => return None,
+            Ok(target) => target,
+            Err(_) => return None,
         };
 
         Some(SpawnCPU {

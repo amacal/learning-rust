@@ -4,18 +4,20 @@ use crate::heap::*;
 use crate::trace::*;
 
 pub enum CallableError {
+    AllocationFailed,
     ReleaseFailed,
+    CalledTwice,
 }
 
 pub struct CallableTarget {
     target: Heap,
-    call: fn(&Heap) -> Option<&'static [u8]>,
+    call: fn(&Heap) -> Result<(), CallableError>,
 }
 
 #[repr(C)]
 struct CallableHeader {
     data: [usize; 4],
-    call: fn(&Heap) -> Option<&'static [u8]>,
+    call: fn(&Heap) -> Result<(), CallableError>,
 }
 
 #[repr(C)]
@@ -32,13 +34,13 @@ impl<F, R, E> CallableArgs<F, R, E>
 where
     F: FnOnce() -> Result<R, E>,
 {
-    pub fn call(&mut self) -> Option<&'static [u8]> {
+    pub fn call(&mut self) -> Result<(), CallableError> {
         self.result = match self.target.take() {
-            None => return Some(b"calling callable; failed"),
+            None => return Err(CallableError::CalledTwice),
             Some(target) => Some(target.call_once(())),
         };
 
-        None
+        Ok(())
     }
 }
 
@@ -51,7 +53,7 @@ where
 }
 
 impl CallableTarget {
-    fn new(target: Heap, call: fn(&Heap) -> Option<&'static [u8]>) -> Self {
+    fn new(target: Heap, call: fn(&Heap) -> Result<(), CallableError>) -> Self {
         Self { target, call }
     }
 
@@ -67,22 +69,17 @@ impl CallableTarget {
     }
 }
 
-pub enum CallableTargetAllocate {
-    Succeeded(CallableTarget),
-    AllocationFailed(isize),
-}
-
 impl CallableTarget {
-    pub fn allocate<const T: usize, F, R, E>(pool: &mut HeapPool<T>, target: F) -> CallableTargetAllocate
+    pub fn allocate<const T: usize, F, R, E>(pool: &mut HeapPool<T>, target: F) -> Result<CallableTarget, CallableError>
     where
         F: FnOnce() -> Result<R, E> + Send,
     {
-        fn call<F, R, E>(target: &Heap) -> Option<&'static [u8]>
+        fn call<F, R, E>(target: &Heap) -> Result<(), CallableError>
         where
             F: FnOnce() -> Result<R, E>,
         {
             let mut args: View<CallableArgs<F, R, E>> = target.view();
-            let result: Option<&[u8]> = args.call();
+            let result: Result<(), CallableError> = args.call();
 
             result
         }
@@ -97,7 +94,7 @@ impl CallableTarget {
 
                 match Heap::allocate(len) {
                     Ok(heap) => heap,
-                    Err(err) => return CallableTargetAllocate::AllocationFailed(err),
+                    Err(_) => return Err(CallableError::AllocationFailed),
                 }
             }
         };
@@ -112,7 +109,7 @@ impl CallableTarget {
             call: call::<F, R, E>,
         };
 
-        CallableTargetAllocate::Succeeded(Self {
+        Ok(Self {
             target: data.into(),
             call: call::<F, R, E>,
         })
@@ -135,8 +132,9 @@ impl CallableTarget {
 }
 
 impl CallableTarget {
-    pub fn call(&mut self) -> Option<&'static [u8]> {
-        trace2(b"dispatching callable; target=%x, size=%d\n", self.target.as_ref().ptr(), self.target.as_ref().len());
+    pub fn call(&mut self) -> Result<(), CallableError> {
+        let (ptr, len) = self.target.as_ref().as_ptr();
+        trace2(b"dispatching callable; target=%x, size=%d\n", ptr, len);
 
         (self.call)(&mut self.target)
     }
@@ -167,8 +165,8 @@ mod tests {
         let target = || -> Result<(), ()> { Ok(()) };
 
         let heap = match CallableTarget::allocate(&mut pool, target) {
-            CallableTargetAllocate::Succeeded(val) => val.as_ref(),
-            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            Ok(target) => target.as_ref(),
+            Err(_) => return assert!(false),
         };
 
         assert_ne!(heap.ptr(), 0);
@@ -181,22 +179,22 @@ mod tests {
         let target = || -> Result<(), ()> { Ok(()) };
 
         let first = match CallableTarget::allocate(&mut pool, target) {
-            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
-            CallableTargetAllocate::Succeeded(val) => {
-                assert_ne!(val.as_ref().ptr(), 0);
-                assert!(val.as_ref().len() > 0);
+            Err(_) => return assert!(false),
+            Ok(target) => {
+                assert_ne!(target.as_ref().ptr(), 0);
+                assert!(target.as_ref().len() > 0);
 
-                val.as_ref().as_ptr()
+                target.as_ref().as_ptr()
             }
         };
 
         let second = match CallableTarget::allocate(&mut pool, target) {
-            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
-            CallableTargetAllocate::Succeeded(val) => {
-                assert_ne!(val.as_ref().ptr(), 0);
-                assert!(val.as_ref().len() > 0);
+            Err(_) => return assert!(false),
+            Ok(target) => {
+                assert_ne!(target.as_ref().ptr(), 0);
+                assert!(target.as_ref().len() > 0);
 
-                val.as_ref().as_ptr()
+                target.as_ref().as_ptr()
             }
         };
 
@@ -209,25 +207,25 @@ mod tests {
         let target = || -> Result<(), ()> { Ok(()) };
 
         let first = match CallableTarget::allocate(&mut pool, target) {
-            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
-            CallableTargetAllocate::Succeeded(val) => {
-                assert_ne!(val.as_ref().ptr(), 0);
-                assert!(val.as_ref().len() > 0);
+            Err(_) => return assert!(false),
+            Ok(target) => {
+                assert_ne!(target.as_ref().ptr(), 0);
+                assert!(target.as_ref().len() > 0);
 
-                let pair = val.as_ref().as_ptr();
-                assert!(val.release(&mut pool).is_ok());
+                let pair = target.as_ref().as_ptr();
+                assert!(target.release(&mut pool).is_ok());
 
                 pair
             }
         };
 
         let second = match CallableTarget::allocate(&mut pool, target) {
-            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
-            CallableTargetAllocate::Succeeded(val) => {
-                assert_ne!(val.as_ref().ptr(), 0);
-                assert!(val.as_ref().len() > 0);
+            Err(_) => return assert!(false),
+            Ok(target) => {
+                assert_ne!(target.as_ref().ptr(), 0);
+                assert!(target.as_ref().len() > 0);
 
-                val.as_ref().as_ptr()
+                target.as_ref().as_ptr()
             }
         };
 
@@ -240,8 +238,8 @@ mod tests {
         let target = || -> Result<(), ()> { Ok(()) };
 
         let callable = match CallableTarget::allocate(&mut pool, target) {
-            CallableTargetAllocate::Succeeded(val) => val,
-            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            Ok(target) => target,
+            Err(_) => return assert!(false),
         };
 
         assert!(callable.release(&mut pool).is_ok());
@@ -253,14 +251,11 @@ mod tests {
         let target = || -> Result<(), ()> { Ok(()) };
 
         let mut callable = match CallableTarget::allocate(&mut pool, target) {
-            CallableTargetAllocate::Succeeded(val) => val,
-            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            Ok(target) => target,
+            Err(_) => return assert!(false),
         };
 
-        match callable.call() {
-            Some(_) => assert!(false),
-            None => assert!(true),
-        }
+        assert!(callable.call().is_ok());
     }
 
     #[test]
@@ -269,19 +264,12 @@ mod tests {
         let target = || -> Result<(), ()> { Ok(()) };
 
         let mut callable = match CallableTarget::allocate(&mut pool, target) {
-            CallableTargetAllocate::Succeeded(val) => val,
-            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            Ok(target) => target,
+            Err(_) => return assert!(false),
         };
 
-        match callable.call() {
-            Some(_) => assert!(false),
-            None => assert!(true),
-        }
-
-        match callable.call() {
-            Some(_) => assert!(true),
-            None => assert!(false),
-        }
+        assert!(callable.call().is_ok());
+        assert!(callable.call().is_err());
     }
 
     #[test]
@@ -294,14 +282,11 @@ mod tests {
             F: FnOnce() -> Result<u8, ()> + Send,
         {
             let mut callable = match CallableTarget::allocate(pool, target) {
-                CallableTargetAllocate::Succeeded(val) => val,
-                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+                Ok(target) => target,
+                Err(_) => return assert!(false),
             };
 
-            match callable.call() {
-                Some(_) => assert!(false),
-                None => assert!(true),
-            }
+            assert!(callable.call().is_ok());
 
             match callable.result::<16, F, u8, ()>(pool) {
                 Ok(Some(Ok(val))) => assert_eq!(val, 13),
@@ -322,14 +307,11 @@ mod tests {
             F: FnOnce() -> Result<(), u8> + Send,
         {
             let mut callable = match CallableTarget::allocate(pool, target) {
-                CallableTargetAllocate::Succeeded(val) => val,
-                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+                Ok(target) => target,
+                Err(_) => return assert!(false),
             };
 
-            match callable.call() {
-                Some(_) => assert!(false),
-                None => assert!(true),
-            }
+            assert!(callable.call().is_ok());
 
             match callable.result::<16, F, (), u8>(pool) {
                 Ok(Some(Err(err))) => assert_eq!(err, 13),
@@ -350,8 +332,8 @@ mod tests {
             F: FnOnce() -> Result<u8, ()> + Send,
         {
             let callable = match CallableTarget::allocate(pool, target) {
-                CallableTargetAllocate::Succeeded(val) => val,
-                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+                Ok(target) => target,
+                Err(_) => return assert!(false),
             };
 
             match callable.result::<16, F, u8, ()>(pool) {

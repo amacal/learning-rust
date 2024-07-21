@@ -272,8 +272,8 @@ mod tests {
             F: FnOnce() -> Result<u8, ()> + Send,
         {
             let callable = match CallableTarget::allocate(heap, target) {
-                CallableTargetAllocate::Succeeded(val) => val,
-                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+                Ok(target) => target,
+                Err(_) => return assert!(false),
             };
 
             let (rx, mut tx) = match IORing::init(8) {
@@ -343,13 +343,13 @@ mod tests {
             F2: FnOnce() -> Result<u8, ()> + Send,
         {
             let callable1 = match CallableTarget::allocate(heap, target1) {
-                CallableTargetAllocate::Succeeded(val) => val,
-                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+                Ok(target) => target,
+                Err(_) => return assert!(false),
             };
 
             let callable2 = match CallableTarget::allocate(heap, target2) {
-                CallableTargetAllocate::Succeeded(val) => val,
-                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+                Ok(target) => target,
+                Err(_) => return assert!(false),
             };
 
             let (rx, mut tx) = match IORing::init(8) {
@@ -446,13 +446,13 @@ mod tests {
             F2: FnOnce() -> Result<u8, ()> + Send,
         {
             let callable1 = match CallableTarget::allocate(heap, target1) {
-                CallableTargetAllocate::Succeeded(val) => val,
-                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+                Ok(target) => target,
+                Err(_) => return assert!(false),
             };
 
             let callable2 = match CallableTarget::allocate(heap, target2) {
-                CallableTargetAllocate::Succeeded(val) => val,
-                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+                Ok(target) => target,
+                Err(_) => return assert!(false),
             };
 
             let (rx, mut tx) = match IORing::init(8) {

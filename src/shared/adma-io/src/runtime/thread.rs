@@ -210,8 +210,9 @@ extern "C" fn worker_callback(args: &mut WorkerArgs) -> ! {
 
         // calling the function behind the heap
         match target.call() {
-            None => trace0(b"worker called target; successfully\n"),
-            Some(err) => trace1(b"worker called target; %s\n", err),
+            Ok(()) => trace0(b"worker called target; successfully\n"),
+            Err(CallableError::CalledTwice) => trace0(b"worker called target; failed, called twice\n"),
+            Err(_) => trace0(b"worker called target; failed\n"),
         }
 
         // reporting one byte
@@ -274,8 +275,8 @@ mod tests {
         let target = || -> Result<u8, ()> { Ok(13) };
 
         let callable = match CallableTarget::allocate(&mut pool, target) {
-            CallableTargetAllocate::Succeeded(val) => val,
-            CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            Ok(target) => target,
+            Err(_) => return assert!(false),
         };
 
         let entry = match worker.execute(&callable) {
