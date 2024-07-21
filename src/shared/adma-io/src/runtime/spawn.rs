@@ -112,7 +112,7 @@ where
                     trace1(b"# polling spawn-cpu; stage=executed, res=%d\n", result);
                     let result = match this.task.take() {
                         None => SpawnCPUResult::InternallyFailed(),
-                        Some(task) => SpawnCPUResult::Succeeded(task.result::<F, R, E>(&mut this.ctx.heap_pool)),
+                        Some(task) => SpawnCPUResult::Succeeded(task.result::<16, F, R, E>(&mut this.ctx.heap_pool)),
                     };
 
                     Poll::Ready(result)

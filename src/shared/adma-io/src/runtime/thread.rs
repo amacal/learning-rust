@@ -253,6 +253,18 @@ mod tests {
             worker.release();
         }
 
+        fn release_uring(channels: &mut (IORingCompleter, IORingSubmitter)) {
+            // let ring = match IORing::join(channels.1, channels.0) {
+            //     IORingJoin::Succeeded(ring) => ring,
+            //     _ => return assert!(false),
+            // };
+
+            // match ring.shutdown() {
+            //     IORingShutdown::Succeeded() => assert!(true),
+            //     IORingShutdown::Failed() => assert!(false),
+            // }
+        }
+
         let mut worker = match Worker::start() {
             WorkerStart::Succeeded(worker) => Droplet::from(worker, release_worker),
             _ => return assert!(false),
@@ -268,7 +280,7 @@ mod tests {
 
         let entry = match worker.execute(&callable) {
             WorkerExecute::Succeeded(entry) => entry,
-            WorkerExecute::OutgoingPipeFailed(_) => return assert!(false),
+            _ => return assert!(false),
         };
 
         let (ptr, read) = match entry {
@@ -282,23 +294,23 @@ mod tests {
             assert_ne!(*ptr, 3);
         }
 
-        let (rx, mut tx) = match IORing::init(8) {
-            IORingInit::Succeeded(tx, rx) => (rx, tx),
+        let mut channels = match IORing::init(8) {
+            IORingInit::Succeeded(tx, rx) => Droplet::from((rx, tx), release_uring),
             _ => return assert!(false),
         };
 
-        match tx.submit(1, [IORingSubmitEntry::Read(read)]) {
+        match channels.1.submit(1, [IORingSubmitEntry::Read(read)]) {
             IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
             _ => return assert!(false)
         }
 
-        match tx.flush() {
+        match channels.1.flush() {
             IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
             _ => return assert!(false)
         }
 
         let mut entries = [IORingCompleteEntry::default(); 1];
-        match rx.complete(&mut entries) {
+        match channels.0.complete(&mut entries) {
             IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
             _ => return assert!(false)
         }

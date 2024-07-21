@@ -163,7 +163,7 @@ impl CallableTarget {
         (self.call)(&mut self.target)
     }
 
-    pub fn result<F, R, E>(self, pool: &mut HeapPool<16>) -> Option<Result<R, E>>
+    pub fn result<const T: usize, F, R, E>(self, pool: &mut HeapPool<T>) -> Option<Result<R, E>>
     where
         F: FnOnce() -> Result<R, E>,
     {
@@ -319,7 +319,7 @@ mod tests {
                 None => assert!(true),
             }
 
-            match callable.result::<F, u8, ()>(pool) {
+            match callable.result::<16, F, u8, ()>(pool) {
                 Some(Ok(val)) => assert_eq!(val, 13),
                 Some(Err(_)) => assert!(false),
                 None => assert!(false),
@@ -348,7 +348,7 @@ mod tests {
                 None => assert!(true),
             }
 
-            match callable.result::<F, (), u8>(pool) {
+            match callable.result::<16, F, (), u8>(pool) {
                 Some(Ok(_)) => assert!(false),
                 Some(Err(err)) => assert_eq!(err, 13),
                 None => assert!(false),
@@ -372,7 +372,7 @@ mod tests {
                 CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
             };
 
-            match callable.result::<F, u8, ()>(pool) {
+            match callable.result::<16, F, u8, ()>(pool) {
                 Some(_) => assert!(false),
                 None => assert!(true),
             }

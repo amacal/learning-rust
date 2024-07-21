@@ -64,7 +64,6 @@ pub struct HeapPool<const T: usize> {
     index: usize,
 }
 
-
 impl Heap {
     pub fn boxed<T: HeapLifetime>(self) -> Boxed<T> {
         trace2(b"creating boxed; addr=%x, size=%d\n", self.ptr, self.len);

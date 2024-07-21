@@ -18,7 +18,7 @@ pub struct IORingRuntime {
     submitter: IORingSubmitter,
     completer: IORingCompleter,
     registry: Boxed<IORingRegistry>,
-    pool: Boxed<IORuntimePool>,
+    pool: Boxed<IORuntimePool<4>>,
     ops: IORuntimeOps,
     entries: [IORingCompleteEntry; 16],
 }

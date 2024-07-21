@@ -9,38 +9,36 @@ use crate::syscall::*;
 use crate::trace::*;
 use crate::uring::*;
 
-const WORKERS_COUNT: usize = 12;
-
-pub struct IORuntimePool {
-    workers_completers: [Option<u64>; WORKERS_COUNT],
-    workers_array: [Option<Worker>; WORKERS_COUNT],
-    workers_slots: [usize; WORKERS_COUNT],
+pub struct IORuntimePool<const T: usize> {
+    workers_completers: [Option<u64>; T],
+    workers_array: [Option<Worker>; T],
+    workers_slots: [usize; T],
     workers_count: usize,
     queue_incoming: u32,
     queue_outgoing: u32,
     queue_counter: usize,
 }
 
-pub enum IORuntimePoolAllocation {
-    Succeeded(Boxed<IORuntimePool>),
+pub enum IORuntimePoolAllocation<const T: usize> {
+    Succeeded(Boxed<IORuntimePool<T>>),
     AllocationFailed(isize),
     ThreadingFailed(isize),
     QueueFailed(isize),
 }
 
-impl IORuntimePool {
-    pub fn allocate() -> IORuntimePoolAllocation {
+impl<const T: usize> IORuntimePool<T> {
+    pub fn allocate() -> IORuntimePoolAllocation<T> {
         let queue = match PipeChannel::create() {
             Ok(value) => value,
             Err(err) => return IORuntimePoolAllocation::QueueFailed(err),
         };
 
-        let mut instance: Boxed<IORuntimePool> = match Heap::allocate(mem::size_of::<IORuntimePool>()) {
+        let mut instance: Boxed<IORuntimePool<T>> = match Heap::allocate(mem::size_of::<IORuntimePool<T>>()) {
             Ok(heap) => heap.boxed(),
             Err(err) => return IORuntimePoolAllocation::AllocationFailed(err),
         };
 
-        for i in 0..WORKERS_COUNT {
+        for i in 0..T {
             let worker = match Worker::start() {
                 WorkerStart::Succeeded(worker) => worker,
                 WorkerStart::StartFailed(err) => return IORuntimePoolAllocation::ThreadingFailed(err),
@@ -65,14 +63,14 @@ impl IORuntimePool {
     }
 }
 
-impl HeapLifetime for IORuntimePool {
+impl<const T: usize> HeapLifetime for IORuntimePool<T> {
     fn ctor(&mut self) {}
 
     fn dtor(&mut self) {
         sys_close(self.queue_incoming);
         sys_close(self.queue_outgoing);
 
-        for i in 0..WORKERS_COUNT {
+        for i in 0..T {
             if let Some(mut worker) = self.workers_array[i].take() {
                 worker.release()
             }
@@ -88,7 +86,7 @@ pub enum IORuntimePoolExecute {
     InternallyFailed(),
 }
 
-impl IORuntimePool {
+impl<const T: usize> IORuntimePool<T> {
     pub fn execute(
         &mut self,
         submitter: &mut IORingSubmitter,
@@ -150,18 +148,18 @@ impl IORuntimePool {
     }
 }
 
-impl IORuntimePool {
+impl<const T: usize> IORuntimePool<T> {
     pub fn enqueue(&mut self, completer: &IORingCompleterRef) {
         self.queue_counter += 1;
         trace1(b"callable queued; cid=%d\n", completer.cid());
     }
 }
 
-impl IORuntimePool {
+impl<const T: usize> IORuntimePool<T> {
     pub fn release_worker(&mut self, completer: &IORingCompleterRef) -> bool {
         trace1(b"releasing worker; cid=%d\n", completer.cid());
 
-        for slot in 0..WORKERS_COUNT {
+        for slot in 0..T {
             match self.workers_completers.get_mut(slot) {
                 Some(Some(value)) if *value == completer.encode() => (),
                 _ => continue,
@@ -185,7 +183,7 @@ pub enum IORuntimePoolTrigger {
     InternallyFailed(),
 }
 
-impl IORuntimePool {
+impl<const T: usize> IORuntimePool<T> {
     pub fn trigger(&mut self, submitter: &mut IORingSubmitter) -> IORuntimePoolTrigger {
         if self.queue_counter <= 0 {
             return IORuntimePoolTrigger::Succeeded(false);
@@ -241,5 +239,328 @@ impl IORuntimePool {
         }
 
         IORuntimePoolTrigger::Succeeded(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocates_pool() {
+        let pool = match IORuntimePool::<16>::allocate() {
+            IORuntimePoolAllocation::Succeeded(pool) => pool,
+            _ => return assert!(false),
+        };
+
+        assert_eq!(pool.queue_counter, 0);
+        assert_eq!(pool.workers_count, 0);
+
+        assert_ne!(pool.queue_incoming, 0);
+        assert_ne!(pool.queue_outgoing, 0);
+
+        drop(pool);
+    }
+
+    #[test]
+    fn executes_callable_as_executed() {
+        let mut heap = HeapPool::<1>::new();
+        let target = || -> Result<u8, ()> { Ok(13) };
+
+        fn execute<F>(heap: &mut HeapPool<1>, target: F)
+        where
+            F: FnOnce() -> Result<u8, ()> + Send,
+        {
+            let callable = match CallableTarget::allocate(heap, target) {
+                CallableTargetAllocate::Succeeded(val) => val,
+                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            };
+
+            let (rx, mut tx) = match IORing::init(8) {
+                IORingInit::Succeeded(tx, rx) => (rx, tx),
+                _ => return assert!(false),
+            };
+
+            let mut pool = match IORuntimePool::<1>::allocate() {
+                IORuntimePoolAllocation::Succeeded(pool) => pool,
+                _ => return assert!(false),
+            };
+
+            let first = IORingCompleterRef::new(1, 2);
+            let second = IORingCompleterRef::new(3, 4);
+
+            match pool.execute(&mut tx, [&first, &second], &callable) {
+                IORuntimePoolExecute::Executed() => assert!(true),
+                _ => assert!(false),
+            }
+
+            match tx.flush() {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 2),
+                _ => assert!(false),
+            }
+
+            let mut entries = [IORingCompleteEntry::default(); 1];
+            match rx.complete(&mut entries) {
+                IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => return assert!(false)
+            }
+
+            assert_eq!(entries[0].res, 0);
+            assert_eq!(entries[0].user_data, first.encode());
+
+            let mut entries = [IORingCompleteEntry::default(); 1];
+            match rx.complete(&mut entries) {
+                IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => return assert!(false)
+            }
+
+            assert_eq!(entries[0].res, 1);
+            assert_eq!(entries[0].user_data, second.encode());
+
+            match callable.result::<1, F, u8, ()>(heap) {
+                Some(Ok(val)) => assert_eq!(val, 13),
+                _ => assert!(false),
+            }
+
+            assert_eq!(pool.queue_counter, 0);
+            assert_eq!(pool.workers_count, 1);
+
+            drop(pool);
+        }
+
+        execute(&mut heap, target);
+    }
+
+    #[test]
+    fn executes_callable_as_queued() {
+        let mut heap = HeapPool::<1>::new();
+        let target1 = || -> Result<u8, ()> { Ok(13) };
+        let target2 = || -> Result<u8, ()> { Ok(17) };
+
+        fn execute<F1, F2>(heap: &mut HeapPool<1>, target1: F1, target2: F2)
+        where
+            F1: FnOnce() -> Result<u8, ()> + Send,
+            F2: FnOnce() -> Result<u8, ()> + Send,
+        {
+            let callable1 = match CallableTarget::allocate(heap, target1) {
+                CallableTargetAllocate::Succeeded(val) => val,
+                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            };
+
+            let callable2 = match CallableTarget::allocate(heap, target2) {
+                CallableTargetAllocate::Succeeded(val) => val,
+                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            };
+
+            let (rx, mut tx) = match IORing::init(8) {
+                IORingInit::Succeeded(tx, rx) => (rx, tx),
+                _ => return assert!(false),
+            };
+
+            let mut pool = match IORuntimePool::<1>::allocate() {
+                IORuntimePoolAllocation::Succeeded(pool) => pool,
+                _ => return assert!(false),
+            };
+
+            let first = IORingCompleterRef::new(1, 2);
+            let second = IORingCompleterRef::new(3, 4);
+
+            match pool.execute(&mut tx, [&first, &second], &callable1) {
+                IORuntimePoolExecute::Executed() => assert!(true),
+                _ => assert!(false),
+            }
+
+            match tx.flush() {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 2),
+                _ => assert!(false),
+            }
+
+            let mut entries = [IORingCompleteEntry::default(); 1];
+            match rx.complete(&mut entries) {
+                IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => return assert!(false)
+            }
+
+            assert_eq!(entries[0].res, 0);
+            assert_eq!(entries[0].user_data, first.encode());
+
+            let mut entries = [IORingCompleteEntry::default(); 1];
+            match rx.complete(&mut entries) {
+                IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => return assert!(false)
+            }
+
+            assert_eq!(entries[0].res, 1);
+            assert_eq!(entries[0].user_data, second.encode());
+
+            match callable1.result::<1, F1, u8, ()>(heap) {
+                Some(Ok(val)) => assert_eq!(val, 13),
+                _ => assert!(false),
+            }
+
+            assert_eq!(pool.queue_counter, 0);
+            assert_eq!(pool.workers_count, 1);
+
+            match pool.execute(&mut tx, [&first, &second], &callable2) {
+                IORuntimePoolExecute::Queued() => assert!(true),
+                _ => assert!(false),
+            }
+
+            match tx.flush() {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => assert!(false),
+            }
+
+            let mut entries = [IORingCompleteEntry::default(); 1];
+            match rx.complete(&mut entries) {
+                IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => return assert!(false)
+            }
+
+            assert_eq!(entries[0].res, 24);
+            assert_eq!(entries[0].user_data, first.encode());
+
+            match callable2.result::<1, F2, u8, ()>(heap) {
+                None => assert!(true),
+                _ => assert!(false),
+            }
+
+            assert_eq!(pool.queue_counter, 0);
+            assert_eq!(pool.workers_count, 1);
+
+            drop(pool);
+        }
+
+        execute(&mut heap, target1, target2);
+    }
+
+    #[test]
+    fn executes_callable_executed_second() {
+        let mut heap = HeapPool::<1>::new();
+        let target1 = || -> Result<u8, ()> { Ok(13) };
+        let target2 = || -> Result<u8, ()> { Ok(17) };
+
+        fn execute<F1, F2>(heap: &mut HeapPool<1>, target1: F1, target2: F2)
+        where
+            F1: FnOnce() -> Result<u8, ()> + Send,
+            F2: FnOnce() -> Result<u8, ()> + Send,
+        {
+            let callable1 = match CallableTarget::allocate(heap, target1) {
+                CallableTargetAllocate::Succeeded(val) => val,
+                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            };
+
+            let callable2 = match CallableTarget::allocate(heap, target2) {
+                CallableTargetAllocate::Succeeded(val) => val,
+                CallableTargetAllocate::AllocationFailed(_) => return assert!(false),
+            };
+
+            let (rx, mut tx) = match IORing::init(8) {
+                IORingInit::Succeeded(tx, rx) => (rx, tx),
+                _ => return assert!(false),
+            };
+
+            let mut pool = match IORuntimePool::<1>::allocate() {
+                IORuntimePoolAllocation::Succeeded(pool) => pool,
+                _ => return assert!(false),
+            };
+
+            let first = IORingCompleterRef::new(1, 2);
+            let second = IORingCompleterRef::new(3, 4);
+            let third = IORingCompleterRef::new(5, 6);
+            let fourth = IORingCompleterRef::new(7, 8);
+
+            match pool.execute(&mut tx, [&first, &second], &callable1) {
+                IORuntimePoolExecute::Executed() => assert!(true),
+                _ => assert!(false),
+            }
+
+            match tx.flush() {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 2),
+                _ => assert!(false),
+            }
+
+            let mut entries = [IORingCompleteEntry::default(); 1];
+            match rx.complete(&mut entries) {
+                IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => return assert!(false)
+            }
+
+            assert_eq!(entries[0].res, 0);
+            assert_eq!(entries[0].user_data, first.encode());
+
+            let mut entries = [IORingCompleteEntry::default(); 1];
+            match rx.complete(&mut entries) {
+                IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => return assert!(false)
+            }
+
+            assert_eq!(entries[0].res, 1);
+            assert_eq!(entries[0].user_data, second.encode());
+
+            match callable1.result::<1, F1, u8, ()>(heap) {
+                Some(Ok(val)) => assert_eq!(val, 13),
+                _ => assert!(false),
+            }
+
+            assert_eq!(pool.queue_counter, 0);
+            assert_eq!(pool.workers_count, 1);
+
+            match pool.execute(&mut tx, [&third, &fourth], &callable2) {
+                IORuntimePoolExecute::Queued() => assert!(true),
+                _ => assert!(false),
+            }
+
+            match tx.flush() {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => assert!(false),
+            }
+
+            let mut entries = [IORingCompleteEntry::default(); 1];
+            match rx.complete(&mut entries) {
+                IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => return assert!(false)
+            }
+
+            assert_eq!(entries[0].res, 24);
+            assert_eq!(entries[0].user_data, third.encode());
+
+            pool.enqueue(&third);
+            assert_eq!(pool.queue_counter, 1);
+
+            let res = pool.release_worker(&second);
+            assert_eq!(res, true);
+
+            match pool.trigger(&mut tx) {
+                IORuntimePoolTrigger::Succeeded(val) => assert_eq!(val, true),
+                _ => assert!(false),
+            }
+
+            match tx.flush() {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => assert!(false),
+            }
+
+            let mut entries = [IORingCompleteEntry::default(); 1];
+            match rx.complete(&mut entries) {
+                IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => return assert!(false)
+            }
+
+            assert_eq!(entries[0].res, 1);
+            assert_eq!(entries[0].user_data, fourth.encode());
+
+            match callable2.result::<1, F2, u8, ()>(heap) {
+                Some(Ok(val)) => assert_eq!(val, 17),
+                _ => assert!(false),
+            }
+
+            assert_eq!(pool.queue_counter, 0);
+            assert_eq!(pool.workers_count, 1);
+
+            drop(pool);
+        }
+
+        execute(&mut heap, target1, target2);
     }
 }
