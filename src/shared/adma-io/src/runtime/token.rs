@@ -1,8 +1,8 @@
-use core::task::Waker;
+use ::core::task::Waker;
 
 use super::callable::*;
 use super::core::*;
-use super::pin::*;
+use super::pollable::*;
 use super::refs::*;
 use crate::uring::*;
 
@@ -88,8 +88,8 @@ impl IORingTaskToken {
 }
 
 impl IORingTaskToken {
-    pub fn spawn(waker: &Waker, pinned: IORingPin) -> bool {
-        match Self::context(waker).spawn(pinned) {
+    pub fn spawn(waker: &Waker, task: PollableTarget) -> bool {
+        match Self::context(waker).spawn(task) {
             IORingRuntimeSpawn::Pending(_) => true,
             _ => false,
         }

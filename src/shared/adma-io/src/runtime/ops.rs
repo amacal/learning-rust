@@ -2,7 +2,7 @@ use ::core::future::*;
 use ::core::marker::*;
 
 use super::callable::*;
-use super::pin::*;
+use super::pollable::*;
 use super::spawn::*;
 use crate::heap::*;
 
@@ -72,9 +72,9 @@ impl IORuntimeOps {
         let target = target.call_once((ops,));
 
         Spawn {
-            task: match IORingPin::allocate(&mut self.ctx.heap_pool, target) {
-                IORingPinAllocate::Succeeded(task) => Some(task),
-                IORingPinAllocate::AllocationFailed(_) => None,
+            task: match PollableTarget::allocate(&mut self.ctx.heap_pool, target) {
+                Some(task) => Some(task),
+                None => None,
             },
         }
     }

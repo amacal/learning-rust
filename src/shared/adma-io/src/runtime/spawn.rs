@@ -6,13 +6,13 @@ use ::core::task::Poll;
 
 use super::callable::*;
 use super::ops::*;
-use super::pin::*;
+use super::pollable::*;
 use super::token::*;
 use crate::heap::*;
 use crate::trace::*;
 
 pub struct Spawn {
-    pub task: Option<IORingPin>,
+    pub task: Option<PollableTarget>,
 }
 
 unsafe impl Send for Spawn {}

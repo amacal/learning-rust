@@ -1,10 +1,11 @@
 use ::core::future::Future;
 use ::core::task::Context;
 use ::core::task::Waker;
+use ::core::task::Poll;
 
 use super::callable::*;
 use super::ops::*;
-use super::pin::*;
+use super::pollable::*;
 use super::pool::*;
 use super::raw::*;
 use super::refs::*;
@@ -89,7 +90,7 @@ impl IORingRuntime {
         return context;
     }
 
-    fn poll(&mut self, task: IORingTaskRef) -> IORingRegistryPoll {
+    fn poll(&mut self, task: IORingTaskRef) -> Result<(usize, Poll<Option<&'static [u8]>>), IORegistryError> {
         let runtime = self as *mut IORingRuntime;
         let context = IORingRuntimeContext { task, runtime };
 
@@ -114,30 +115,29 @@ pub enum IORingRuntimeSpawn {
 }
 
 impl IORingRuntime {
-    fn spawn(&mut self, pinned: IORingPin) -> IORingRuntimeSpawn {
+    fn spawn(&mut self, task: PollableTarget) -> IORingRuntimeSpawn {
         // each future has to be put on the heap first
         trace0(b"appending task to registry\n");
 
-        let task = match self.registry.append_task(pinned) {
+        let task = match self.registry.append_task(task) {
             // and later to be appended to the registry
-            IORingRegistryAppend::Succeeded(val) => val,
-            IORingRegistryAppend::NotEnoughSlots() => return IORingRuntimeSpawn::NotEnoughSlots(),
-            IORingRegistryAppend::InternallyFailed() => return IORingRuntimeSpawn::InternallyFailed(),
+            Ok(val) => val,
+            Err(IORegistryError::NotEnoughSlots) => return IORingRuntimeSpawn::NotEnoughSlots(),
+            Err(_) => return IORingRuntimeSpawn::InternallyFailed(),
         };
 
         // to be initially polled
         let (result, completions) = match self.poll(task) {
-            IORingRegistryPoll::Ready(cnt, val) => (val, cnt),
-            IORingRegistryPoll::NotFound() => return IORingRuntimeSpawn::InternallyFailed(),
-            IORingRegistryPoll::Pending(_) => return IORingRuntimeSpawn::Pending(task),
+            Ok((cnt, Poll::Ready(val))) => (val, cnt),
+            Ok((_, Poll::Pending)) => return IORingRuntimeSpawn::Pending(task),
+            Err(_) => return IORingRuntimeSpawn::InternallyFailed(),
         };
 
         if completions == 0 {
             // to be immediately removed if ready without hanging completers
             let result = match self.registry.remove_task(&task) {
-                IORingRegistryRemove::Succeeded(task) => task.release(),
-                IORingRegistryRemove::NotFound() => return IORingRuntimeSpawn::InternallyFailed(),
-                IORingRegistryRemove::NotReady() => return IORingRuntimeSpawn::InternallyFailed(),
+                Ok(task) => task.release(),
+                Err(_) => return IORingRuntimeSpawn::InternallyFailed(),
             };
 
             match result {
@@ -159,8 +159,8 @@ impl IORingRuntime {
 }
 
 impl IORingRuntimeContext {
-    pub fn spawn(&mut self, pinned: IORingPin) -> IORingRuntimeSpawn {
-        unsafe { (*self.runtime).spawn(pinned) }
+    pub fn spawn(&mut self, task: PollableTarget) -> IORingRuntimeSpawn {
+        unsafe { (*self.runtime).spawn(task) }
     }
 }
 
@@ -174,15 +174,15 @@ pub enum IORingRuntimeExecute {
 impl IORingRuntime {
     fn execute(&mut self, task: &IORingTaskRef, callable: &CallableTarget) -> IORingRuntimeExecute {
         let queued = match self.registry.append_completer(task.clone()) {
-            IORingRegistryAppend::Succeeded(completer) => completer,
-            IORingRegistryAppend::NotEnoughSlots() => return IORingRuntimeExecute::NotEnoughSlots(),
-            IORingRegistryAppend::InternallyFailed() => return IORingRuntimeExecute::InternallyFailed(),
+            Ok(completer) => completer,
+            Err(IORegistryError::NotEnoughSlots) => return IORingRuntimeExecute::NotEnoughSlots(),
+            Err(_) => return IORingRuntimeExecute::InternallyFailed(),
         };
 
         let executed = match self.registry.append_completer(task.clone()) {
-            IORingRegistryAppend::Succeeded(completer) => completer,
-            IORingRegistryAppend::NotEnoughSlots() => return IORingRuntimeExecute::NotEnoughSlots(),
-            IORingRegistryAppend::InternallyFailed() => return IORingRuntimeExecute::InternallyFailed(),
+            Ok(completer) => completer,
+            Err(IORegistryError::NotEnoughSlots) => return IORingRuntimeExecute::NotEnoughSlots(),
+            Err(_) => return IORingRuntimeExecute::InternallyFailed(),
         };
 
         match self.pool.execute(&mut self.submitter, [&queued, &executed], callable) {
@@ -274,9 +274,9 @@ impl IORingRuntime {
         if !ready {
             // when task is not yet ready we need to poll it again
             let (_, completions) = match self.poll(task) {
-                IORingRegistryPoll::Ready(cnt, val) => (val, cnt),
-                IORingRegistryPoll::Pending(_) => return IORingRuntimeTick::Pending(task),
-                IORingRegistryPoll::NotFound() => return IORingRuntimeTick::InternallyFailed(),
+                Ok((cnt, Poll::Ready(val))) => (val, cnt),
+                Ok((_, Poll::Pending)) => return IORingRuntimeTick::Pending(task),
+                Err(_) => return IORingRuntimeTick::InternallyFailed(),
             };
 
             // completions may have changed after polling
@@ -290,9 +290,8 @@ impl IORingRuntime {
 
         // no draining and readiness, so remove the task
         let result = match self.registry.remove_task(&task) {
-            IORingRegistryRemove::Succeeded(task) => task.release(),
-            IORingRegistryRemove::NotFound() => return IORingRuntimeTick::InternallyFailed(),
-            IORingRegistryRemove::NotReady() => return IORingRuntimeTick::InternallyFailed(),
+            Ok(task) => task.release(),
+            Err(_) => return IORingRuntimeTick::InternallyFailed(),
         };
 
         // and return the task result
@@ -318,9 +317,9 @@ impl IORingRuntime {
         let target = target.call_once((ops,));
 
         trace0(b"allocating memory to pin a future\n");
-        let pinned = match IORingPin::allocate(&mut self.ops.ctx.heap_pool, target) {
-            IORingPinAllocate::Succeeded(pinned) => pinned,
-            IORingPinAllocate::AllocationFailed(err) => return IORingRuntimeRun::AllocationFailed(err),
+        let pinned = match PollableTarget::allocate(&mut self.ops.ctx.heap_pool, target) {
+            Some(pinned) => pinned,
+            None => return IORingRuntimeRun::AllocationFailed(0),
         };
 
         // spawning may fail due to many reasons
@@ -446,9 +445,9 @@ impl IORingRuntime {
     fn submit(&mut self, task: &IORingTaskRef, entry: IORingSubmitEntry) -> IORingRuntimeSubmit {
         trace1(b"appending completer to registry; tid=%d\n", task.tid());
         let completer = match self.registry.append_completer(task.clone()) {
-            IORingRegistryAppend::Succeeded(completer) => completer,
-            IORingRegistryAppend::NotEnoughSlots() => return IORingRuntimeSubmit::NotEnoughSlots(),
-            IORingRegistryAppend::InternallyFailed() => return IORingRuntimeSubmit::InternallyFailed(),
+            Ok(completer) => completer,
+            Err(IORegistryError::NotEnoughSlots) => return IORingRuntimeSubmit::NotEnoughSlots(),
+            Err(_) => return IORingRuntimeSubmit::InternallyFailed(),
         };
 
         trace2(b"submitting op with uring; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
