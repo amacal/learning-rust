@@ -14,6 +14,8 @@ pub enum IORegistryError {
     NotEnoughSlots,
     TaskNotFound,
     TaskNotReady,
+    CompleterNotFound,
+    CompleterNotReady,
 }
 
 pub struct IORingTaskCompletion {
@@ -181,12 +183,6 @@ impl IORingRegistry {
     }
 }
 
-pub enum IORingRegistryRemove<T> {
-    Succeeded(T),
-    NotReady(),
-    NotFound(),
-}
-
 impl IORingRegistry {
     pub fn remove_task(&mut self, task: &IORingTaskRef) -> Result<IORingTask, IORegistryError> {
         let tidx = task.tidx() % TASKS_COUNT;
@@ -212,17 +208,17 @@ impl IORingRegistry {
         }
     }
 
-    pub fn remove_completer(&mut self, completer: &IORingCompleterRef) -> IORingRegistryRemove<IORingTaskCompletion> {
+    pub fn remove_completer(&mut self, completer: &IORingCompleterRef) -> Result<IORingTaskCompletion, IORegistryError> {
         let cidx = completer.cidx() % COMPLETERS_COUNT;
         let node = unsafe { self.completers_array.get_unchecked_mut(cidx) };
 
         let found = match node {
             Some(found) if found.cid == completer.cid() => found,
-            Some(_) | None => return IORingRegistryRemove::NotFound(),
+            Some(_) | None => return Err(IORegistryError::CompleterNotFound),
         };
 
         if found.flags & 0x01 != 0x01 {
-            return IORingRegistryRemove::NotReady();
+            return Err(IORegistryError::CompleterNotReady);
         }
 
         self.completers_count -= 1;
@@ -231,8 +227,8 @@ impl IORingRegistry {
         trace2(b"removing completer; cidx=%d, cid=%d\n", cidx, found.cid);
 
         match node.take() {
-            None => IORingRegistryRemove::NotFound(),
-            Some(found) => IORingRegistryRemove::Succeeded(found),
+            None => Err(IORegistryError::CompleterNotFound),
+            Some(found) => Ok(found),
         }
     }
 }
@@ -267,14 +263,8 @@ impl IORingRegistry {
     }
 }
 
-pub enum IORingRegistryComplete {
-    Succeeded(IORingTaskRef, bool, usize),
-    Inconsistent(),
-    NotFound(),
-}
-
 impl IORingRegistry {
-    pub fn complete(&mut self, completer: IORingCompleterRef, result: i32) -> IORingRegistryComplete {
+    pub fn complete(&mut self, completer: &IORingCompleterRef, result: i32) -> Result<(IORingTaskRef, bool, usize), IORegistryError> {
         let cidx = completer.cidx() % COMPLETERS_COUNT;
         let node = unsafe { self.completers_array.get_unchecked_mut(cidx) };
 
@@ -283,7 +273,7 @@ impl IORingRegistry {
             Some(found) if found.cid == completer.cid() => found,
             Some(_) | None => {
                 trace1(b"looking for completions; cidx=%d, not found\n", cidx);
-                return IORingRegistryComplete::NotFound();
+                return Err(IORegistryError::CompleterNotFound);
             }
         };
 
@@ -299,26 +289,20 @@ impl IORingRegistry {
             Some(task) => task,
             None => {
                 trace1(b"looking for tasks; tidx=%d, not found\n", tidx);
-                return IORingRegistryComplete::NotFound();
+                return Err(IORegistryError::TaskNotFound);
             }
         };
 
-        trace2(b"looking for tasks; tidx=%d, tid=%d\n", tidx, task.tid);
+        task.completions = task.completions.wrapping_sub(1);
 
-        // task has to be updated
-        if task.completions > 0 {
-            task.completions -= 1;
-            trace2(b"looking for tasks; tidx=%d, left=%d, decreased\n", tidx, task.completions);
-        } else {
-            trace1(b"looking for tasks; tidx=%d, depth inconsistency\n", tidx);
-            return IORingRegistryComplete::Inconsistent();
-        }
+        trace2(b"looking for tasks; tidx=%d, tid=%d\n", tidx, task.tid);
+        trace2(b"looking for tasks; tidx=%d, left=%d, decreased\n", tidx, task.completions);
 
         let is_ready = task.flags & 0x01 == 0x01;
         let completions = task.completions;
 
         let task = IORingTaskRef::new(completer.tidx, task.tid);
-        return IORingRegistryComplete::Succeeded(task, is_ready, completions);
+        return Ok((task, is_ready, completions));
     }
 }
 
@@ -545,6 +529,195 @@ mod tests {
         assert_eq!(registry.tasks_id, 0);
 
         assert!(registry.tasks_array[0].is_none());
+        drop(registry);
+    }
+
+    #[test]
+    fn removes_completer_if_present_completed() {
+        let mut pool = HeapPool::<1>::new();
+        let mut registry = match IORingRegistry::allocate() {
+            IORingRegistryAllocation::Succeeded(registry) => registry,
+            _ => return assert!(false),
+        };
+
+        let target = async { None::<&'static [u8]> };
+        let pollable = match PollableTarget::allocate(&mut pool, target) {
+            None => return assert!(false),
+            Some(target) => target,
+        };
+
+        let task = match registry.append_task(pollable) {
+            Err(_) => return assert!(false),
+            Ok(task) => task,
+        };
+
+        let completer = match registry.append_completer(task) {
+            Err(_) => return assert!(false),
+            Ok(completer) => completer,
+        };
+
+        match registry.complete(&completer, 13) {
+            Ok(_) => assert!(true),
+            _ => return assert!(false),
+        }
+
+        let cid = completer.cid();
+        let completion = match registry.remove_completer(&completer) {
+            Err(_) => return assert!(false),
+            Ok(task) => task,
+        };
+
+        assert_eq!(completion.cid, cid);
+        assert_eq!(completion.tidx, task.tidx());
+
+        match completion.result() {
+            None => return assert!(false),
+            Some(result) => assert_eq!(result, 13),
+        }
+
+        assert_eq!(registry.completers_count, 0);
+        assert_eq!(registry.completers_id, 1);
+        assert_eq!(registry.tasks_count, 1);
+        assert_eq!(registry.tasks_id, 1);
+
+        assert!(registry.completers_array[0].is_none());
+        assert!(registry.tasks_array[0].is_some());
+
+        drop(registry);
+    }
+
+    #[test]
+    fn removes_completer_if_present_not_completed() {
+        let mut pool = HeapPool::<1>::new();
+        let mut registry = match IORingRegistry::allocate() {
+            IORingRegistryAllocation::Succeeded(registry) => registry,
+            _ => return assert!(false),
+        };
+
+        let target = async { None::<&'static [u8]> };
+        let pollable = match PollableTarget::allocate(&mut pool, target) {
+            None => return assert!(false),
+            Some(target) => target,
+        };
+
+        let task = match registry.append_task(pollable) {
+            Err(_) => return assert!(false),
+            Ok(task) => task,
+        };
+
+        let completer = match registry.append_completer(task) {
+            Err(_) => return assert!(false),
+            Ok(completer) => completer,
+        };
+
+        match registry.remove_completer(&completer) {
+            Err(IORegistryError::CompleterNotReady) => assert!(true),
+            Ok(_) | Err(_) => assert!(false),
+        }
+
+        assert_eq!(registry.completers_count, 1);
+        assert_eq!(registry.completers_id, 1);
+        assert_eq!(registry.tasks_count, 1);
+        assert_eq!(registry.tasks_id, 1);
+
+        assert!(registry.completers_array[0].is_some());
+        assert!(registry.tasks_array[0].is_some());
+
+        drop(registry);
+    }
+
+    #[test]
+    fn removes_completer_if_present_not_found() {
+        let mut pool = HeapPool::<1>::new();
+        let mut registry = match IORingRegistry::allocate() {
+            IORingRegistryAllocation::Succeeded(registry) => registry,
+            _ => return assert!(false),
+        };
+
+        let target = async { None::<&'static [u8]> };
+        let pollable = match PollableTarget::allocate(&mut pool, target) {
+            None => return assert!(false),
+            Some(target) => target,
+        };
+
+        let task = match registry.append_task(pollable) {
+            Err(_) => return assert!(false),
+            Ok(task) => task,
+        };
+
+        match registry.append_completer(task) {
+            Err(_) => assert!(false),
+            Ok(_) => assert!(true),
+        }
+
+        let completer = IORingCompleterRef::new(13, 17);
+        match registry.remove_completer(&completer) {
+            Err(IORegistryError::CompleterNotFound) => assert!(true),
+            Ok(_) | Err(_) => assert!(false),
+        }
+
+        assert_eq!(registry.completers_count, 1);
+        assert_eq!(registry.completers_id, 1);
+        assert_eq!(registry.tasks_count, 1);
+        assert_eq!(registry.tasks_id, 1);
+
+        assert!(registry.completers_array[0].is_some());
+        assert!(registry.tasks_array[0].is_some());
+
+        drop(registry);
+    }
+
+    #[test]
+    fn completes_if_present() {
+        let mut pool = HeapPool::<1>::new();
+        let mut registry = match IORingRegistry::allocate() {
+            IORingRegistryAllocation::Succeeded(registry) => registry,
+            _ => return assert!(false),
+        };
+
+        let target = async { None::<&'static [u8]> };
+        let pollable = match PollableTarget::allocate(&mut pool, target) {
+            None => return assert!(false),
+            Some(target) => target,
+        };
+
+        let task = match registry.append_task(pollable) {
+            Err(_) => return assert!(false),
+            Ok(task) => task,
+        };
+
+        let completer = match registry.append_completer(task) {
+            Err(_) => return assert!(false),
+            Ok(completer) => completer,
+        };
+
+        match registry.complete(&completer, 13) {
+            Ok((_, _, _)) => assert!(true),
+            _ => return assert!(false),
+        }
+
+        let cid = completer.cid();
+        let completion = match registry.remove_completer(&completer) {
+            Err(_) => return assert!(false),
+            Ok(task) => task,
+        };
+
+        assert_eq!(completion.cid, cid);
+        assert_eq!(completion.tidx, task.tidx());
+
+        match completion.result() {
+            None => return assert!(false),
+            Some(result) => assert_eq!(result, 13),
+        }
+
+        assert_eq!(registry.completers_count, 0);
+        assert_eq!(registry.completers_id, 1);
+        assert_eq!(registry.tasks_count, 1);
+        assert_eq!(registry.tasks_id, 1);
+
+        assert!(registry.completers_array[0].is_none());
+        assert!(registry.tasks_array[0].is_some());
+
         drop(registry);
     }
 }

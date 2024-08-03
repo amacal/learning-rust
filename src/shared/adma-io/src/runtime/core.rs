@@ -241,8 +241,9 @@ impl IORingRuntime {
 
         for i in 0..cnt {
             let entry = self.entries[i];
+            let completer = IORingCompleterRef::decode(entry.user_data);
 
-            match self.complete(IORingCompleterRef::decode(entry.user_data), &entry) {
+            match self.complete(&completer, &entry) {
                 IORingRuntimeTick::Succeeded() => (),
                 IORingRuntimeTick::Empty() => (),
                 IORingRuntimeTick::Pending(_) => (),
@@ -261,14 +262,13 @@ impl IORingRuntime {
         IORingRuntimeTick::Succeeded()
     }
 
-    fn complete(&mut self, completer: IORingCompleterRef, entry: &IORingCompleteEntry) -> IORingRuntimeTick {
+    fn complete(&mut self, completer: &IORingCompleterRef, entry: &IORingCompleteEntry) -> IORingRuntimeTick {
         trace2(b"looking for completions; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
         // complete received completer idx, it will return idx, id, readiness and completers of the found task
         let (task, ready, mut cnt) = match self.registry.complete(completer, entry.res) {
-            IORingRegistryComplete::Succeeded(task, ready, cnt) => (task, ready, cnt),
-            IORingRegistryComplete::NotFound() => return IORingRuntimeTick::InternallyFailed(),
-            IORingRegistryComplete::Inconsistent() => return IORingRuntimeTick::InternallyFailed(),
+            Ok((task, ready, cnt)) => (task, ready, cnt),
+            Err(_) => return IORingRuntimeTick::InternallyFailed(),
         };
 
         if !ready {
@@ -368,6 +368,7 @@ pub enum IORingRuntimeExtract {
     Succeeded(i32),
     NotCompleted(),
     NotFound(),
+    InternallyFailed(),
 }
 
 impl IORingRuntime {
@@ -375,13 +376,14 @@ impl IORingRuntime {
         trace2(b"extracting completer; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
         let completion = match self.registry.remove_completer(completer) {
-            IORingRegistryRemove::Succeeded(completer) => completer,
-            IORingRegistryRemove::NotFound() => return IORingRuntimeExtract::NotFound(),
-            IORingRegistryRemove::NotReady() => {
+            Ok(completer) => completer,
+            Err(IORegistryError::CompleterNotFound) => return IORingRuntimeExtract::NotFound(),
+            Err(IORegistryError::CompleterNotReady) => {
                 trace2(b"removing completer; cidx=%d, cid=%d, not ready\n", completer.cidx(), completer.cid());
 
                 return IORingRuntimeExtract::NotCompleted();
-            }
+            },
+            Err(_) => return IORingRuntimeExtract::InternallyFailed(),
         };
 
         let value = match completion.result() {
@@ -468,7 +470,7 @@ impl IORingRuntime {
         };
 
         match self.registry.remove_completer(&completer) {
-            IORingRegistryRemove::Succeeded(_) => IORingRuntimeSubmit::SubmissionFailed(err),
+            Ok(_) => IORingRuntimeSubmit::SubmissionFailed(err),
             _ => IORingRuntimeSubmit::InternallyFailed(),
         }
     }

@@ -1,4 +1,7 @@
 [build]
+rustflags = []
+
+[target.x86_64-unknown-none]
 rustflags = [
     "-C", "target-cpu=native",
     "-C", "code-model=kernel",

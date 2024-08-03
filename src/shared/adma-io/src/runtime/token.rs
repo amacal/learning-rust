@@ -58,8 +58,7 @@ impl IORingTaskToken {
         let context = Self::context(waker);
         let value = match context.extract(&self.completer) {
             IORingRuntimeExtract::Succeeded(value) => value,
-            IORingRuntimeExtract::NotCompleted() => return IORingTaskTokenExtract::Failed(self),
-            IORingRuntimeExtract::NotFound() => return IORingTaskTokenExtract::Failed(self),
+            _ => return IORingTaskTokenExtract::Failed(self),
         };
 
         if let IORingTaskTokenKind::Queue = self.kind {
