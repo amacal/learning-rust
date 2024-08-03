@@ -296,7 +296,7 @@ mod tests {
         }
 
         let mut channels = match IORing::init(8) {
-            IORingInit::Succeeded(tx, rx) => Droplet::from((rx, tx), release_uring),
+            Ok((tx, rx)) => Droplet::from((rx, tx), release_uring),
             _ => return assert!(false),
         };
 

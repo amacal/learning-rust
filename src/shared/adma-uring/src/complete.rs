@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn receives_completion() {
         let (rx, mut tx) = match IORing::init(8) {
-            IORingInit::Succeeded(tx, rx) => (rx, tx),
+            Ok((tx, rx)) => (rx, tx),
             _ => return assert!(false),
         };
 

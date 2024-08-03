@@ -5,18 +5,24 @@ use super::callable::*;
 use super::pollable::*;
 use super::spawn::*;
 use crate::heap::*;
+use crate::uring::*;
+
+pub struct IORuntimeSubmitterInContext(pub IORingSubmitter);
+unsafe impl Send for IORuntimeContext {}
 
 pub struct IORuntimeContext {
     pub task_id: Option<usize>,
     pub heap_pool: HeapPool<16>,
+    pub submitter: IORuntimeSubmitterInContext,
 }
 
 impl IORuntimeContext {
-    pub fn new() -> Self {
-        Self {
-            task_id: None,
-            heap_pool: HeapPool::new(),
-        }
+    fn initialize(mut ctx: Smart<Self>, submitter: IORingSubmitter) -> Smart<Self> {
+        ctx.task_id = None;
+        ctx.heap_pool = HeapPool::new();
+        ctx.submitter = IORuntimeSubmitterInContext(submitter);
+
+        ctx
     }
 }
 
@@ -25,12 +31,14 @@ pub struct IORuntimeOps {
 }
 
 impl IORuntimeOps {
-    pub fn allocate() -> Option<Self> {
+    pub fn allocate(submitter: IORingSubmitter) -> Option<Self> {
+        let ctx: Smart<IORuntimeContext> = match Smart::allocate() {
+            None => return None,
+            Some(ctx) => ctx,
+        };
+
         Some(Self {
-            ctx: match Smart::allocate() {
-                None => return None,
-                Some(ptr) => ptr,
-            },
+            ctx: IORuntimeContext::initialize(ctx, submitter),
         })
     }
 
@@ -47,12 +55,22 @@ mod tests {
 
     #[test]
     fn allocates_ops() {
-        assert!(IORuntimeOps::allocate().is_some());
+        let (_, tx) = match IORing::init(8) {
+            Ok((tx, rx)) => (rx, tx),
+            _ => return assert!(false),
+        };
+
+        assert!(IORuntimeOps::allocate(tx).is_some());
     }
 
     #[test]
     fn duplicates_ops() {
-        let first = match IORuntimeOps::allocate() {
+        let (_, tx) = match IORing::init(8) {
+            Ok((tx, rx)) => (rx, tx),
+            _ => return assert!(false),
+        };
+
+        let first = match IORuntimeOps::allocate(tx) {
             None => return assert!(false),
             Some(ops) => ops,
         };

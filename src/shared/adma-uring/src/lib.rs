@@ -22,6 +22,12 @@ pub use crate::kernel::timespec;
 pub use crate::shutdown::IORingShutdown;
 pub use crate::submit::IORingSubmit;
 
+pub enum IORingError {
+    InvalidDescriptor,
+    SetupFailed,
+    MappingFailed,
+}
+
 pub struct IORing {
     fd: u32,
     sq_ptr: *mut (),

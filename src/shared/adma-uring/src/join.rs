@@ -28,12 +28,11 @@ impl IORing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::*;
 
     #[test]
     fn join_successfully() {
         let (rx, tx) = match IORing::init(8) {
-            IORingInit::Succeeded(tx, rx) => (rx, tx),
+            Ok((tx, rx)) => (rx, tx),
             _ => return assert!(false, "Cannot create I/O Ring."),
         };
 
@@ -46,12 +45,12 @@ mod tests {
     #[test]
     fn join_failure() {
         let (rx1, tx1) = match IORing::init(8) {
-            IORingInit::Succeeded(tx, rx) => (rx, tx),
+            Ok((tx, rx)) => (rx, tx),
             _ => return assert!(false, "Cannot create I/O Ring."),
         };
 
         let (rx2, tx2) = match IORing::init(8) {
-            IORingInit::Succeeded(tx, rx) => (rx, tx),
+            Ok((tx, rx)) => (rx, tx),
             _ => return assert!(false, "Cannot create I/O Ring."),
         };
 

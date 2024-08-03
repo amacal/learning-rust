@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn submits_noop() {
         let (_, mut tx) = match IORing::init(8) {
-            IORingInit::Succeeded(tx, rx) => (rx, tx),
+            Ok((tx, rx)) => (rx, tx),
             _ => return assert!(false),
         };
 

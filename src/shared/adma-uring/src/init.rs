@@ -12,12 +12,12 @@ pub enum IORingInit {
 }
 
 impl IORing {
-    pub fn init(entries: u32) -> IORingInit {
+    pub fn init(entries: u32) -> Result<(IORingSubmitter, IORingCompleter), IORingError> {
         let mut params: io_uring_params = io_uring_params::default();
         let fd: u32 = match sys_io_uring_setup(entries, &mut params as *mut io_uring_params) {
-            value if value < 0 => return IORingInit::SetupFailed(value),
+            value if value < 0 => return Err(IORingError::SetupFailed),
             value => match value.try_into() {
-                Err(_) => return IORingInit::InvalidDescriptor(value),
+                Err(_) => return Err(IORingError::InvalidDescriptor),
                 Ok(value) => value,
             },
         };
@@ -40,7 +40,7 @@ impl IORing {
 
         let offset = IORING_OFF_SQ_RING;
         let (sq_ptr, sq_ptr_len) = match map::<u32>(fd, sq_array, sq_entries, offset) {
-            (res, _) if res <= 0 => return IORingInit::MappingFailed(b"SQ_RING", res),
+            (res, _) if res <= 0 => return Err(IORingError::MappingFailed),
             (res, len) => (res as *mut (), len),
         };
 
@@ -53,7 +53,7 @@ impl IORing {
 
         let offset = IORING_OFF_SQES;
         let (sq_sqes, sq_sqes_len) = match map::<io_uring_sqe>(fd, 0, sq_entries, offset) {
-            (res, _) if res <= 0 => return IORingInit::MappingFailed(b"SQ_SQES", res),
+            (res, _) if res <= 0 => return Err(IORingError::MappingFailed),
             (res, len) => (res as *mut io_uring_sqe, len),
         };
         let cq_array = params.cq_off.cqes;
@@ -61,7 +61,7 @@ impl IORing {
 
         let offset = IORING_OFF_CQ_RING;
         let (cq_ptr, cq_ptr_len) = match map::<io_uring_cqe>(fd, cq_array, cq_entries, offset) {
-            (res, _) if res <= 0 => return IORingInit::MappingFailed(b"CQ_RING", res),
+            (res, _) if res <= 0 => return Err(IORingError::MappingFailed),
             (res, len) => (res as *mut (), len),
         };
 
@@ -96,7 +96,7 @@ impl IORing {
             cq_cqes: cq_cqes,
         };
 
-        IORingInit::Succeeded(submitter, completer)
+        Ok((submitter, completer))
     }
 }
 
@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn init_new_ring_rx() {
         let (rx, tx) = match IORing::init(8) {
-            IORingInit::Succeeded(tx, rx) => (rx, tx),
+            Ok((tx, rx)) => (rx, tx),
             _ => return assert!(false),
         };
 
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn init_new_ring_tx() {
         let (rx, tx) = match IORing::init(8) {
-            IORingInit::Succeeded(tx, rx) => (rx, tx),
+            Ok((tx, rx)) => (rx, tx),
             _ => return assert!(false),
         };
 
