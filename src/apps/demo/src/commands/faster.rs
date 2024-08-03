@@ -28,7 +28,7 @@ impl FasterCommand {
         };
 
         let mut offset = 0;
-        let mut timeout = ops.timeout(self.delay);
+        let mut timeout = ops.timeout(self.delay, 0);
 
         loop {
             let read = ops.read_file(&file, buffer, offset);

@@ -40,7 +40,7 @@ impl IORingTaskToken {
     }
 
     fn context(waker: &Waker) -> &mut IORingRuntimeContext {
-        IORingRuntime::from_waker(waker)
+        IORingRuntimeContext::from_waker(waker)
     }
 
     pub fn cid(&self) -> u32 {

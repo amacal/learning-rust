@@ -11,7 +11,7 @@ impl SpawnCommand {
         let stdout = ops.open_stdout();
 
         for i in 0..self.times {
-            match ops.timeout(self.delay).await {
+            match ops.timeout(self.delay, 0).await {
                 TimeoutResult::Succeeded() => (),
                 TimeoutResult::OperationFailed(_) => return Some(APP_DELAY_FAILED),
                 TimeoutResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
@@ -19,7 +19,7 @@ impl SpawnCommand {
 
             let spawned = ops.spawn_io(move |mut ops| async move {
                 for _ in 0..i + 1 {
-                    let msg: Option<&'static [u8]> = match ops.timeout(5).await {
+                    let msg: Option<&'static [u8]> = match ops.timeout(5, 0).await {
                         TimeoutResult::Succeeded() => continue,
                         TimeoutResult::OperationFailed(_) => Some(APP_DELAY_FAILED),
                         TimeoutResult::InternallyFailed() => Some(APP_INTERNALLY_FAILED),

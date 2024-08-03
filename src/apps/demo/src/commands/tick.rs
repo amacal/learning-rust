@@ -11,7 +11,7 @@ impl TickCommand {
         let stdout = ops.open_stdout();
 
         for _ in 0..self.ticks {
-            match ops.timeout(self.delay).await {
+            match ops.timeout(self.delay, 0).await {
                 TimeoutResult::Succeeded() => (),
                 TimeoutResult::OperationFailed(_) => return Some(APP_DELAY_FAILED),
                 TimeoutResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),

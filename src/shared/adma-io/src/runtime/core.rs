@@ -1,7 +1,7 @@
 use ::core::future::Future;
 use ::core::task::Context;
-use ::core::task::Waker;
 use ::core::task::Poll;
+use ::core::task::Waker;
 
 use super::callable::*;
 use super::ops::*;
@@ -29,7 +29,6 @@ pub struct IORingRuntimeContext {
     runtime: *mut IORingRuntime,
 }
 
-#[allow(dead_code)]
 pub enum IORingRuntimeAllocate {
     Succeeded(IORingRuntime),
     RingAllocationFailed(),
@@ -41,8 +40,8 @@ impl IORingRuntime {
     pub fn allocate() -> IORingRuntimeAllocate {
         // registry needs to be alocated on the heap
         let registry = match IORingRegistry::allocate() {
-            IORingRegistryAllocation::Succeeded(registry) => registry,
-            IORingRegistryAllocation::AllocationFailed(_) => return IORingRuntimeAllocate::RegistryAllocationFailed(),
+            Ok(registry) => registry,
+            Err(_) => return IORingRuntimeAllocate::RegistryAllocationFailed(),
         };
 
         let pool = match IORuntimePool::allocate() {
@@ -80,7 +79,7 @@ impl IORingRuntime {
     }
 }
 
-impl IORingRuntime {
+impl IORingRuntimeContext {
     pub fn from_waker<'a>(waker: &'a Waker) -> &'a mut IORingRuntimeContext {
         // reconstructing context requries assuming what is behind the pointer
         let ptr = waker.as_raw().data() as *mut IORingRuntimeContext;
@@ -89,7 +88,9 @@ impl IORingRuntime {
         trace1(b"reconstructing context; addr=%x\n", ptr as *mut ());
         return context;
     }
+}
 
+impl IORingRuntime {
     fn poll(&mut self, task: IORingTaskRef) -> Result<(usize, Poll<Option<&'static [u8]>>), IORegistryError> {
         let runtime = self as *mut IORingRuntime;
         let context = IORingRuntimeContext { task, runtime };
@@ -308,13 +309,13 @@ pub enum IORingRuntimeRun {
 }
 
 impl IORingRuntime {
-    pub fn run<'a, F, C>(&mut self, target: C) -> IORingRuntimeRun
+    pub fn run<'a, F, C>(&mut self, callback: C) -> IORingRuntimeRun
     where
         F: Future<Output = Option<&'static [u8]>> + Send + 'a,
         C: FnOnce(IORuntimeOps) -> F + Unpin + Send + 'a,
     {
         let ops = self.ops.duplicate();
-        let target = target.call_once((ops,));
+        let target = callback.call_once((ops,));
 
         trace0(b"allocating memory to pin a future\n");
         let pinned = match PollableTarget::allocate(&mut self.ops.ctx.heap_pool, target) {
@@ -382,7 +383,7 @@ impl IORingRuntime {
                 trace2(b"removing completer; cidx=%d, cid=%d, not ready\n", completer.cidx(), completer.cid());
 
                 return IORingRuntimeExtract::NotCompleted();
-            },
+            }
             Err(_) => return IORingRuntimeExtract::InternallyFailed(),
         };
 
@@ -500,6 +501,67 @@ impl IORingRuntime {
         match ring.shutdown() {
             IORingShutdown::Succeeded() => IORingRuntimeShutdown::Succeeded(),
             IORingShutdown::Failed() => IORingRuntimeShutdown::ShutdownFailed(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allocates_runtime() {
+        let runtime = match IORingRuntime::allocate() {
+            IORingRuntimeAllocate::Succeeded(runtime) => runtime,
+            _ => return assert!(false),
+        };
+
+        match runtime.shutdown() {
+            IORingRuntimeShutdown::Succeeded() => assert!(true),
+            _ => assert!(false),
+        }
+    }
+
+    #[test]
+    fn runs_task_without_async_code() {
+        let mut runtime = match IORingRuntime::allocate() {
+            IORingRuntimeAllocate::Succeeded(runtime) => runtime,
+            _ => return assert!(false),
+        };
+
+        let callback = |_| async { None::<&'static [u8]> };
+
+        match runtime.run(callback) {
+            IORingRuntimeRun::Completed(val) => assert!(val.is_none()),
+            _ => assert!(false),
+        };
+
+        match runtime.shutdown() {
+            IORingRuntimeShutdown::Succeeded() => assert!(true),
+            _ => assert!(false),
+        }
+    }
+
+    #[test]
+    fn runs_task_with_async_code() {
+        let mut runtime = match IORingRuntime::allocate() {
+            IORingRuntimeAllocate::Succeeded(runtime) => runtime,
+            _ => return assert!(false),
+        };
+
+        let callback = |mut ops: IORuntimeOps| async move {
+            ops.timeout(0, 1).await;
+            None::<&'static [u8]>
+        };
+
+        match runtime.run(callback) {
+            IORingRuntimeRun::Completed(val) => assert!(val.is_none()),
+            _ => assert!(false),
+        };
+
+        match runtime.shutdown() {
+            IORingRuntimeShutdown::Succeeded() => assert!(true),
+            _ => assert!(false),
         }
     }
 }

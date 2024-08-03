@@ -9,11 +9,11 @@ use crate::trace::*;
 use crate::uring::*;
 
 impl IORuntimeOps {
-    pub fn timeout(&mut self, seconds: u32) -> Timeout {
+    pub fn timeout(&mut self, seconds: u32, nanos: u32) -> Timeout {
         Timeout {
             timespec: timespec {
                 tv_sec: seconds as i64,
-                tv_nsec: 0,
+                tv_nsec: nanos as i64,
             },
             token: None,
         }
