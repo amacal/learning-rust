@@ -180,12 +180,29 @@ impl IORingRuntime {
             Err(_) => return IORingRuntimeExecute::InternallyFailed(),
         };
 
-        match self.pool.execute(&mut self.ops.ctx.ring.tx, [&queued, &executed], callable) {
-            IORuntimePoolExecute::Queued() => IORingRuntimeExecute::Queued(queued, executed),
-            IORuntimePoolExecute::Executed() => IORingRuntimeExecute::Executed(queued, executed),
-            IORuntimePoolExecute::ScheduleFailed() => IORingRuntimeExecute::InternallyFailed(),
-            IORuntimePoolExecute::ExecutionFailed() => IORingRuntimeExecute::InternallyFailed(),
-            IORuntimePoolExecute::InternallyFailed() => IORingRuntimeExecute::InternallyFailed(),
+        let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
+        let cnt = match self.pool.execute(&mut slots, [&queued, &executed], callable) {
+            Ok(Some(cnt)) => cnt,
+            Ok(None) => 0,
+            Err(_) => return IORingRuntimeExecute::InternallyFailed(),
+        };
+
+        // potentially received submits has to be processed
+        for index in 0..cnt {
+            let (user_data, entry) = unsafe {
+                match slots.get_unchecked_mut(index).take() {
+                    None => continue,
+                    Some((user_data, entry)) => (user_data, entry),
+                }
+            };
+
+            self.ops.submit(user_data, [entry]);
+        }
+
+        if cnt == 1 {
+            IORingRuntimeExecute::Queued(queued, executed)
+        } else {
+            IORingRuntimeExecute::Executed(queued, executed)
         }
     }
 }
@@ -227,7 +244,7 @@ impl IORingRuntime {
         // and wait for some event
         let cnt = loop {
             // sometimes we may end up in unexpected empty shot
-            match self.ops.ctx.ring.rx.complete(&mut self.entries) {
+            match self.ops.receive(&mut self.entries) {
                 IORingComplete::UnexpectedEmpty(_) => continue,
                 IORingComplete::Succeeded(cnt) => break cnt,
                 IORingComplete::CompletionFailed(err) => return IORingRuntimeTick::CompletionFailed(err),
@@ -249,7 +266,7 @@ impl IORingRuntime {
         }
         // user data contains encoded completion
 
-        match self.ops.ctx.ring.tx.flush() {
+        match self.ops.flush() {
             IORingSubmit::Succeeded(_) => (),
             _ => return IORingRuntimeTick::InternallyFailed(),
         }
@@ -332,7 +349,7 @@ impl IORingRuntime {
             }
         };
 
-        match self.ops.ctx.ring.tx.flush() {
+        match self.ops.flush() {
             IORingSubmit::Succeeded(_) => (),
             _ => return IORingRuntimeRun::InternallyFailed(),
         }
@@ -400,11 +417,29 @@ impl IORingRuntimeContext {
 
 impl IORingRuntime {
     fn enqueue(&mut self, completer: &IORingCompleterRef) {
+        let mut slots: [Option<(u64, IORingSubmitEntry)>; 1] = [const { None }; 1];
+
         // first making a callable visible
         self.pool.enqueue(completer);
 
         // possibly it will be triggered now
-        self.pool.trigger(&mut self.ops.ctx.ring.tx);
+        let cnt = match self.pool.trigger(&mut slots) {
+            Ok(None) | Ok(Some(0)) => 0,
+            Ok(Some(cnt)) => cnt,
+            Err(_) => 0,
+        };
+
+        // potentially received submits has to be processed
+        for index in 0..cnt {
+            let (user_data, entry) = unsafe {
+                match slots.get_unchecked_mut(index).take() {
+                    None => continue,
+                    Some((user_data, entry)) => (user_data, entry),
+                }
+            };
+
+            self.ops.submit(user_data, [entry]);
+        }
     }
 }
 
@@ -416,11 +451,29 @@ impl IORingRuntimeContext {
 
 impl IORingRuntime {
     fn trigger(&mut self, completer: &IORingCompleterRef) {
+        let mut slots: [Option<(u64, IORingSubmitEntry)>; 1] = [const { None }; 1];
+
         // first release worker behind completer
         self.pool.release_worker(completer);
 
-        // then trigger likely pending callable
-        self.pool.trigger(&mut self.ops.ctx.ring.tx);
+        // possibly it will be triggered now
+        let cnt = match self.pool.trigger(&mut slots) {
+            Ok(None) | Ok(Some(0)) => 0,
+            Ok(Some(cnt)) => cnt,
+            Err(_) => 0,
+        };
+
+        // potentially received submits has to be processed
+        for index in 0..cnt {
+            let (user_data, entry) = unsafe {
+                match slots.get_unchecked_mut(index).take() {
+                    None => continue,
+                    Some((user_data, entry)) => (user_data, entry),
+                }
+            };
+
+            self.ops.submit(user_data, [entry]);
+        }
     }
 }
 
@@ -449,7 +502,7 @@ impl IORingRuntime {
 
         trace2(b"submitting op with uring; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
-        let err = match self.ops.ctx.ring.tx.submit(completer.encode(), [entry]) {
+        let err = match self.ops.submit(completer.encode(), [entry]) {
             IORingSubmit::Succeeded(_) => {
                 trace1(b"submitting op with uring; cidx=%d, succeeded\n", completer.cidx());
                 return IORingRuntimeSubmit::Succeeded(completer);

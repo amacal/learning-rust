@@ -15,7 +15,7 @@ unsafe impl Send for IORuntimeContext {}
 pub struct IORuntimeContext {
     pub task_id: Option<usize>,
     pub heap_pool: Droplet<HeapPool<16>>,
-    pub ring: Droplet<IORing>,
+    ring: Droplet<IORing>,
 }
 
 impl IORuntimeContext {
@@ -32,6 +32,20 @@ impl IORuntimeContext {
 
         ctx.task_id = None;
         ctx
+    }
+}
+
+impl IORuntimeOps {
+    pub fn submit<const C: usize>(&mut self, user_data: u64, entries: [IORingSubmitEntry; C]) -> IORingSubmit {
+        self.ctx.ring.tx.submit(user_data, entries)
+    }
+
+    pub fn flush(&mut self) -> IORingSubmit {
+        self.ctx.ring.tx.flush()
+    }
+
+    pub fn receive<const T: usize>(&self, entries: &mut [IORingCompleteEntry; T]) -> IORingComplete {
+        self.ctx.ring.rx.complete(entries)
     }
 }
 

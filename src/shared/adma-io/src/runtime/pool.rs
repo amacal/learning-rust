@@ -78,54 +78,40 @@ impl<const T: usize> HeapLifetime for IORuntimePool<T> {
     }
 }
 
-pub enum IORuntimePoolExecute {
-    Queued(),
-    Executed(),
-    ScheduleFailed(),
-    ExecutionFailed(),
-    InternallyFailed(),
-}
-
 impl<const T: usize> IORuntimePool<T> {
     pub fn execute(
         &mut self,
-        submitter: &mut IORingSubmitter,
+        slots: &mut [Option<(u64, IORingSubmitEntry)>; 4],
         completers: [&IORingCompleterRef; 2],
         callable: &CallableTarget,
-    ) -> IORuntimePoolExecute {
+    ) -> Result<Option<usize>, ()> {
         // acquire worker
         if let Some(slot) = self.workers_slots.get(self.workers_count) {
             trace1(b"acquired worker; slot=%d\n", *slot);
 
             let worker = match self.workers_array.get_mut(*slot) {
                 Some(Some(worker)) => worker,
-                _ => return IORuntimePoolExecute::InternallyFailed(),
+                _ => return Err(()),
             };
 
             // confirm queuing
             let op = IORingSubmitEntry::noop();
-            match submitter.submit(completers[0].encode(), [op]) {
-                IORingSubmit::Succeeded(_) => (),
-                _ => return IORuntimePoolExecute::ScheduleFailed(),
-            }
+            slots[0] = Some((completers[0].encode(), op));
 
             // prepare execute op
             let op = match worker.execute(callable) {
                 WorkerExecute::Succeeded(op) => op,
-                _ => return IORuntimePoolExecute::InternallyFailed(),
+                _ => return Err(()),
             };
 
             // confirm execution
-            match submitter.submit(completers[1].encode(), [op]) {
-                IORingSubmit::Succeeded(_) => (),
-                _ => return IORuntimePoolExecute::ExecutionFailed(),
-            }
+            slots[1] = Some((completers[1].encode(), op));
 
             // update internal counter and correlate worker with completer
             self.workers_count += 1;
             self.workers_completers[*slot] = Some(completers[1].encode());
 
-            return IORuntimePoolExecute::Executed();
+            return Ok(Some(2));
         }
 
         // append encoded completer to a callable header
@@ -139,12 +125,9 @@ impl<const T: usize> IORuntimePool<T> {
 
         // notify when queuing happened
         let op = IORingSubmitEntry::write(self.queue_outgoing, ptr, len, 0);
-        match submitter.submit(completers[0].encode(), [op]) {
-            IORingSubmit::Succeeded(_) => (),
-            _ => return IORuntimePoolExecute::ScheduleFailed(),
-        }
+        slots[0] = Some((completers[0].encode(), op));
 
-        return IORuntimePoolExecute::Queued();
+        return Ok(Some(1));
     }
 }
 
@@ -177,16 +160,10 @@ impl<const T: usize> IORuntimePool<T> {
     }
 }
 
-pub enum IORuntimePoolTrigger {
-    Succeeded(bool),
-    ExecutionFailed(),
-    InternallyFailed(),
-}
-
 impl<const T: usize> IORuntimePool<T> {
-    pub fn trigger(&mut self, submitter: &mut IORingSubmitter) -> IORuntimePoolTrigger {
+    pub fn trigger(&mut self, slots: &mut [Option<(u64, IORingSubmitEntry)>; 1]) -> Result<Option<usize>, ()> {
         if self.queue_counter <= 0 {
-            return IORuntimePoolTrigger::Succeeded(false);
+            return Ok(None);
         }
 
         if let Some(slot) = self.workers_slots.get(self.workers_count) {
@@ -195,7 +172,7 @@ impl<const T: usize> IORuntimePool<T> {
             // worker still theoretically may fail
             let worker = match self.workers_array.get_mut(*slot) {
                 Some(Some(worker)) => worker,
-                _ => return IORuntimePoolTrigger::InternallyFailed(),
+                _ => return Err(()),
             };
 
             // buffer is needed to collect data from the pipe
@@ -207,7 +184,7 @@ impl<const T: usize> IORuntimePool<T> {
             trace1(b"acquired callable; res=%d\n", result);
 
             if result != 24 {
-                return IORuntimePoolTrigger::InternallyFailed();
+                return Err(());
             } else {
                 self.queue_counter -= 1;
             }
@@ -224,21 +201,20 @@ impl<const T: usize> IORuntimePool<T> {
             // then we try to follow known path
             let op = match worker.execute(&callable) {
                 WorkerExecute::Succeeded(op) => op,
-                _ => return IORuntimePoolTrigger::InternallyFailed(),
+                _ => return Err(()),
             };
 
             // by registering it within I/O Ring
-            match submitter.submit(unsafe { *encoded }, [op]) {
-                IORingSubmit::Succeeded(_) => (),
-                _ => return IORuntimePoolTrigger::ExecutionFailed(),
-            }
+            slots[0] = Some((unsafe { *encoded }, op));
 
             // not forgetting about maintaining the state
             self.workers_completers[*slot] = unsafe { Some(*encoded) };
             self.workers_count += 1;
+
+            return Ok(Some(1));
         }
 
-        IORuntimePoolTrigger::Succeeded(true)
+        Ok(Some(0))
     }
 }
 
@@ -289,8 +265,31 @@ mod tests {
             let first = IORingCompleterRef::new(1, 2);
             let second = IORingCompleterRef::new(3, 4);
 
-            match pool.execute(&mut ring.tx, [&first, &second], &callable) {
-                IORuntimePoolExecute::Executed() => assert!(true),
+            let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
+            match pool.execute(&mut slots, [&first, &second], &callable) {
+                Ok(Some(cnt)) => assert_eq!(cnt, 2),
+                _ => assert!(false),
+            }
+
+            let (user_data, entry) = match slots[0].take() {
+                Some((user_data, entry)) => (user_data, entry),
+                _ => return assert!(false),
+            };
+
+            assert_eq!(user_data, first.encode());
+            match ring.tx.submit(user_data, [entry]) {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => assert!(false),
+            }
+
+            let (user_data, entry) = match slots[1].take() {
+                Some((user_data, entry)) => (user_data, entry),
+                _ => return assert!(false),
+            };
+
+            assert_eq!(user_data, second.encode());
+            match ring.tx.submit(user_data, [entry]) {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 
@@ -302,7 +301,7 @@ mod tests {
             let mut entries = [IORingCompleteEntry::default(); 1];
             match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
-                _ => return assert!(false)
+                _ => return assert!(false),
             }
 
             assert_eq!(entries[0].res, 0);
@@ -311,7 +310,7 @@ mod tests {
             let mut entries = [IORingCompleteEntry::default(); 1];
             match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
-                _ => return assert!(false)
+                _ => return assert!(false),
             }
 
             assert_eq!(entries[0].res, 1);
@@ -365,8 +364,31 @@ mod tests {
             let first = IORingCompleterRef::new(1, 2);
             let second = IORingCompleterRef::new(3, 4);
 
-            match pool.execute(&mut ring.tx, [&first, &second], &callable1) {
-                IORuntimePoolExecute::Executed() => assert!(true),
+            let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
+            match pool.execute(&mut slots, [&first, &second], &callable1) {
+                Ok(Some(cnt)) => assert_eq!(cnt, 2),
+                _ => assert!(false),
+            }
+
+            let (user_data, entry) = match slots[0].take() {
+                Some((user_data, entry)) => (user_data, entry),
+                _ => return assert!(false),
+            };
+
+            assert_eq!(user_data, first.encode());
+            match ring.tx.submit(user_data, [entry]) {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => assert!(false),
+            }
+
+            let (user_data, entry) = match slots[1].take() {
+                Some((user_data, entry)) => (user_data, entry),
+                _ => return assert!(false),
+            };
+
+            assert_eq!(user_data, second.encode());
+            match ring.tx.submit(user_data, [entry]) {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 
@@ -378,7 +400,7 @@ mod tests {
             let mut entries = [IORingCompleteEntry::default(); 1];
             match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
-                _ => return assert!(false)
+                _ => return assert!(false),
             }
 
             assert_eq!(entries[0].res, 0);
@@ -387,7 +409,7 @@ mod tests {
             let mut entries = [IORingCompleteEntry::default(); 1];
             match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
-                _ => return assert!(false)
+                _ => return assert!(false),
             }
 
             assert_eq!(entries[0].res, 1);
@@ -401,8 +423,22 @@ mod tests {
             assert_eq!(pool.queue_counter, 0);
             assert_eq!(pool.workers_count, 1);
 
-            match pool.execute(&mut ring.tx, [&first, &second], &callable2) {
-                IORuntimePoolExecute::Queued() => assert!(true),
+            let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
+            match pool.execute(&mut slots, [&first, &second], &callable2) {
+                Ok(Some(cnt)) => assert_eq!(cnt, 1),
+                _ => assert!(false),
+            }
+
+            let (user_data, entry) = match slots[0].take() {
+                Some((user_data, entry)) => (user_data, entry),
+                _ => return assert!(false),
+            };
+
+            assert_eq!(user_data, first.encode());
+            assert!(slots[1].is_none());
+
+            match ring.tx.submit(user_data, [entry]) {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 
@@ -414,7 +450,7 @@ mod tests {
             let mut entries = [IORingCompleteEntry::default(); 1];
             match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
-                _ => return assert!(false)
+                _ => return assert!(false),
             }
 
             assert_eq!(entries[0].res, 24);
@@ -470,8 +506,31 @@ mod tests {
             let third = IORingCompleterRef::new(5, 6);
             let fourth = IORingCompleterRef::new(7, 8);
 
-            match pool.execute(&mut ring.tx, [&first, &second], &callable1) {
-                IORuntimePoolExecute::Executed() => assert!(true),
+            let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
+            match pool.execute(&mut slots, [&first, &second], &callable1) {
+                Ok(Some(cnt)) => assert_eq!(cnt, 2),
+                _ => assert!(false),
+            }
+
+            let (user_data, entry) = match slots[0].take() {
+                Some((user_data, entry)) => (user_data, entry),
+                _ => return assert!(false),
+            };
+
+            assert_eq!(user_data, first.encode());
+            match ring.tx.submit(user_data, [entry]) {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
+                _ => assert!(false),
+            }
+
+            let (user_data, entry) = match slots[1].take() {
+                Some((user_data, entry)) => (user_data, entry),
+                _ => return assert!(false),
+            };
+
+            assert_eq!(user_data, second.encode());
+            match ring.tx.submit(user_data, [entry]) {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 
@@ -483,7 +542,7 @@ mod tests {
             let mut entries = [IORingCompleteEntry::default(); 1];
             match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
-                _ => return assert!(false)
+                _ => return assert!(false),
             }
 
             assert_eq!(entries[0].res, 0);
@@ -492,7 +551,7 @@ mod tests {
             let mut entries = [IORingCompleteEntry::default(); 1];
             match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
-                _ => return assert!(false)
+                _ => return assert!(false),
             }
 
             assert_eq!(entries[0].res, 1);
@@ -506,8 +565,22 @@ mod tests {
             assert_eq!(pool.queue_counter, 0);
             assert_eq!(pool.workers_count, 1);
 
-            match pool.execute(&mut ring.tx, [&third, &fourth], &callable2) {
-                IORuntimePoolExecute::Queued() => assert!(true),
+            let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
+            match pool.execute(&mut slots, [&third, &fourth], &callable2) {
+                Ok(Some(cnt)) => assert_eq!(cnt, 1),
+                _ => assert!(false),
+            }
+
+            let (user_data, entry) = match slots[0].take() {
+                Some((user_data, entry)) => (user_data, entry),
+                _ => return assert!(false),
+            };
+
+            assert_eq!(user_data, third.encode());
+            assert!(slots[1].is_none());
+
+            match ring.tx.submit(user_data, [entry]) {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 
@@ -519,7 +592,7 @@ mod tests {
             let mut entries = [IORingCompleteEntry::default(); 1];
             match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
-                _ => return assert!(false)
+                _ => return assert!(false),
             }
 
             assert_eq!(entries[0].res, 24);
@@ -531,8 +604,24 @@ mod tests {
             let res = pool.release_worker(&second);
             assert_eq!(res, true);
 
-            match pool.trigger(&mut ring.tx) {
-                IORuntimePoolTrigger::Succeeded(val) => assert_eq!(val, true),
+            let mut slots: [Option<(u64, IORingSubmitEntry)>; 1] = [const { None }; 1];
+
+            match pool.trigger(&mut slots) {
+                Ok(Some(cnt)) => assert_eq!(cnt, 1),
+                _ => assert!(false),
+            }
+
+            let (user_data, entry) = match slots.get_mut(0) {
+                Some(entry) => match entry.take() {
+                    Some((user_data, entry)) => (user_data, entry),
+                    _ => return assert!(false),
+                },
+                _ => return assert!(false),
+            };
+
+            assert_eq!(user_data, fourth.encode());
+            match ring.tx.submit(user_data, [entry]) {
+                IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 
@@ -544,7 +633,7 @@ mod tests {
             let mut entries = [IORingCompleteEntry::default(); 1];
             match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
-                _ => return assert!(false)
+                _ => return assert!(false),
             }
 
             assert_eq!(entries[0].res, 1);
