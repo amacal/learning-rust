@@ -106,18 +106,18 @@ mod tests {
 
     #[test]
     fn submits_noop() {
-        let (_, mut tx) = match IORing::init(8) {
-            Ok((tx, rx)) => (rx, tx),
+        let mut ring = match IORing::init(8) {
+            Ok(ring) => ring.droplet(),
             _ => return assert!(false),
         };
 
-        match tx.submit(13, [IORingSubmitEntry::noop()]) {
+        match ring.tx.submit(13, [IORingSubmitEntry::noop()]) {
             IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
             IORingSubmit::SubmissionFailed(_) => assert!(false),
             IORingSubmit::SubmissionMismatched(_) => assert!(false),
         }
 
-        match tx.flush() {
+        match ring.tx.flush() {
             IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
             IORingSubmit::SubmissionFailed(_) => assert!(false),
             IORingSubmit::SubmissionMismatched(_) => assert!(false),

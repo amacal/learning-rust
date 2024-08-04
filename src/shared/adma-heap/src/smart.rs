@@ -1,6 +1,7 @@
 use ::core::marker::*;
 use ::core::mem;
 use ::core::ops::*;
+use ::core::ptr;
 
 use super::*;
 
@@ -53,6 +54,8 @@ impl<T> Smart<T> {
 
 impl<T> Drop for Smart<T> {
     fn drop(&mut self) {
+        trace2(b"dropping smart; addr=%x, size=%d\n", self.ptr, self.len);
+
         let val = unsafe {
             (*(self.ptr as *mut SmartBox<T>)).cnt -= 1;
             (*(self.ptr as *mut SmartBox<T>)).cnt
@@ -61,9 +64,16 @@ impl<T> Drop for Smart<T> {
         trace3(b"dropping smart; addr=%x, size=%d, cnt=%d\n", self.ptr, self.len, val);
 
         if val == 0 {
+            if mem::needs_drop::<T>() {
+                unsafe {
+                    trace2(b"dropping smart; in-place, addr=%x, size=%d\n", self.ptr, self.len);
+                    ptr::drop_in_place(self.ptr as *mut SmartBox<T>);
+                }
+            }
+
             // in case of error we can only log it, no-way to propagate it to the caller
             if let Err(_) = Heap::at(self.ptr, self.len).free() {
-                trace3(b"dropping smart; addr=%x, size=%d, cnt=%d, failed\n", self.ptr, self.len, val);
+                trace2(b"dropping smart; addr=%x, size=%d, failed\n", self.ptr, self.len);
             }
         }
     }
@@ -97,16 +107,58 @@ mod tests {
         second: u32,
     }
 
+    struct Resource {
+        val: usize,
+    }
+
+    impl Resource {
+        fn droplet(self) -> Droplet<Self> {
+            fn destroy(target: &mut Resource) {
+                assert_ne!(target.val, 0);
+            }
+
+            Droplet::from(self, destroy)
+        }
+    }
+
+    struct DropMe {
+        res: Droplet<Resource>,
+    }
+
+    impl DropMe {
+        fn init(mut ctx: Smart<Self>, mut res: Droplet<Resource>) -> Smart<Self> {
+            mem::swap(&mut ctx.res, &mut res);
+            mem::forget(res);
+
+            ctx
+        }
+    }
+
     #[test]
     fn allocate_one_page_rounded_up() {
-        let heap = match Smart::<Pair>::allocate() {
+        let smart = match Smart::<Pair>::allocate() {
             Some(value) => value,
             None => return assert!(false),
         };
 
-        assert_ne!(heap.ptr, 0);
-        assert_eq!(heap.len, 4096);
-        assert_eq!(heap.counter(), 1);
+        assert_ne!(smart.ptr, 0);
+        assert_eq!(smart.len, 4096);
+        assert_eq!(smart.counter(), 1);
+    }
+
+    #[test]
+    fn allocate_and_drops() {
+        let mut smart = match Smart::<DropMe>::allocate() {
+            Some(value) => value,
+            None => return assert!(false),
+        };
+
+        assert_eq!(smart.res.val, 0);
+
+        let res = Resource { val: 1 };
+        smart = DropMe::init(smart, res.droplet());
+
+        drop(smart);
     }
 
     #[test]

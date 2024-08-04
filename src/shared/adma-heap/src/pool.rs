@@ -13,7 +13,7 @@ impl<const T: usize> HeapPool<T> {
             return None;
         }
 
-        let heap = match self.slots.get_mut(self.index-1) {
+        let heap = match self.slots.get_mut(self.index - 1) {
             Some(heap) => heap.take(),
             None => return None,
         };
@@ -37,6 +37,29 @@ impl<const T: usize> HeapPool<T> {
 
         None
     }
+
+    fn drop_ref(&mut self) {
+        trace2(b"releasing heap-pool droplet; idx=%d, size=%d\n", self.index, self.slots.len());
+
+        unsafe {
+            for idx in 0..self.index {
+                match self.slots.get_unchecked_mut(idx) {
+                    None => trace1(b"releasing heap-pool droplet; warning, idx=%d\n", idx),
+                    Some(heap) => match Heap::from(heap).free() {
+                        Ok(()) => trace1(b"releasing heap-pool droplet; succeeded, idx=%d\n", idx),
+                        Err(_) => trace1(b"releasing heap-pool droplet; failed, idx=%d\n", idx),
+                    },
+                }
+            }
+        }
+
+        self.index = 0;
+    }
+
+    pub fn droplet(self) -> Droplet<Self> {
+        trace2(b"creating heap-pool droplet; idx=%x, size=%d\n", self.index, self.slots.len());
+        Droplet::from(self, Self::drop_ref)
+    }
 }
 
 #[cfg(test)]
@@ -44,8 +67,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn release_heap() {
-        let mut pool = HeapPool::<1>::new();
+    fn release_heap_success() {
+        let pool = HeapPool::<1>::new();
+        let mut pool = pool.droplet();
+
         let heap = match Heap::allocate(128) {
             Ok(value) => value.as_ref(),
             Err(_) => return assert!(false),
@@ -54,11 +79,16 @@ mod tests {
         if let Some(_) = pool.release(heap) {
             assert!(false);
         }
+
+        assert_eq!(pool.index, 1);
+        drop(pool);
     }
 
     #[test]
     fn release_heap_failure_due_to_missing_slots() {
-        let mut pool = HeapPool::<1>::new();
+        let pool = HeapPool::<1>::new();
+        let mut pool = pool.droplet();
+
         let heap = match Heap::allocate(128) {
             Ok(value) => value.as_ref(),
             Err(_) => return assert!(false),
@@ -81,7 +111,9 @@ mod tests {
 
     #[test]
     fn acquire_heap() {
-        let mut pool = HeapPool::<1>::new();
+        let pool = HeapPool::<1>::new();
+        let mut pool = pool.droplet();
+
         let (ptr, heap) = match Heap::allocate(128) {
             Ok(value) => (value.ptr, value.as_ref()),
             Err(_) => return assert!(false),
@@ -102,7 +134,8 @@ mod tests {
 
     #[test]
     fn acquire_heap_failure_due_to_missing_release() {
-        let mut pool = HeapPool::<1>::new();
+        let pool = HeapPool::<1>::new();
+        let mut pool = pool.droplet();
 
         if let Some(_) = pool.acquire(256) {
             assert!(false);

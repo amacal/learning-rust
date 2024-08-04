@@ -254,18 +254,6 @@ mod tests {
             worker.release();
         }
 
-        fn release_uring(channels: &mut (IORingCompleter, IORingSubmitter)) {
-            // let ring = match IORing::join(channels.1, channels.0) {
-            //     IORingJoin::Succeeded(ring) => ring,
-            //     _ => return assert!(false),
-            // };
-
-            // match ring.shutdown() {
-            //     IORingShutdown::Succeeded() => assert!(true),
-            //     IORingShutdown::Failed() => assert!(false),
-            // }
-        }
-
         let mut worker = match Worker::start() {
             WorkerStart::Succeeded(worker) => Droplet::from(worker, release_worker),
             _ => return assert!(false),
@@ -295,23 +283,23 @@ mod tests {
             assert_ne!(*ptr, 3);
         }
 
-        let mut channels = match IORing::init(8) {
-            Ok((tx, rx)) => Droplet::from((rx, tx), release_uring),
+        let mut ring = match IORing::init(8) {
+            Ok(ring) => ring.droplet(),
             _ => return assert!(false),
         };
 
-        match channels.1.submit(1, [IORingSubmitEntry::Read(read)]) {
+        match ring.tx.submit(1, [IORingSubmitEntry::Read(read)]) {
             IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
             _ => return assert!(false)
         }
 
-        match channels.1.flush() {
+        match ring.tx.flush() {
             IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
             _ => return assert!(false)
         }
 
         let mut entries = [IORingCompleteEntry::default(); 1];
-        match channels.0.complete(&mut entries) {
+        match ring.rx.complete(&mut entries) {
             IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
             _ => return assert!(false)
         }

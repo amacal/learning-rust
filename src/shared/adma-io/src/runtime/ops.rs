@@ -1,27 +1,36 @@
 use ::core::future::*;
 use ::core::marker::*;
+use ::core::mem;
+use ::core::ops::*;
 
 use super::callable::*;
 use super::pollable::*;
 use super::spawn::*;
 use crate::heap::*;
+use crate::trace::*;
 use crate::uring::*;
 
-pub struct IORuntimeSubmitterInContext(pub IORingSubmitter);
 unsafe impl Send for IORuntimeContext {}
 
 pub struct IORuntimeContext {
     pub task_id: Option<usize>,
-    pub heap_pool: HeapPool<16>,
-    pub submitter: IORuntimeSubmitterInContext,
+    pub heap_pool: Droplet<HeapPool<16>>,
+    pub ring: Droplet<IORing>,
 }
 
 impl IORuntimeContext {
-    fn initialize(mut ctx: Smart<Self>, submitter: IORingSubmitter) -> Smart<Self> {
-        ctx.task_id = None;
-        ctx.heap_pool = HeapPool::new();
-        ctx.submitter = IORuntimeSubmitterInContext(submitter);
+    fn initialize(mut ctx: Smart<Self>, mut ring: Droplet<IORing>) -> Smart<Self> {
+        trace1(b"initializing runtime context; uring=%d\n", ring.fd());
+        let pool = HeapPool::new();
+        let mut pool = pool.droplet();
 
+        mem::swap(&mut pool, &mut ctx.heap_pool);
+        mem::forget(pool);
+
+        mem::swap(&mut ring, &mut ctx.ring);
+        mem::forget(ring);
+
+        ctx.task_id = None;
         ctx
     }
 }
@@ -31,14 +40,14 @@ pub struct IORuntimeOps {
 }
 
 impl IORuntimeOps {
-    pub fn allocate(submitter: IORingSubmitter) -> Option<Self> {
+    pub fn allocate(ring: Droplet<IORing>) -> Option<Self> {
         let ctx: Smart<IORuntimeContext> = match Smart::allocate() {
-            None => return None,
             Some(ctx) => ctx,
+            None => return None,
         };
 
         Some(Self {
-            ctx: IORuntimeContext::initialize(ctx, submitter),
+            ctx: IORuntimeContext::initialize(ctx, ring),
         })
     }
 
@@ -55,22 +64,27 @@ mod tests {
 
     #[test]
     fn allocates_ops() {
-        let (_, tx) = match IORing::init(8) {
-            Ok((tx, rx)) => (rx, tx),
+        let ring = match IORing::init(8) {
+            Ok(ring) => ring.droplet(),
             _ => return assert!(false),
         };
 
-        assert!(IORuntimeOps::allocate(tx).is_some());
+        let ops = match IORuntimeOps::allocate(ring) {
+            None => return assert!(false),
+            Some(ops) => ops,
+        };
+
+        drop(ops);
     }
 
     #[test]
     fn duplicates_ops() {
-        let (_, tx) = match IORing::init(8) {
-            Ok((tx, rx)) => (rx, tx),
+        let ring = match IORing::init(8) {
+            Ok(ring) => ring.droplet(),
             _ => return assert!(false),
         };
 
-        let first = match IORuntimeOps::allocate(tx) {
+        let first = match IORuntimeOps::allocate(ring) {
             None => return assert!(false),
             Some(ops) => ops,
         };

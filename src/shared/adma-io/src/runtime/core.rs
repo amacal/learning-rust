@@ -16,7 +16,6 @@ use crate::uring::*;
 
 pub struct IORingRuntime {
     iteration: usize,
-    completer: IORingCompleter,
     registry: Boxed<IORingRegistry>,
     pool: Boxed<IORuntimePool<4>>,
     ops: IORuntimeOps,
@@ -51,12 +50,12 @@ impl IORingRuntime {
         };
 
         // I/O Ring needs initialization
-        let (submitter, completer) = match IORing::init(1024) {
-            Ok((submitter, completer)) => (submitter, completer),
+        let ring = match IORing::init(32) {
+            Ok(ring) => ring.droplet(),
             Err(_) => return IORingRuntimeAllocate::RingAllocationFailed(),
         };
 
-        let ops = match IORuntimeOps::allocate(submitter) {
+        let ops = match IORuntimeOps::allocate(ring) {
             Some(ops) => ops,
             None => return IORingRuntimeAllocate::PoolAllocationFailed(),
         };
@@ -64,7 +63,6 @@ impl IORingRuntime {
         // if everying is ready we just need to collect created components
         let runtime = Self {
             iteration: 0,
-            completer: completer,
             registry: registry,
             pool: pool,
             ops: ops,
@@ -182,7 +180,7 @@ impl IORingRuntime {
             Err(_) => return IORingRuntimeExecute::InternallyFailed(),
         };
 
-        match self.pool.execute(&mut self.ops.ctx.submitter.0, [&queued, &executed], callable) {
+        match self.pool.execute(&mut self.ops.ctx.ring.tx, [&queued, &executed], callable) {
             IORuntimePoolExecute::Queued() => IORingRuntimeExecute::Queued(queued, executed),
             IORuntimePoolExecute::Executed() => IORingRuntimeExecute::Executed(queued, executed),
             IORuntimePoolExecute::ScheduleFailed() => IORingRuntimeExecute::InternallyFailed(),
@@ -229,7 +227,7 @@ impl IORingRuntime {
         // and wait for some event
         let cnt = loop {
             // sometimes we may end up in unexpected empty shot
-            match self.completer.complete(&mut self.entries) {
+            match self.ops.ctx.ring.rx.complete(&mut self.entries) {
                 IORingComplete::UnexpectedEmpty(_) => continue,
                 IORingComplete::Succeeded(cnt) => break cnt,
                 IORingComplete::CompletionFailed(err) => return IORingRuntimeTick::CompletionFailed(err),
@@ -251,7 +249,7 @@ impl IORingRuntime {
         }
         // user data contains encoded completion
 
-        match self.ops.ctx.submitter.0.flush() {
+        match self.ops.ctx.ring.tx.flush() {
             IORingSubmit::Succeeded(_) => (),
             _ => return IORingRuntimeTick::InternallyFailed(),
         }
@@ -334,7 +332,7 @@ impl IORingRuntime {
             }
         };
 
-        match self.ops.ctx.submitter.0.flush() {
+        match self.ops.ctx.ring.tx.flush() {
             IORingSubmit::Succeeded(_) => (),
             _ => return IORingRuntimeRun::InternallyFailed(),
         }
@@ -406,7 +404,7 @@ impl IORingRuntime {
         self.pool.enqueue(completer);
 
         // possibly it will be triggered now
-        self.pool.trigger(&mut self.ops.ctx.submitter.0);
+        self.pool.trigger(&mut self.ops.ctx.ring.tx);
     }
 }
 
@@ -422,7 +420,7 @@ impl IORingRuntime {
         self.pool.release_worker(completer);
 
         // then trigger likely pending callable
-        self.pool.trigger(&mut self.ops.ctx.submitter.0);
+        self.pool.trigger(&mut self.ops.ctx.ring.tx);
     }
 }
 
@@ -451,7 +449,7 @@ impl IORingRuntime {
 
         trace2(b"submitting op with uring; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
-        let err = match self.ops.ctx.submitter.0.submit(completer.encode(), [entry]) {
+        let err = match self.ops.ctx.ring.tx.submit(completer.encode(), [entry]) {
             IORingSubmit::Succeeded(_) => {
                 trace1(b"submitting op with uring; cidx=%d, succeeded\n", completer.cidx());
                 return IORingRuntimeSubmit::Succeeded(completer);
@@ -488,18 +486,6 @@ pub enum IORingRuntimeShutdown {
 impl IORingRuntime {
     pub fn shutdown(self) -> IORingRuntimeShutdown {
         IORingRuntimeShutdown::Succeeded()
-
-        // // we need to consolidate the ring first
-        // let ring = match IORing::join(self.ops.ctx.submitter.0, self.completer) {
-        //     IORingJoin::Succeeded(ring) => ring,
-        //     IORingJoin::MismatchedDescriptor(_, _) => return IORingRuntimeShutdown::ConsolidationFailed(),
-        // };
-
-        // // to call final shutdown
-        // match ring.shutdown() {
-        //     IORingShutdown::Succeeded() => IORingRuntimeShutdown::Succeeded(),
-        //     IORingShutdown::Failed() => IORingRuntimeShutdown::ShutdownFailed(),
-        // }
     }
 }
 

@@ -276,8 +276,8 @@ mod tests {
                 Err(_) => return assert!(false),
             };
 
-            let (rx, mut tx) = match IORing::init(8) {
-                Ok((tx, rx)) => (rx, tx),
+            let mut ring = match IORing::init(8) {
+                Ok(ring) => ring.droplet(),
                 _ => return assert!(false),
             };
 
@@ -289,18 +289,18 @@ mod tests {
             let first = IORingCompleterRef::new(1, 2);
             let second = IORingCompleterRef::new(3, 4);
 
-            match pool.execute(&mut tx, [&first, &second], &callable) {
+            match pool.execute(&mut ring.tx, [&first, &second], &callable) {
                 IORuntimePoolExecute::Executed() => assert!(true),
                 _ => assert!(false),
             }
 
-            match tx.flush() {
+            match ring.tx.flush() {
                 IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 2),
                 _ => assert!(false),
             }
 
             let mut entries = [IORingCompleteEntry::default(); 1];
-            match rx.complete(&mut entries) {
+            match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => return assert!(false)
             }
@@ -309,7 +309,7 @@ mod tests {
             assert_eq!(entries[0].user_data, first.encode());
 
             let mut entries = [IORingCompleteEntry::default(); 1];
-            match rx.complete(&mut entries) {
+            match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => return assert!(false)
             }
@@ -352,8 +352,8 @@ mod tests {
                 Err(_) => return assert!(false),
             };
 
-            let (rx, mut tx) = match IORing::init(8) {
-                Ok((tx, rx)) => (rx, tx),
+            let mut ring = match IORing::init(8) {
+                Ok(ring) => ring.droplet(),
                 _ => return assert!(false),
             };
 
@@ -365,18 +365,18 @@ mod tests {
             let first = IORingCompleterRef::new(1, 2);
             let second = IORingCompleterRef::new(3, 4);
 
-            match pool.execute(&mut tx, [&first, &second], &callable1) {
+            match pool.execute(&mut ring.tx, [&first, &second], &callable1) {
                 IORuntimePoolExecute::Executed() => assert!(true),
                 _ => assert!(false),
             }
 
-            match tx.flush() {
+            match ring.tx.flush() {
                 IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 2),
                 _ => assert!(false),
             }
 
             let mut entries = [IORingCompleteEntry::default(); 1];
-            match rx.complete(&mut entries) {
+            match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => return assert!(false)
             }
@@ -385,7 +385,7 @@ mod tests {
             assert_eq!(entries[0].user_data, first.encode());
 
             let mut entries = [IORingCompleteEntry::default(); 1];
-            match rx.complete(&mut entries) {
+            match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => return assert!(false)
             }
@@ -401,18 +401,18 @@ mod tests {
             assert_eq!(pool.queue_counter, 0);
             assert_eq!(pool.workers_count, 1);
 
-            match pool.execute(&mut tx, [&first, &second], &callable2) {
+            match pool.execute(&mut ring.tx, [&first, &second], &callable2) {
                 IORuntimePoolExecute::Queued() => assert!(true),
                 _ => assert!(false),
             }
 
-            match tx.flush() {
+            match ring.tx.flush() {
                 IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 
             let mut entries = [IORingCompleteEntry::default(); 1];
-            match rx.complete(&mut entries) {
+            match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => return assert!(false)
             }
@@ -455,8 +455,8 @@ mod tests {
                 Err(_) => return assert!(false),
             };
 
-            let (rx, mut tx) = match IORing::init(8) {
-                Ok((tx, rx)) => (rx, tx),
+            let mut ring = match IORing::init(8) {
+                Ok(ring) => ring.droplet(),
                 _ => return assert!(false),
             };
 
@@ -470,18 +470,18 @@ mod tests {
             let third = IORingCompleterRef::new(5, 6);
             let fourth = IORingCompleterRef::new(7, 8);
 
-            match pool.execute(&mut tx, [&first, &second], &callable1) {
+            match pool.execute(&mut ring.tx, [&first, &second], &callable1) {
                 IORuntimePoolExecute::Executed() => assert!(true),
                 _ => assert!(false),
             }
 
-            match tx.flush() {
+            match ring.tx.flush() {
                 IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 2),
                 _ => assert!(false),
             }
 
             let mut entries = [IORingCompleteEntry::default(); 1];
-            match rx.complete(&mut entries) {
+            match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => return assert!(false)
             }
@@ -490,7 +490,7 @@ mod tests {
             assert_eq!(entries[0].user_data, first.encode());
 
             let mut entries = [IORingCompleteEntry::default(); 1];
-            match rx.complete(&mut entries) {
+            match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => return assert!(false)
             }
@@ -506,18 +506,18 @@ mod tests {
             assert_eq!(pool.queue_counter, 0);
             assert_eq!(pool.workers_count, 1);
 
-            match pool.execute(&mut tx, [&third, &fourth], &callable2) {
+            match pool.execute(&mut ring.tx, [&third, &fourth], &callable2) {
                 IORuntimePoolExecute::Queued() => assert!(true),
                 _ => assert!(false),
             }
 
-            match tx.flush() {
+            match ring.tx.flush() {
                 IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 
             let mut entries = [IORingCompleteEntry::default(); 1];
-            match rx.complete(&mut entries) {
+            match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => return assert!(false)
             }
@@ -531,18 +531,18 @@ mod tests {
             let res = pool.release_worker(&second);
             assert_eq!(res, true);
 
-            match pool.trigger(&mut tx) {
+            match pool.trigger(&mut ring.tx) {
                 IORuntimePoolTrigger::Succeeded(val) => assert_eq!(val, true),
                 _ => assert!(false),
             }
 
-            match tx.flush() {
+            match ring.tx.flush() {
                 IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 
             let mut entries = [IORingCompleteEntry::default(); 1];
-            match rx.complete(&mut entries) {
+            match ring.rx.complete(&mut entries) {
                 IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
                 _ => return assert!(false)
             }

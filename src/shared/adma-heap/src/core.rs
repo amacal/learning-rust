@@ -5,7 +5,7 @@ impl Heap {
         Self { ptr: ptr, len: len }
     }
 
-    pub fn from(src: HeapRef) -> Self {
+    pub fn from(src: &HeapRef) -> Self {
         Self {
             ptr: src.ptr,
             len: src.len,

@@ -78,28 +78,28 @@ mod tests {
 
     #[test]
     fn receives_completion() {
-        let (rx, mut tx) = match IORing::init(8) {
-            Ok((tx, rx)) => (rx, tx),
+        let mut ring = match IORing::init(8) {
+            Ok(ring) => ring.droplet(),
             _ => return assert!(false),
         };
 
         let null = b"/dev/null\0";
         let entry = IORingSubmitEntry::open_at(null.as_ptr());
-
-        match tx.submit(13, [entry]) {
-            IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
-            IORingSubmit::SubmissionFailed(_) => assert!(false),
-            IORingSubmit::SubmissionMismatched(_) => assert!(false),
-        }
-
-        match tx.flush() {
-            IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
-            IORingSubmit::SubmissionFailed(_) => assert!(false),
-            IORingSubmit::SubmissionMismatched(_) => assert!(false),
-        }
-
         let mut entries = [IORingCompleteEntry::default(); 1];
-        match rx.complete(&mut entries) {
+
+        match ring.tx.submit(13, [entry]) {
+            IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
+            IORingSubmit::SubmissionFailed(_) => assert!(false),
+            IORingSubmit::SubmissionMismatched(_) => assert!(false),
+        }
+
+        match ring.tx.flush() {
+            IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
+            IORingSubmit::SubmissionFailed(_) => assert!(false),
+            IORingSubmit::SubmissionMismatched(_) => assert!(false),
+        }
+
+        match ring.rx.complete(&mut entries) {
             IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
             IORingComplete::UnexpectedEmpty(_) => assert!(false),
             IORingComplete::CompletionFailed(_) => assert!(false),

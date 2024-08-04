@@ -33,17 +33,17 @@ impl<T> DerefMut for Droplet<T> {
 
 impl Heap {
     pub fn droplet(self) -> Droplet<Heap> {
-        fn free(mem: &mut Heap) {
+        fn destroy(mem: &mut Heap) {
             // tracing releases heap may help in any naive troubleshooting
-            trace2(b"releasing droplet; addr=%x, size=%d\n", mem.ptr, mem.len);
+            trace2(b"releasing heap droplet; addr=%x, size=%d\n", mem.ptr, mem.len);
 
             // use syscall to free memory without error propagation
             sys_munmap(mem.ptr, mem.len);
         }
 
         // tracing conversion heap to a droplet may help in any naive troubleshooting
-        trace2(b"creating droplet; addr=%x, size=%d\n", self.ptr, self.len);
-        Droplet::from(self, free)
+        trace2(b"creating heap droplet; addr=%x, size=%d\n", self.ptr, self.len);
+        Droplet::from(self, destroy)
     }
 }
 

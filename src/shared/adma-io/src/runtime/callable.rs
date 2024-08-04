@@ -88,7 +88,7 @@ impl CallableTarget {
         trace1(b"allocating callable; soft, size=%d\n", len);
 
         let heap = match pool.acquire(len) {
-            Some(reference) => Heap::from(reference),
+            Some(reference) => Heap::from(&reference),
             None => {
                 trace1(b"allocating callable; hard, size=%d\n", len);
 

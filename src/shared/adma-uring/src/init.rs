@@ -4,15 +4,8 @@ use super::kernel::*;
 use super::syscall::*;
 use super::*;
 
-pub enum IORingInit {
-    Succeeded(IORingSubmitter, IORingCompleter),
-    InvalidDescriptor(isize),
-    SetupFailed(isize),
-    MappingFailed(&'static [u8], isize),
-}
-
 impl IORing {
-    pub fn init(entries: u32) -> Result<(IORingSubmitter, IORingCompleter), IORingError> {
+    pub fn init(entries: u32) -> Result<IORing, IORingError> {
         let mut params: io_uring_params = io_uring_params::default();
         let fd: u32 = match sys_io_uring_setup(entries, &mut params as *mut io_uring_params) {
             value if value < 0 => return Err(IORingError::SetupFailed),
@@ -49,7 +42,7 @@ impl IORing {
         let sq_ring_mask = (sq_ptr as usize + params.sq_off.ring_mask as usize) as *mut u32;
         let sq_ring_entries = (sq_ptr as usize + params.sq_off.ring_entries as usize) as *mut u32;
 
-        trace2(b"ring ready; fd=%d, sq=%d\n", fd, unsafe { *sq_ring_entries });
+        trace2(b"uring ready; tx, fd=%d, sq=%d\n", fd, unsafe { *sq_ring_entries });
 
         let offset = IORING_OFF_SQES;
         let (sq_sqes, sq_sqes_len) = match map::<io_uring_sqe>(fd, 0, sq_entries, offset) {
@@ -71,7 +64,7 @@ impl IORing {
         let cq_ring_mask = (cq_ptr as usize + params.cq_off.ring_mask as usize) as *mut u32;
         let cq_ring_entries = (cq_ptr as usize + params.cq_off.ring_entries as usize) as *mut u32;
 
-        trace2(b"ring ready; fd=%d, cq=%d\n", fd, unsafe { *cq_ring_entries });
+        trace2(b"uring ready; rx, fd=%d, cq=%d\n", fd, unsafe { *cq_ring_entries });
 
         let submitter = IORingSubmitter {
             fd: fd,
@@ -96,7 +89,11 @@ impl IORing {
             cq_cqes: cq_cqes,
         };
 
-        Ok((submitter, completer))
+        Ok(IORing {
+            fd: fd,
+            rx: completer,
+            tx: submitter,
+        })
     }
 }
 
@@ -106,49 +103,51 @@ mod tests {
 
     #[test]
     fn init_new_ring_rx() {
-        let (rx, tx) = match IORing::init(8) {
-            Ok((tx, rx)) => (rx, tx),
+        let ring = match IORing::init(8) {
+            Ok(ring) => ring.droplet(),
             _ => return assert!(false),
         };
 
         unsafe {
-            assert_ne!(rx.fd, 0);
-            assert_eq!(tx.fd, rx.fd);
+            assert_ne!(ring.fd, 0);
+            assert_eq!(ring.rx.fd, ring.fd);
+            assert_eq!(ring.tx.fd, ring.fd);
 
-            assert_ne!(rx.cq_ptr_len, 0);
-            assert_ne!(rx.cq_ptr, ptr::null_mut());
+            assert_ne!(ring.rx.cq_ptr_len, 0);
+            assert_ne!(ring.rx.cq_ptr, ptr::null_mut());
 
-            assert_ne!(rx.cq_ring_mask, ptr::null_mut());
-            assert_ne!(*rx.cq_ring_mask, 0);
+            assert_ne!(ring.rx.cq_ring_mask, ptr::null_mut());
+            assert_ne!(*ring.rx.cq_ring_mask, 0);
 
-            assert_ne!(rx.cq_head, ptr::null_mut());
-            assert_ne!(rx.cq_tail, ptr::null_mut());
-            assert_ne!(rx.cq_cqes, ptr::null_mut());
+            assert_ne!(ring.rx.cq_head, ptr::null_mut());
+            assert_ne!(ring.rx.cq_tail, ptr::null_mut());
+            assert_ne!(ring.rx.cq_cqes, ptr::null_mut());
         }
     }
 
     #[test]
     fn init_new_ring_tx() {
-        let (rx, tx) = match IORing::init(8) {
-            Ok((tx, rx)) => (rx, tx),
+        let ring = match IORing::init(8) {
+            Ok(ring) => ring.droplet(),
             _ => return assert!(false),
         };
 
         unsafe {
-            assert_ne!(rx.fd, 0);
-            assert_eq!(tx.fd, rx.fd);
+            assert_ne!(ring.fd, 0);
+            assert_eq!(ring.rx.fd, ring.fd);
+            assert_eq!(ring.tx.fd, ring.fd);
 
-            assert_ne!(tx.sq_ptr_len, 0);
-            assert_ne!(tx.sq_ptr, ptr::null_mut());
+            assert_ne!(ring.tx.sq_ptr_len, 0);
+            assert_ne!(ring.tx.sq_ptr, ptr::null_mut());
 
-            assert_ne!(tx.sq_ring_mask, ptr::null_mut());
-            assert_ne!(*tx.sq_ring_mask, 0);
+            assert_ne!(ring.tx.sq_ring_mask, ptr::null_mut());
+            assert_ne!(*ring.tx.sq_ring_mask, 0);
 
-            assert_ne!(tx.sq_array, ptr::null_mut());
-            assert_ne!(tx.sq_tail, ptr::null_mut());
+            assert_ne!(ring.tx.sq_array, ptr::null_mut());
+            assert_ne!(ring.tx.sq_tail, ptr::null_mut());
 
-            assert_ne!(tx.sq_sqes, ptr::null_mut());
-            assert_ne!(tx.sq_sqes_len, 0);
+            assert_ne!(ring.tx.sq_sqes, ptr::null_mut());
+            assert_ne!(ring.tx.sq_sqes_len, 0);
         }
     }
 }

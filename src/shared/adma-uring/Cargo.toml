@@ -5,9 +5,11 @@ edition = "2021"
 authors = ["Adrian Macal <adma@amacal.pl>"]
 
 [dependencies]
+adma-heap = { path = "../adma-heap", default-features = false }
 adma-trace = { path = "../adma-trace", default-features = false }
 
 [features]
 std = []
 default = []
 tracing = []
+heap-tracing = ["adma-heap/tracing"]
