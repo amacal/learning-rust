@@ -9,7 +9,7 @@ pub struct CatCommand {
 
 impl CatCommand {
     pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
-        let mut buffer = match Heap::allocate(32 * 4096) {
+        let buffer = match Heap::allocate(32 * 4096) {
             Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
             Ok(value) => value.droplet(),
         };
@@ -21,22 +21,21 @@ impl CatCommand {
         };
 
         let file = match ops.open_file(&path).await {
-            FileOpenResult::Succeeded(value) => value,
-            FileOpenResult::OperationFailed(_) => return Some(APP_FILE_OPENING_FAILED),
-            FileOpenResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+            Ok(value) => value,
+            Err(Some(_)) => return Some(APP_FILE_OPENING_FAILED),
+            Err(None) => return Some(APP_INTERNALLY_FAILED),
         };
 
         let mut offset = 0;
 
         loop {
-            let (buf, read) = match ops.read_file(&file, buffer, offset).await {
-                FileReadResult::Succeeded(buffer, read) => (buffer, read),
-                FileReadResult::OperationFailed(_, _) => return Some(APP_FILE_READING_FAILED),
-                FileReadResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+            let read = match ops.read_file(&file, &buffer, offset).await {
+                Ok(cnt) => cnt,
+                Err(None) => return Some(APP_INTERNALLY_FAILED),
+                Err(Some(_)) => return Some(APP_FILE_READING_FAILED),
             };
 
             offset += read as u64;
-            buffer = buf;
 
             if read == 0 {
                 break;
@@ -66,9 +65,9 @@ impl CatCommand {
         }
 
         match ops.close_file(file).await {
-            FileCloseResult::Succeeded() => None,
-            FileCloseResult::OperationFailed(_) => Some(APP_FILE_CLOSING_FAILED),
-            FileCloseResult::InternallyFailed() => Some(APP_INTERNALLY_FAILED),
+            Ok(()) => None,
+            Err(None) => Some(APP_INTERNALLY_FAILED),
+            Err(Some(_)) => Some(APP_FILE_CLOSING_FAILED),
         }
     }
 }

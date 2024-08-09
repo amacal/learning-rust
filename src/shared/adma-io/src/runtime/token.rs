@@ -4,6 +4,8 @@ use super::callable::*;
 use super::core::*;
 use super::pollable::*;
 use super::refs::*;
+use super::IORuntimeContext;
+use super::IORuntimeOps;
 use crate::uring::*;
 
 pub struct IORingTaskToken {
@@ -18,7 +20,7 @@ enum IORingTaskTokenKind {
 }
 
 impl IORingTaskToken {
-    fn from_op(completer: IORingCompleterRef) -> Self {
+    pub fn from_op(completer: IORingCompleterRef) -> Self {
         Self {
             completer,
             kind: IORingTaskTokenKind::Op,
@@ -48,17 +50,12 @@ impl IORingTaskToken {
     }
 }
 
-pub enum IORingTaskTokenExtract {
-    Succeeded(i32),
-    Failed(IORingTaskToken),
-}
-
 impl IORingTaskToken {
-    pub fn extract(self, waker: &Waker) -> IORingTaskTokenExtract {
+    pub fn extract(self, waker: &Waker) -> Result<i32, IORingTaskToken> {
         let context = Self::context(waker);
         let value = match context.extract(&self.completer) {
             IORingRuntimeExtract::Succeeded(value) => value,
-            _ => return IORingTaskTokenExtract::Failed(self),
+            _ => return Err(self),
         };
 
         if let IORingTaskTokenKind::Queue = self.kind {
@@ -71,7 +68,26 @@ impl IORingTaskToken {
             context.trigger(&self.completer);
         }
 
-        IORingTaskTokenExtract::Succeeded(value)
+        Ok(value)
+    }
+
+    pub fn extract_ctx(self, ctx: &mut IORuntimeContext) -> Result<i32, IORingTaskToken> {
+        let value = match ctx.extract(&self.completer) {
+            Some(value) => value,
+            None => return Err(self),
+        };
+
+        if let IORingTaskTokenKind::Queue = self.kind {
+            // enqueue sent callable
+            //ops.enqueue(&self.completer);
+        }
+
+        if let IORingTaskTokenKind::Execute = self.kind {
+            // trigger awaiting callable
+            //ops.trigger(&self.completer);
+        }
+
+        Ok(value)
     }
 }
 
@@ -87,8 +103,8 @@ impl IORingTaskToken {
 }
 
 impl IORingTaskToken {
-    pub fn spawn(waker: &Waker, task: PollableTarget) -> bool {
-        match Self::context(waker).spawn(task) {
+    pub fn spawn(waker: &Waker, task: IORingTaskRef, callable: PollableTarget) -> bool {
+        match Self::context(waker).spawn(task, callable) {
             IORingRuntimeSpawn::Pending(_) => true,
             _ => false,
         }

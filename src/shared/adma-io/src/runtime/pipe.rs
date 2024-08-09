@@ -112,8 +112,8 @@ impl<T: IORingSubmitBuffer + Unpin> Future for PipeWrite<T> {
         match this.token.take() {
             Some(token) => {
                 let result = match token.extract(cx.waker()) {
-                    IORingTaskTokenExtract::Succeeded(value) => value,
-                    IORingTaskTokenExtract::Failed(token) => {
+                    Ok(value) => value,
+                    Err(token) => {
                         this.token = Some(token);
                         return Poll::Pending;
                     }
@@ -173,8 +173,8 @@ impl Future for PipeRead {
         match this.token.take() {
             Some(token) => {
                 let result = match token.extract(cx.waker()) {
-                    IORingTaskTokenExtract::Succeeded(value) => value,
-                    IORingTaskTokenExtract::Failed(token) => {
+                    Ok(value) => value,
+                    Err(token) => {
                         this.token = Some(token);
                         return Poll::Pending;
                     }
@@ -234,8 +234,8 @@ impl Future for PipeClose {
         match this.token.take() {
             Some(token) => {
                 let result = match token.extract(cx.waker()) {
-                    IORingTaskTokenExtract::Succeeded(value) => value,
-                    IORingTaskTokenExtract::Failed(token) => {
+                    Ok(value) => value,
+                    Err(token) => {
                         this.token = Some(token);
                         return Poll::Pending;
                     }

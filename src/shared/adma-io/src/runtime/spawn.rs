@@ -7,39 +7,35 @@ use ::core::task::Poll;
 use super::callable::*;
 use super::ops::*;
 use super::pollable::*;
+use super::refs::*;
 use super::token::*;
 use crate::heap::*;
 use crate::trace::*;
 
 pub struct Spawn {
-    pub task: Option<PollableTarget>,
+    pub task: IORingTaskRef,
+    pub callable: Option<PollableTarget>,
 }
 
 unsafe impl Send for Spawn {}
 
-pub enum SpawnResult {
-    Succeeded(),
-    OperationFailed(),
-    InternallyFailed(),
-}
-
 impl Future for Spawn {
-    type Output = SpawnResult;
+    type Output = Result<(), ()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let task = match self.task.take() {
-            Some(task) => task,
-            None => return Poll::Ready(SpawnResult::InternallyFailed()),
+        let callable = match self.callable.take() {
+            Some(callable) => callable,
+            None => return Poll::Ready(Err(())),
         };
 
-        match IORingTaskToken::spawn(cx.waker(), task) {
+        match IORingTaskToken::spawn(cx.waker(), self.task, callable) {
             true => {
                 trace0(b"task=%d; spawned\n");
-                Poll::Ready(SpawnResult::Succeeded())
+                Poll::Ready(Ok(()))
             }
             false => {
                 trace0(b"task=%d; not spawned\n");
-                Poll::Ready(SpawnResult::OperationFailed())
+                Poll::Ready(Err(()))
             }
         }
     }
@@ -78,8 +74,8 @@ where
         if let Some(token) = this.queued.take() {
             trace0(b"# polling spawn-cpu; extracting queued\n");
             let result = match token.extract(cx.waker()) {
-                IORingTaskTokenExtract::Succeeded(value) => Some(value),
-                IORingTaskTokenExtract::Failed(token) => {
+                Ok(value) => Some(value),
+                Err(token) => {
                     this.queued = Some(token);
                     None
                 }
@@ -98,8 +94,8 @@ where
         if let Some(token) = this.executed.take() {
             trace0(b"# polling spawn-cpu; extracting executed\n");
             let result = match token.extract(cx.waker()) {
-                IORingTaskTokenExtract::Succeeded(value) => Some(value),
-                IORingTaskTokenExtract::Failed(token) => {
+                Ok(value) => Some(value),
+                Err(token) => {
                     this.executed = Some(token);
                     return Poll::Pending;
                 }

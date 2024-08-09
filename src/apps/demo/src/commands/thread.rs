@@ -29,10 +29,12 @@ impl ThreadCommand {
                 None
             });
 
-            match task.await {
-                SpawnResult::Succeeded() => (),
-                SpawnResult::OperationFailed() => return Some(APP_INTERNALLY_FAILED),
-                SpawnResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+            match task {
+                None => return Some(APP_INTERNALLY_FAILED),
+                Some(task) => match task.await {
+                    Err(()) => return Some(APP_INTERNALLY_FAILED),
+                    Ok(()) => (),
+                },
             }
         }
 

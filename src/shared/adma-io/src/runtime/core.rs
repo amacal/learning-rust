@@ -16,9 +16,7 @@ use crate::uring::*;
 
 pub struct IORingRuntime {
     iteration: usize,
-    registry: Boxed<IORingRegistry>,
-    pool: Boxed<IORuntimePool<4>>,
-    ops: IORuntimeOps,
+    ctx: Smart<IORuntimeContext>,
     entries: [IORingCompleteEntry; 16],
 }
 
@@ -38,15 +36,8 @@ impl IORingRuntime {
     pub fn allocate() -> IORingRuntimeAllocate {
         // registry needs to be alocated on the heap
         let registry = match IORingRegistry::allocate() {
-            Ok(registry) => registry,
+            Ok(registry) => registry.droplet(),
             Err(_) => return IORingRuntimeAllocate::RegistryAllocationFailed(),
-        };
-
-        let pool = match IORuntimePool::allocate() {
-            IORuntimePoolAllocation::Succeeded(pool) => pool,
-            IORuntimePoolAllocation::ThreadingFailed(_) => return IORingRuntimeAllocate::PoolAllocationFailed(),
-            IORuntimePoolAllocation::AllocationFailed(_) => return IORingRuntimeAllocate::PoolAllocationFailed(),
-            IORuntimePoolAllocation::QueueFailed(_) => return IORingRuntimeAllocate::PoolAllocationFailed(),
         };
 
         // I/O Ring needs initialization
@@ -55,17 +46,20 @@ impl IORingRuntime {
             Err(_) => return IORingRuntimeAllocate::RingAllocationFailed(),
         };
 
-        let ops = match IORuntimeOps::allocate(ring) {
-            Some(ops) => ops,
+        let threads = match IORuntimePool::allocate() {
+            Ok(threads) => threads.droplet(),
+            Err(_) => return IORingRuntimeAllocate::PoolAllocationFailed(),
+        };
+
+        let ctx = match IORuntimeContext::allocate(ring, threads, registry) {
+            Some(ctx) => ctx,
             None => return IORingRuntimeAllocate::PoolAllocationFailed(),
         };
 
         // if everying is ready we just need to collect created components
         let runtime = Self {
             iteration: 0,
-            registry: registry,
-            pool: pool,
-            ops: ops,
+            ctx: ctx,
             entries: [IORingCompleteEntry::default(); 16],
         };
 
@@ -85,7 +79,7 @@ impl IORingRuntimeContext {
 }
 
 impl IORingRuntime {
-    fn poll(&mut self, task: IORingTaskRef) -> Result<(usize, Poll<Option<&'static [u8]>>), IORegistryError> {
+    fn poll(&mut self, task: IORingTaskRef) -> Option<(usize, Poll<Option<&'static [u8]>>)> {
         let runtime = self as *mut IORingRuntime;
         let context = IORingRuntimeContext { task, runtime };
 
@@ -97,7 +91,7 @@ impl IORingRuntime {
         let mut cx = Context::from_waker(&waker);
 
         // we always poll through registry to not expose details
-        return self.registry.poll(&context.task, &mut cx);
+        return self.ctx.poll(&context.task, &mut cx);
     }
 }
 
@@ -110,27 +104,30 @@ pub enum IORingRuntimeSpawn {
 }
 
 impl IORingRuntime {
-    fn spawn(&mut self, task: PollableTarget) -> IORingRuntimeSpawn {
+    fn spawn(&mut self, task: Option<IORingTaskRef>, target: PollableTarget) -> IORingRuntimeSpawn {
         // each future has to be put on the heap first
         trace0(b"appending task to registry\n");
 
-        let task = match self.registry.append_task(task) {
-            // and later to be appended to the registry
-            Ok(val) => val,
-            Err(IORegistryError::NotEnoughSlots) => return IORingRuntimeSpawn::NotEnoughSlots(),
-            Err(_) => return IORingRuntimeSpawn::InternallyFailed(),
+        let task = match task {
+            Some(task) => task,
+            None => match self.ctx.registry.prepare_task() {
+                Ok(task) => task,
+                Err(_) => return IORingRuntimeSpawn::InternallyFailed(),
+            },
         };
+
+        self.ctx.registry.append_task(task, target);
 
         // to be initially polled
         let (result, completions) = match self.poll(task) {
-            Ok((cnt, Poll::Ready(val))) => (val, cnt),
-            Ok((_, Poll::Pending)) => return IORingRuntimeSpawn::Pending(task),
-            Err(_) => return IORingRuntimeSpawn::InternallyFailed(),
+            Some((cnt, Poll::Ready(val))) => (val, cnt),
+            Some((_, Poll::Pending)) => return IORingRuntimeSpawn::Pending(task),
+            None => return IORingRuntimeSpawn::InternallyFailed(),
         };
 
         if completions == 0 {
             // to be immediately removed if ready without hanging completers
-            let result = match self.registry.remove_task(&task) {
+            let result = match self.ctx.registry.remove_task(&task) {
                 Ok(task) => task.release(),
                 Err(_) => return IORingRuntimeSpawn::InternallyFailed(),
             };
@@ -154,8 +151,8 @@ impl IORingRuntime {
 }
 
 impl IORingRuntimeContext {
-    pub fn spawn(&mut self, task: PollableTarget) -> IORingRuntimeSpawn {
-        unsafe { (*self.runtime).spawn(task) }
+    pub fn spawn(&mut self, task: IORingTaskRef, callable: PollableTarget) -> IORingRuntimeSpawn {
+        unsafe { (*self.runtime).spawn(Some(task), callable) }
     }
 }
 
@@ -168,20 +165,20 @@ pub enum IORingRuntimeExecute {
 
 impl IORingRuntime {
     fn execute(&mut self, task: &IORingTaskRef, callable: &CallableTarget) -> IORingRuntimeExecute {
-        let queued = match self.registry.append_completer(task.clone()) {
+        let queued = match self.ctx.registry.append_completer(task) {
             Ok(completer) => completer,
             Err(IORegistryError::NotEnoughSlots) => return IORingRuntimeExecute::NotEnoughSlots(),
             Err(_) => return IORingRuntimeExecute::InternallyFailed(),
         };
 
-        let executed = match self.registry.append_completer(task.clone()) {
+        let executed = match self.ctx.registry.append_completer(task) {
             Ok(completer) => completer,
             Err(IORegistryError::NotEnoughSlots) => return IORingRuntimeExecute::NotEnoughSlots(),
             Err(_) => return IORingRuntimeExecute::InternallyFailed(),
         };
 
         let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
-        let cnt = match self.pool.execute(&mut slots, [&queued, &executed], callable) {
+        let cnt = match self.ctx.threads.execute(&mut slots, [&queued, &executed], callable) {
             Ok(Some(cnt)) => cnt,
             Ok(None) => 0,
             Err(_) => return IORingRuntimeExecute::InternallyFailed(),
@@ -196,7 +193,7 @@ impl IORingRuntime {
                 }
             };
 
-            self.ops.submit(user_data, [entry]);
+            self.ctx.submit(user_data, [entry]);
         }
 
         if cnt == 1 {
@@ -226,8 +223,8 @@ enum IORingRuntimeTick {
 
 impl IORingRuntime {
     fn tick(&mut self) -> IORingRuntimeTick {
-        let tasks = self.registry.tasks();
-        let completers = self.registry.completers();
+        let tasks = self.ctx.registry.tasks();
+        let completers = self.ctx.registry.completers();
 
         trace1(b"--------------------------------------------- %d\n", self.iteration);
         trace2(b"looking for completions; tasks=%d, completers=%d\n", tasks, completers);
@@ -244,7 +241,7 @@ impl IORingRuntime {
         // and wait for some event
         let cnt = loop {
             // sometimes we may end up in unexpected empty shot
-            match self.ops.receive(&mut self.entries) {
+            match self.ctx.receive(&mut self.entries) {
                 IORingComplete::UnexpectedEmpty(_) => continue,
                 IORingComplete::Succeeded(cnt) => break cnt,
                 IORingComplete::CompletionFailed(err) => return IORingRuntimeTick::CompletionFailed(err),
@@ -266,7 +263,7 @@ impl IORingRuntime {
         }
         // user data contains encoded completion
 
-        match self.ops.flush() {
+        match self.ctx.flush() {
             IORingSubmit::Succeeded(_) => (),
             _ => return IORingRuntimeTick::InternallyFailed(),
         }
@@ -278,7 +275,7 @@ impl IORingRuntime {
         trace2(b"looking for completions; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
         // complete received completer idx, it will return idx, id, readiness and completers of the found task
-        let (task, ready, mut cnt) = match self.registry.complete(completer, entry.res) {
+        let (task, ready, mut cnt) = match self.ctx.registry.complete(completer, entry.res) {
             Ok((task, ready, cnt)) => (task, ready, cnt),
             Err(_) => return IORingRuntimeTick::InternallyFailed(),
         };
@@ -286,9 +283,9 @@ impl IORingRuntime {
         if !ready {
             // when task is not yet ready we need to poll it again
             let (_, completions) = match self.poll(task) {
-                Ok((cnt, Poll::Ready(val))) => (val, cnt),
-                Ok((_, Poll::Pending)) => return IORingRuntimeTick::Pending(task),
-                Err(_) => return IORingRuntimeTick::InternallyFailed(),
+                Some((cnt, Poll::Ready(val))) => (val, cnt),
+                Some((_, Poll::Pending)) => return IORingRuntimeTick::Pending(task),
+                None => return IORingRuntimeTick::InternallyFailed(),
             };
 
             // completions may have changed after polling
@@ -301,7 +298,7 @@ impl IORingRuntime {
         }
 
         // no draining and readiness, so remove the task
-        let result = match self.registry.remove_task(&task) {
+        let result = match self.ctx.registry.remove_task(&task) {
             Ok(task) => task.release(),
             Err(_) => return IORingRuntimeTick::InternallyFailed(),
         };
@@ -325,11 +322,16 @@ impl IORingRuntime {
         F: Future<Output = Option<&'static [u8]>> + Send + 'a,
         C: FnOnce(IORuntimeOps) -> F + Unpin + Send + 'a,
     {
-        let ops = self.ops.duplicate();
+        let task = match self.ctx.registry.prepare_task() {
+            Ok(val) => val,
+            Err(_) => return IORingRuntimeRun::InternallyFailed(),
+        };
+
+        let ops = IORuntimeContext::ops(&mut self.ctx, task);
         let target = callback.call_once((ops,));
 
         trace0(b"allocating memory to pin a future\n");
-        let pinned = match PollableTarget::allocate(&mut self.ops.ctx.heap_pool, target) {
+        let pinned = match PollableTarget::allocate(&mut self.ctx.heap_pool, target) {
             Some(pinned) => pinned,
             None => return IORingRuntimeRun::AllocationFailed(0),
         };
@@ -338,7 +340,7 @@ impl IORingRuntime {
         let mut result = None;
         trace0(b"spawning pinned future\n");
 
-        let spawned = match self.spawn(pinned) {
+        let spawned = match self.spawn(Some(task), pinned) {
             IORingRuntimeSpawn::InternallyFailed() => return IORingRuntimeRun::InternallyFailed(),
             IORingRuntimeSpawn::NotEnoughSlots() => return IORingRuntimeRun::InternallyFailed(),
             IORingRuntimeSpawn::Pending(task) => Some(task),
@@ -349,7 +351,7 @@ impl IORingRuntime {
             }
         };
 
-        match self.ops.flush() {
+        match self.ctx.flush() {
             IORingSubmit::Succeeded(_) => (),
             _ => return IORingRuntimeRun::InternallyFailed(),
         }
@@ -387,7 +389,7 @@ impl IORingRuntime {
     fn extract(&mut self, completer: &IORingCompleterRef) -> IORingRuntimeExtract {
         trace2(b"extracting completer; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
-        let completion = match self.registry.remove_completer(completer) {
+        let completion = match self.ctx.registry.remove_completer(completer) {
             Ok(completer) => completer,
             Err(IORegistryError::CompleterNotFound) => return IORingRuntimeExtract::NotFound(),
             Err(IORegistryError::CompleterNotReady) => {
@@ -420,10 +422,10 @@ impl IORingRuntime {
         let mut slots: [Option<(u64, IORingSubmitEntry)>; 1] = [const { None }; 1];
 
         // first making a callable visible
-        self.pool.enqueue(completer);
+        self.ctx.threads.enqueue(completer);
 
         // possibly it will be triggered now
-        let cnt = match self.pool.trigger(&mut slots) {
+        let cnt = match self.ctx.threads.trigger(&mut slots) {
             Ok(None) | Ok(Some(0)) => 0,
             Ok(Some(cnt)) => cnt,
             Err(_) => 0,
@@ -438,7 +440,7 @@ impl IORingRuntime {
                 }
             };
 
-            self.ops.submit(user_data, [entry]);
+            self.ctx.submit(user_data, [entry]);
         }
     }
 }
@@ -454,10 +456,10 @@ impl IORingRuntime {
         let mut slots: [Option<(u64, IORingSubmitEntry)>; 1] = [const { None }; 1];
 
         // first release worker behind completer
-        self.pool.release_worker(completer);
+        self.ctx.threads.release_worker(completer);
 
         // possibly it will be triggered now
-        let cnt = match self.pool.trigger(&mut slots) {
+        let cnt = match self.ctx.threads.trigger(&mut slots) {
             Ok(None) | Ok(Some(0)) => 0,
             Ok(Some(cnt)) => cnt,
             Err(_) => 0,
@@ -472,7 +474,7 @@ impl IORingRuntime {
                 }
             };
 
-            self.ops.submit(user_data, [entry]);
+            self.ctx.submit(user_data, [entry]);
         }
     }
 }
@@ -494,15 +496,16 @@ pub enum IORingRuntimeSubmit {
 impl IORingRuntime {
     fn submit(&mut self, task: &IORingTaskRef, entry: IORingSubmitEntry) -> IORingRuntimeSubmit {
         trace1(b"appending completer to registry; tid=%d\n", task.tid());
-        let completer = match self.registry.append_completer(task.clone()) {
+        let completer = match self.ctx.registry.append_completer(task) {
             Ok(completer) => completer,
             Err(IORegistryError::NotEnoughSlots) => return IORingRuntimeSubmit::NotEnoughSlots(),
             Err(_) => return IORingRuntimeSubmit::InternallyFailed(),
         };
 
+        let (user_data, entries) = (completer.encode(), [entry]);
         trace2(b"submitting op with uring; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
-        let err = match self.ops.submit(completer.encode(), [entry]) {
+        let err = match self.ctx.submit(user_data, entries) {
             IORingSubmit::Succeeded(_) => {
                 trace1(b"submitting op with uring; cidx=%d, succeeded\n", completer.cidx());
                 return IORingRuntimeSubmit::Succeeded(completer);
@@ -517,7 +520,7 @@ impl IORingRuntime {
             }
         };
 
-        match self.registry.remove_completer(&completer) {
+        match self.ctx.registry.remove_completer(&completer) {
             Ok(_) => IORingRuntimeSubmit::SubmissionFailed(err),
             _ => IORingRuntimeSubmit::InternallyFailed(),
         }

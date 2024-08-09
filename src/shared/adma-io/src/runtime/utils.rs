@@ -1,27 +1,29 @@
-use ::core::future::Future;
-use ::core::mem::swap;
-use ::core::pin::Pin;
-use ::core::task::Context;
-use ::core::task::Poll;
+use ::core::future::*;
+use ::core::marker::*;
+use ::core::mem;
+use ::core::pin::*;
+use ::core::task::*;
 
-pub fn select<F1, F2>(f1: F1, f2: F2) -> Select<F1, F2>
+pub fn select<'a, F1, F2>(f1: F1, f2: F2) -> Select<'a, F1, F2>
 where
-    F1: Future,
-    F2: Future,
+    F1: Future + 'a,
+    F2: Future + 'a,
 {
     Select {
         f1: Some(f1),
         f2: Some(f2),
+        _p: PhantomData,
     }
 }
 
-pub struct Select<F1, F2>
+pub struct Select<'a, F1, F2>
 where
     F1: Future,
     F2: Future,
 {
     f1: Option<F1>,
     f2: Option<F2>,
+    _p: PhantomData<&'a ()>,
 }
 
 pub enum SelectResult<F1, F2>
@@ -34,10 +36,10 @@ where
     Failed(),
 }
 
-impl<F1, F2> Future for Select<F1, F2>
+impl<'a, F1, F2> Future for Select<'a, F1, F2>
 where
-    F1: Future + Unpin + 'static,
-    F2: Future + Unpin + 'static,
+    F1: Future + Unpin + 'a,
+    F2: Future + Unpin + 'a,
 {
     type Output = SelectResult<F1, F2>;
 
@@ -49,7 +51,7 @@ where
 
         if let Poll::Ready(value) = f1.poll(cx) {
             let mut target = None;
-            swap(&mut target, &mut self.f2);
+            mem::swap(&mut target, &mut self.f2);
 
             return match target {
                 Some(other) => Poll::Ready(SelectResult::Result1(value, other)),
@@ -64,7 +66,7 @@ where
 
         if let Poll::Ready(value) = f2.poll(cx) {
             let mut target = None;
-            swap(&mut target, &mut self.f1);
+            mem::swap(&mut target, &mut self.f1);
 
             return match target {
                 Some(other) => Poll::Ready(SelectResult::Result2(value, other)),

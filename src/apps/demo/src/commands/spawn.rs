@@ -33,10 +33,12 @@ impl SpawnCommand {
                 None
             });
 
-            match spawned.await {
-                SpawnResult::Succeeded() => (),
-                SpawnResult::OperationFailed() => return Some(APP_INTERNALLY_FAILED),
-                SpawnResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+            match spawned {
+                None => return Some(APP_INTERNALLY_FAILED),
+                Some(spawned) => match spawned.await {
+                    Err(()) => return Some(APP_INTERNALLY_FAILED),
+                    Ok(()) => (),
+                },
             }
         }
 

@@ -29,7 +29,7 @@ impl Sha1Command {
 
                 // a file descriptor for a file we opened
                 let file: FileDescriptor = match ops.open_file(&path).await {
-                    FileOpenResult::Succeeded(value) => value,
+                    Ok(value) => value,
                     _ => return Some(APP_FILE_OPENING_FAILED),
                 };
 
@@ -41,14 +41,14 @@ impl Sha1Command {
                     while buffer_offset < buffer.as_ref().len() {
                         // slice a buffer to try it fill till the end
                         let buffer: HeapSlice = match buffer.between(buffer_offset, buffer.as_ref().len()) {
-                            Ok(value) => value,
                             Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
+                            Ok(value) => value,
                         };
 
                         // and read bytes into sliced memory from a given file offset
-                        let read = match ops.read_file(&file, buffer, file_offset).await {
-                            FileReadResult::Succeeded(_, read) => read as usize,
-                            _ => return Some(APP_FILE_READING_FAILED),
+                        let read = match ops.read_file(&file, &buffer, file_offset).await {
+                            Err(_) => return Some(APP_FILE_READING_FAILED),
+                            Ok(cnt) => cnt as usize,
                         };
 
                         // both counters have to be incremented
@@ -63,8 +63,8 @@ impl Sha1Command {
 
                     // let's slice till 512-bits boundary, as sha1 requires
                     let slice = match buffer.between(0, buffer_offset / 64 * 64) {
-                        Ok(val) => val,
                         Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
+                        Ok(val) => val,
                     };
 
                     // to process it outside event loop
@@ -94,8 +94,8 @@ impl Sha1Command {
 
                 // the buffer may have remainder between 0 and 63 bytes
                 let slice: HeapSlice = match buffer.between(buffer_offset / 64 * 64, buffer_offset) {
-                    Ok(slice) => slice,
                     Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
+                    Ok(slice) => slice,
                 };
 
                 // which needs to be finalized
@@ -115,16 +115,8 @@ impl Sha1Command {
 
                 // a message like sha1sum output is constructed
                 let mut msg = [0; 160];
-                let len = format6(
-                    &mut msg,
-                    b"%x%x%x%x%x  %s\n",
-                    hash[0],
-                    hash[1],
-                    hash[2],
-                    hash[3],
-                    hash[4],
-                    path.as_ptr(),
-                );
+                let len =
+                    format6(&mut msg, b"%x%x%x%x%x  %s\n", hash[0], hash[1], hash[2], hash[3], hash[4], path.as_ptr());
 
                 // to be printed asynchronously in the stdout
                 let stdout = ops.open_stdout();
@@ -135,17 +127,20 @@ impl Sha1Command {
 
                 // and finally we close a file
                 match ops.close_file(file).await {
-                    FileCloseResult::Succeeded() => (),
-                    _ => return Some(APP_FILE_CLOSING_FAILED),
+                    Err(_) => return Some(APP_FILE_CLOSING_FAILED),
+                    Ok(()) => (),
                 }
 
                 None
             });
 
             // and task has to be awaited to be executed
-            match task.await {
-                SpawnResult::Succeeded() => (),
-                _ => return Some(APP_IO_SPAWNING_FAILED),
+            match task {
+                None => return Some(APP_IO_SPAWNING_FAILED),
+                Some(task) => match task.await {
+                    Err(()) => return Some(APP_IO_SPAWNING_FAILED),
+                    Ok(()) => (),
+                },
             }
         }
 

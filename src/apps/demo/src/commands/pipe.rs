@@ -57,14 +57,20 @@ impl PipeCommand {
             }
         });
 
-        match reader.await {
-            SpawnResult::Succeeded() => (),
-            _ => return Some(APP_IO_SPAWNING_FAILED),
+        match reader {
+            None => return Some(APP_IO_SPAWNING_FAILED),
+            Some(reader) => match reader.await {
+                Err(()) => return Some(APP_IO_SPAWNING_FAILED),
+                Ok(()) => (),
+            },
         }
 
-        match writer.await {
-            SpawnResult::Succeeded() => (),
-            _ => return Some(APP_IO_SPAWNING_FAILED),
+        match writer {
+            None => return Some(APP_IO_SPAWNING_FAILED),
+            Some(writer) => match writer.await {
+                Err(()) => return Some(APP_IO_SPAWNING_FAILED),
+                Ok(()) => (),
+            },
         }
 
         None

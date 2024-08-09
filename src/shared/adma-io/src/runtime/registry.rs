@@ -1,4 +1,3 @@
-use ::core::mem;
 use ::core::task::Context;
 use ::core::task::Poll;
 
@@ -6,9 +5,6 @@ use super::pollable::*;
 use super::refs::*;
 use crate::heap::*;
 use crate::trace::*;
-
-const TASKS_COUNT: usize = 128;
-const COMPLETERS_COUNT: usize = 256;
 
 pub enum IORegistryError {
     AllocationFailed,
@@ -50,18 +46,18 @@ impl IORingTask {
     }
 }
 
-pub struct IORingRegistry {
+pub struct IORingRegistry<const T: usize, const C: usize> {
     tasks_id: u32,
     tasks_count: usize,
-    tasks_slots: [usize; TASKS_COUNT],
-    tasks_array: [Option<IORingTask>; TASKS_COUNT],
+    tasks_slots: [usize; T],
+    tasks_array: [Option<IORingTask>; T],
     completers_id: u32,
     completers_count: usize,
-    completers_slots: [usize; COMPLETERS_COUNT],
-    completers_array: [Option<IORingTaskCompletion>; COMPLETERS_COUNT],
+    completers_slots: [usize; C],
+    completers_array: [Option<IORingTaskCompletion>; C],
 }
 
-impl IORingRegistry {
+impl<const T: usize, const C: usize> IORingRegistry<C, T> {
     pub fn tasks(&self) -> usize {
         self.tasks_count
     }
@@ -71,41 +67,48 @@ impl IORingRegistry {
     }
 }
 
-impl HeapLifetime for IORingRegistry {
-    fn ctor(&mut self) {
-        self.tasks_id = 0;
-        self.tasks_count = 0;
+impl<const T: usize, const C: usize> IORingRegistry<T, C> {
+    pub fn allocate() -> Result<Self, IORegistryError> {
+        let mut tasks_slots = [0; T];
+        let tasks_array = [const { None }; T];
 
-        self.completers_id = 0;
-        self.completers_count = 0;
+        let mut completers_slots = [0; C];
+        let completers_array = [const { None }; C];
 
         unsafe {
-            for i in 0..TASKS_COUNT {
-                *self.tasks_array.get_unchecked_mut(i) = None;
-                *self.tasks_slots.get_unchecked_mut(i) = i;
+            for i in 0..T {
+                *tasks_slots.get_unchecked_mut(i) = i;
             }
 
-            for i in 0..COMPLETERS_COUNT {
-                *self.completers_array.get_unchecked_mut(i) = None;
-                *self.completers_slots.get_unchecked_mut(i) = i;
+            for i in 0..C {
+                *completers_slots.get_unchecked_mut(i) = i;
             }
         }
+
+        Ok(Self {
+            tasks_id: 0,
+            tasks_count: 0,
+            tasks_array: tasks_array,
+            tasks_slots: tasks_slots,
+            completers_id: 0,
+            completers_count: 0,
+            completers_array: completers_array,
+            completers_slots: completers_slots,
+        })
     }
 
-    fn dtor(&mut self) {}
-}
+    fn drop_by_reference(&mut self) {
+        trace2(b"releasing registry droplet; tasks=%d, completers=%d\n", T, C);
+    }
 
-impl IORingRegistry {
-    pub fn allocate() -> Result<Boxed<IORingRegistry>, IORegistryError> {
-        match Heap::allocate(mem::size_of::<IORingRegistry>()) {
-            Ok(heap) => Ok(heap.boxed()),
-            Err(_) => Err(IORegistryError::AllocationFailed),
-        }
+    pub fn droplet(self) -> Droplet<Self> {
+        trace2(b"creating registry droplet; tasks=%d, completers=%d\n", T, C);
+        Droplet::from(self, Self::drop_by_reference)
     }
 }
 
-impl IORingRegistry {
-    pub fn append_task(&mut self, task: PollableTarget) -> Result<IORingTaskRef, IORegistryError> {
+impl<const T: usize, const C: usize> IORingRegistry<T, C> {
+    pub fn prepare_task(&mut self) -> Result<IORingTaskRef, IORegistryError> {
         let tidx = match self.tasks_slots.get(self.tasks_count) {
             Some(tidx) => {
                 trace1(b"appending task to registry; tidx=%d\n", *tidx);
@@ -120,9 +123,15 @@ impl IORingRegistry {
         self.tasks_id = self.tasks_id.wrapping_add(1);
         self.tasks_count = self.tasks_count.wrapping_add(1);
 
+        trace2(b"appending task to registry; tidx=%d, tid=%d\n", tidx, self.tasks_id);
+        Ok(IORingTaskRef::new(tidx, self.tasks_id))
+    }
+
+    pub fn append_task(&mut self, task: IORingTaskRef, target: PollableTarget) -> IORingTaskRef {
+        let (tid, tidx) = (task.tid(), task.tidx());
         let task = IORingTask {
-            tid: self.tasks_id,
-            target: task,
+            tid: tid,
+            target: target,
             completions: 0,
             flags: 0,
             result: None,
@@ -132,12 +141,12 @@ impl IORingRegistry {
             *self.tasks_array.get_unchecked_mut(tidx) = Some(task);
         }
 
-        trace2(b"appending task to registry; tidx=%d, tid=%d\n", tidx, self.tasks_id);
-        Ok(IORingTaskRef::new(tidx, self.tasks_id))
+        trace2(b"appending task to registry; tidx=%d, tid=%d\n", tidx, tid);
+        IORingTaskRef::new(tidx, tid)
     }
 
-    pub fn append_completer(&mut self, task: IORingTaskRef) -> Result<IORingCompleterRef, IORegistryError> {
-        let tidx = task.tidx() % TASKS_COUNT;
+    pub fn append_completer(&mut self, task: &IORingTaskRef) -> Result<IORingCompleterRef, IORegistryError> {
+        let tidx = task.tidx() % T;
         let node = unsafe { self.tasks_array.get_unchecked_mut(tidx) };
 
         let task = match node {
@@ -179,9 +188,9 @@ impl IORingRegistry {
     }
 }
 
-impl IORingRegistry {
+impl<const T: usize, const C: usize> IORingRegistry<T, C> {
     pub fn remove_task(&mut self, task: &IORingTaskRef) -> Result<IORingTask, IORegistryError> {
-        let tidx = task.tidx() % TASKS_COUNT;
+        let tidx = task.tidx() % T;
         let node = unsafe { self.tasks_array.get_unchecked_mut(tidx) };
 
         let found = match node {
@@ -208,8 +217,11 @@ impl IORingRegistry {
         }
     }
 
-    pub fn remove_completer(&mut self, completer: &IORingCompleterRef) -> Result<IORingTaskCompletion, IORegistryError> {
-        let cidx = completer.cidx() % COMPLETERS_COUNT;
+    pub fn remove_completer(
+        &mut self,
+        completer: &IORingCompleterRef,
+    ) -> Result<IORingTaskCompletion, IORegistryError> {
+        let cidx = completer.cidx() % C;
         let node = unsafe { self.completers_array.get_unchecked_mut(cidx) };
 
         let found = match node {
@@ -233,13 +245,13 @@ impl IORingRegistry {
     }
 }
 
-impl IORingRegistry {
+impl<const T: usize, const C: usize> IORingRegistry<T, C> {
     pub fn poll(
         &mut self,
         task: &IORingTaskRef,
         cx: &mut Context<'_>,
     ) -> Result<(usize, Poll<Option<&'static [u8]>>), IORegistryError> {
-        let tidx = task.tidx() % TASKS_COUNT;
+        let tidx = task.tidx() % T;
         let node = unsafe { self.tasks_array.get_unchecked_mut(tidx) };
 
         // task has to be guarded against tid
@@ -263,9 +275,13 @@ impl IORingRegistry {
     }
 }
 
-impl IORingRegistry {
-    pub fn complete(&mut self, completer: &IORingCompleterRef, result: i32) -> Result<(IORingTaskRef, bool, usize), IORegistryError> {
-        let cidx = completer.cidx() % COMPLETERS_COUNT;
+impl<const T: usize, const C: usize> IORingRegistry<T, C> {
+    pub fn complete(
+        &mut self,
+        completer: &IORingCompleterRef,
+        result: i32,
+    ) -> Result<(IORingTaskRef, bool, usize), IORegistryError> {
+        let cidx = completer.cidx() % C;
         let node = unsafe { self.completers_array.get_unchecked_mut(cidx) };
 
         trace2(b"looking for completions; cidx=%d, res=%d\n", cidx, result);
@@ -281,7 +297,7 @@ impl IORingRegistry {
         completer.flags |= 0x01;
         completer.result = Some(result);
 
-        let tidx = completer.tidx % TASKS_COUNT;
+        let tidx = completer.tidx % T;
         let node = unsafe { self.tasks_array.get_unchecked_mut(tidx) };
 
         trace1(b"looking for tasks; tidx=%d\n", tidx);
@@ -316,7 +332,7 @@ mod tests {
 
     #[test]
     fn allocates_registry() {
-        let registry = match IORingRegistry::allocate() {
+        let registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
@@ -332,20 +348,20 @@ mod tests {
     #[test]
     fn appends_task_once() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
         assert_eq!(task.tidx(), 0);
@@ -363,23 +379,23 @@ mod tests {
     #[test]
     fn appends_completer_once() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
-        let completer = match registry.append_completer(task) {
+        let completer = match registry.append_completer(&task) {
             Err(_) => return assert!(false),
             Ok(completer) => completer,
         };
@@ -399,20 +415,20 @@ mod tests {
     #[test]
     fn polls_task() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
         let raw = make_waker(ptr::null());
@@ -434,20 +450,20 @@ mod tests {
     #[test]
     fn removes_task_if_present_completed_polled() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
         let raw = make_waker(ptr::null());
@@ -480,20 +496,20 @@ mod tests {
     #[test]
     fn removes_task_if_present_completed_not_polled() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
         match registry.remove_task(&task) {
@@ -513,23 +529,23 @@ mod tests {
     #[test]
     fn removes_task_if_present_completed_polled_but_with_awaiting_completer() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
-        match registry.append_completer(task) {
+        match registry.append_completer(&task) {
             Err(_) => return assert!(false),
             Ok(_) => (),
         }
@@ -562,7 +578,7 @@ mod tests {
     #[test]
     fn removes_task_if_not_present() {
         let task = IORingTaskRef::new(2, 1);
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
@@ -584,23 +600,23 @@ mod tests {
     #[test]
     fn removes_completer_if_present_completed() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
-        let completer = match registry.append_completer(task) {
+        let completer = match registry.append_completer(&task) {
             Err(_) => return assert!(false),
             Ok(completer) => completer,
         };
@@ -638,23 +654,23 @@ mod tests {
     #[test]
     fn removes_completer_if_present_not_completed() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
-        let completer = match registry.append_completer(task) {
+        let completer = match registry.append_completer(&task) {
             Err(_) => return assert!(false),
             Ok(completer) => completer,
         };
@@ -678,23 +694,23 @@ mod tests {
     #[test]
     fn removes_completer_if_present_not_found() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
-        match registry.append_completer(task) {
+        match registry.append_completer(&task) {
             Err(_) => assert!(false),
             Ok(_) => assert!(true),
         }
@@ -719,23 +735,23 @@ mod tests {
     #[test]
     fn completes_if_both_task_and_completer_present() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
-        let completer = match registry.append_completer(task) {
+        let completer = match registry.append_completer(&task) {
             Err(_) => return assert!(false),
             Ok(completer) => completer,
         };
@@ -773,23 +789,23 @@ mod tests {
     #[test]
     fn completes_if_task_present_but_completer_not() {
         let mut pool = HeapPool::<1>::new();
-        let mut registry = match IORingRegistry::allocate() {
+        let mut registry = match IORingRegistry::<2, 4>::allocate() {
             Ok(registry) => registry,
             _ => return assert!(false),
         };
 
         let target = async { None::<&'static [u8]> };
-        let pollable = match PollableTarget::allocate(&mut pool, target) {
+        let target = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
             Some(target) => target,
         };
 
-        let task = match registry.append_task(pollable) {
+        let task = match registry.prepare_task() {
             Err(_) => return assert!(false),
-            Ok(task) => task,
+            Ok(task) => registry.append_task(task, target),
         };
 
-        match registry.append_completer(task) {
+        match registry.append_completer(&task) {
             Err(_) => return assert!(false),
             Ok(_) => (),
         }

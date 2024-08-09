@@ -52,8 +52,8 @@ impl<T: IORingSubmitBuffer + Unpin> Future for StdOutWrite<T> {
         match this.token.take() {
             Some(token) => {
                 let result = match token.extract(cx.waker()) {
-                    IORingTaskTokenExtract::Succeeded(value) => value,
-                    IORingTaskTokenExtract::Failed(token) => {
+                    Ok(value) => value,
+                    Err(token) => {
                         this.token = Some(token);
                         return Poll::Pending;
                     }

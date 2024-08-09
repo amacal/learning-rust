@@ -11,27 +11,41 @@ use crate::trace::*;
 use crate::uring::*;
 
 impl IORuntimeOps {
-    pub fn open_file<'a, TPath>(&mut self, path: &'a TPath) -> FileOpen<'a, TPath>
+    pub fn open_file<'a, TPath>(
+        &mut self,
+        path: &'a TPath,
+    ) -> impl Future<Output = Result<FileDescriptor, Option<i32>>> + 'a
     where
         TPath: AsNullTerminatedRef,
     {
         FileOpen {
             path: path,
             token: None,
+            ops: self.duplicate(),
         }
     }
 
-    pub fn close_file(&mut self, descriptor: FileDescriptor) -> FileClose {
+    pub fn close_file(&mut self, descriptor: FileDescriptor) -> impl Future<Output = Result<(), Option<i32>>> {
         FileClose {
-            descriptor: descriptor,
             token: None,
+            ops: self.duplicate(),
+            descriptor: descriptor,
         }
     }
 
-    pub fn read_file<TBuffer>(&mut self, file: &FileDescriptor, buffer: TBuffer, offset: u64) -> FileRead<TBuffer> {
+    pub fn read_file<'a, TBuffer>(
+        &mut self,
+        file: &FileDescriptor,
+        buffer: &'a TBuffer,
+        offset: u64,
+    ) -> impl Future<Output = Result<u32, Option<i32>>> + 'a
+    where
+        TBuffer: IORingSubmitBuffer + Unpin + 'a,
+    {
         FileRead {
             fd: file.value,
-            buffer: Some(buffer),
+            ops: self.duplicate(),
+            buffer: buffer,
             offset: offset,
             token: None,
         }
@@ -47,171 +61,115 @@ where
     TPath: AsNullTerminatedRef,
 {
     path: &'a TPath,
+    ops: IORuntimeOps,
     token: Option<IORingTaskToken>,
-}
-
-#[allow(dead_code)]
-pub enum FileOpenResult {
-    Succeeded(FileDescriptor),
-    OperationFailed(i32),
-    InternallyFailed(),
 }
 
 impl<'a, TPath> Future for FileOpen<'a, TPath>
 where
     TPath: AsNullTerminatedRef,
 {
-    type Output = FileOpenResult;
+    type Output = Result<FileDescriptor, Option<i32>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling file-open; addr=%x\n", this.path.as_ptr());
+        trace2(b"# polling file-open; tid=%d, addr=%x\n", this.ops.tid(), this.path.as_ptr());
 
-        match this.token.take() {
-            Some(token) => {
-                let result = match token.extract(cx.waker()) {
-                    IORingTaskTokenExtract::Succeeded(value) => value,
-                    IORingTaskTokenExtract::Failed(token) => {
-                        this.token = Some(token);
-                        return Poll::Pending;
-                    }
-                };
+        let op = IORingSubmitEntry::open_at(this.path.as_ptr());
+        let (token, poll) = match this.token.take() {
+            None => match this.ops.submit(op) {
+                None => (None, Poll::Ready(Err(None))),
+                Some(token) => (Some(token), Poll::Pending),
+            },
+            Some(token) => match token.extract_ctx(&mut this.ops.ctx) {
+                Err(token) => (Some(token), Poll::Pending),
+                Ok(val) => match val {
+                    val if val < 0 => (None, Poll::Ready(Err(Some(val)))),
+                    val => match u32::try_from(val) {
+                        Ok(fd) => (None, Poll::Ready(Ok(FileDescriptor { value: fd }))),
+                        Err(_) => (None, Poll::Ready(Err(None))),
+                    },
+                },
+            },
+        };
 
-                if result < 0 {
-                    return Poll::Ready(FileOpenResult::OperationFailed(result));
-                }
-
-                return Poll::Ready(FileOpenResult::Succeeded(FileDescriptor { value: result as u32 }));
-            }
-
-            None => {
-                let op = IORingSubmitEntry::open_at(this.path.as_ptr());
-                let token = match IORingTaskToken::submit(cx.waker(), op) {
-                    Some(token) => token,
-                    None => return Poll::Ready(FileOpenResult::InternallyFailed()),
-                };
-
-                this.token = Some(token);
-            }
-        }
-
-        Poll::Pending
+        this.token = token;
+        poll
     }
 }
 
 pub struct FileClose {
+    ops: IORuntimeOps,
     descriptor: FileDescriptor,
     token: Option<IORingTaskToken>,
 }
 
-#[allow(dead_code)]
-pub enum FileCloseResult {
-    Succeeded(),
-    OperationFailed(i32),
-    InternallyFailed(),
-}
-
 impl Future for FileClose {
-    type Output = FileCloseResult;
+    type Output = Result<(), Option<i32>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling file-close; fd=%d\n", this.descriptor.value);
+        trace2(b"# polling file-close; tid=%d, fd=%d\n", this.ops.tid(), this.descriptor.value);
 
-        match this.token.take() {
-            Some(token) => {
-                let result = match token.extract(cx.waker()) {
-                    IORingTaskTokenExtract::Succeeded(value) => value,
-                    IORingTaskTokenExtract::Failed(token) => {
-                        this.token = Some(token);
-                        return Poll::Pending;
-                    }
-                };
+        let op = IORingSubmitEntry::close(this.descriptor.value);
+        let (token, poll) = match this.token.take() {
+            None => match this.ops.submit(op) {
+                None => (None, Poll::Ready(Err(None))),
+                Some(token) => (Some(token), Poll::Pending),
+            },
+            Some(token) => match token.extract_ctx(&mut this.ops.ctx) {
+                Err(token) => (Some(token), Poll::Pending),
+                Ok(val) => match val {
+                    val if val < 0 => (None, Poll::Ready(Err(Some(val)))),
+                    _ => (None, Poll::Ready(Ok(()))),
+                },
+            },
+        };
 
-                if result < 0 {
-                    return Poll::Ready(FileCloseResult::OperationFailed(result));
-                }
-
-                return Poll::Ready(FileCloseResult::Succeeded());
-            }
-
-            None => {
-                let op = IORingSubmitEntry::close(this.descriptor.value);
-                let token = match IORingTaskToken::submit(cx.waker(), op) {
-                    Some(token) => token,
-                    None => return Poll::Ready(FileCloseResult::InternallyFailed()),
-                };
-
-                this.token = Some(token);
-            }
-        }
-
-        Poll::Pending
+        this.token = token;
+        poll
     }
 }
 
-pub struct FileRead<TBuffer> {
+pub struct FileRead<'a, TBuffer> {
     fd: u32,
     offset: u64,
-    buffer: Option<TBuffer>,
+    ops: IORuntimeOps,
+    buffer: &'a TBuffer,
     token: Option<IORingTaskToken>,
 }
 
-#[allow(dead_code)]
-pub enum FileReadResult<TBuffer> {
-    Succeeded(TBuffer, u32),
-    OperationFailed(TBuffer, i32),
-    InternallyFailed(),
-}
-
-impl<TBuffer> Future for FileRead<TBuffer>
+impl<'a, TBuffer> Future for FileRead<'a, TBuffer>
 where
-    TBuffer: IORingSubmitBuffer + Unpin,
+    TBuffer: IORingSubmitBuffer + Unpin + 'a,
 {
-    type Output = FileReadResult<TBuffer>;
+    type Output = Result<u32, Option<i32>>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling file-read; fd=%d\n", this.fd);
+        trace2(b"# polling file-read; tid=%d, fd=%d\n", this.ops.tid(), this.fd);
 
-        match this.token.take() {
-            Some(token) => {
-                let result = match token.extract(cx.waker()) {
-                    IORingTaskTokenExtract::Succeeded(value) => value,
-                    IORingTaskTokenExtract::Failed(token) => {
-                        this.token = Some(token);
-                        return Poll::Pending;
-                    }
-                };
+        let (buf, len) = this.buffer.extract();
+        let op = IORingSubmitEntry::read(this.fd, buf, len, this.offset);
 
-                let buffer = match this.buffer.take() {
-                    Some(value) => value,
-                    None => return Poll::Ready(FileReadResult::InternallyFailed()),
-                };
+        let (token, poll) = match this.token.take() {
+            None => match this.ops.submit(op) {
+                None => (None, Poll::Ready(Err(None))),
+                Some(token) => (Some(token), Poll::Pending),
+            },
+            Some(token) => match token.extract_ctx(&mut this.ops.ctx) {
+                Err(token) => (Some(token), Poll::Pending),
+                Ok(val) => match val {
+                    val if val < 0 => (None, Poll::Ready(Err(Some(val)))),
+                    val => match u32::try_from(val) {
+                        Ok(cnt) => (None, Poll::Ready(Ok(cnt))),
+                        Err(_) => (None, Poll::Ready(Err(None))),
+                    },
+                },
+            },
+        };
 
-                if result < 0 {
-                    return Poll::Ready(FileReadResult::OperationFailed(buffer, result));
-                }
-
-                return Poll::Ready(FileReadResult::Succeeded(buffer, result as u32));
-            }
-
-            None => {
-                let (buf, len) = match &this.buffer {
-                    Some(value) => value.extract(),
-                    None => return Poll::Ready(FileReadResult::InternallyFailed()),
-                };
-
-                let op = IORingSubmitEntry::read(this.fd, buf, len, this.offset);
-                let token = match IORingTaskToken::submit(cx.waker(), op) {
-                    Some(token) => token,
-                    None => return Poll::Ready(FileReadResult::InternallyFailed()),
-                };
-
-                this.token = Some(token);
-            }
-        }
-
-        Poll::Pending
+        this.token = token;
+        poll
     }
 }

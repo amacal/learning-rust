@@ -10,7 +10,7 @@ pub struct FasterCommand {
 
 impl FasterCommand {
     pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
-        let mut buffer = match Heap::allocate(32 * 4096) {
+        let buffer = match Heap::allocate(32 * 4096) {
             Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
             Ok(heap) => heap.droplet(),
         };
@@ -22,16 +22,16 @@ impl FasterCommand {
         };
 
         let file = match ops.open_file(&path).await {
-            FileOpenResult::Succeeded(value) => value,
-            FileOpenResult::OperationFailed(_) => return Some(APP_FILE_OPENING_FAILED),
-            FileOpenResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+            Ok(value) => value,
+            Err(Some(_)) => return Some(APP_FILE_OPENING_FAILED),
+            Err(None) => return Some(APP_INTERNALLY_FAILED),
         };
 
         let mut offset = 0;
         let mut timeout = ops.timeout(self.delay, 0);
 
         loop {
-            let read = ops.read_file(&file, buffer, offset);
+            let read = ops.read_file(&file, &buffer, offset);
             let (result, returned) = match select(timeout, read).await {
                 SelectResult::Failed() => return Some(APP_SELECT_FAILED),
                 SelectResult::Result2(result, timeout) => (result, timeout),
@@ -42,15 +42,14 @@ impl FasterCommand {
                 },
             };
 
-            let (buf, read) = match result {
-                FileReadResult::Succeeded(buffer, read) => (buffer, read),
-                FileReadResult::OperationFailed(_, _) => return Some(APP_FILE_READING_FAILED),
-                FileReadResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+            let read = match result {
+                Ok(cnt) => cnt,
+                Err(None) => return Some(APP_INTERNALLY_FAILED),
+                Err(Some(_)) => return Some(APP_FILE_READING_FAILED),
             };
 
             timeout = returned;
             offset += read as u64;
-            buffer = buf;
 
             if read == 0 {
                 break;

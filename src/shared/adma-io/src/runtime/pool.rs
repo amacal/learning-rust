@@ -19,54 +19,45 @@ pub struct IORuntimePool<const T: usize> {
     queue_counter: usize,
 }
 
-pub enum IORuntimePoolAllocation<const T: usize> {
-    Succeeded(Boxed<IORuntimePool<T>>),
-    AllocationFailed(isize),
-    ThreadingFailed(isize),
-    QueueFailed(isize),
-}
-
 impl<const T: usize> IORuntimePool<T> {
-    pub fn allocate() -> IORuntimePoolAllocation<T> {
+    pub fn allocate() -> Result<IORuntimePool<T>, ()> {
         let queue = match PipeChannel::create() {
             Ok(value) => value,
-            Err(err) => return IORuntimePoolAllocation::QueueFailed(err),
+            Err(_) => return Err(()),
         };
 
-        let mut instance: Boxed<IORuntimePool<T>> = match Heap::allocate(mem::size_of::<IORuntimePool<T>>()) {
-            Ok(heap) => heap.boxed(),
-            Err(err) => return IORuntimePoolAllocation::AllocationFailed(err),
-        };
+        let mut workers_slots: [usize; T] = [0; T];
+        let mut workers_array: [Option<Worker>; T] = [const { None }; T];
 
         for i in 0..T {
             let worker = match Worker::start() {
                 WorkerStart::Succeeded(worker) => worker,
-                WorkerStart::StartFailed(err) => return IORuntimePoolAllocation::ThreadingFailed(err),
-                WorkerStart::PipesFailed(err) => return IORuntimePoolAllocation::ThreadingFailed(err),
-                WorkerStart::StackFailed(err) => return IORuntimePoolAllocation::AllocationFailed(err),
+                WorkerStart::StartFailed(_) => return Err(()),
+                WorkerStart::PipesFailed(_) => return Err(()),
+                WorkerStart::StackFailed(_) => return Err(()),
             };
 
-            instance.workers_array[i] = Some(worker);
-            instance.workers_slots[i] = i;
+            workers_array[i] = Some(worker);
+            workers_slots[i] = i;
         }
 
-        // extract channel into its primitives pipes
         let (incoming, outgoing) = queue.extract();
+        let instance = IORuntimePool{
+            queue_counter: 0,
+            queue_incoming: incoming,
+            queue_outgoing: outgoing,
+            workers_count: 0,
+            workers_slots: workers_slots,
+            workers_array: workers_array,
+            workers_completers: [const { None }; T],
+        };
 
-        instance.queue_counter = 0;
-        instance.workers_count = 0;
-
-        instance.queue_incoming = incoming;
-        instance.queue_outgoing = outgoing;
-
-        IORuntimePoolAllocation::Succeeded(instance)
+        Ok(instance)
     }
-}
 
-impl<const T: usize> HeapLifetime for IORuntimePool<T> {
-    fn ctor(&mut self) {}
+    fn drop_ref(&mut self) {
+        trace1(b"releasing threads droplet; size=%d\n", T);
 
-    fn dtor(&mut self) {
         sys_close(self.queue_incoming);
         sys_close(self.queue_outgoing);
 
@@ -75,6 +66,12 @@ impl<const T: usize> HeapLifetime for IORuntimePool<T> {
                 worker.release()
             }
         }
+    }
+
+    pub fn droplet(self) -> Droplet<Self> {
+        trace1(b"creating threads droplet; size=%d\n", T);
+        Droplet::from(self, Self::drop_ref)
+
     }
 }
 
@@ -225,7 +222,7 @@ mod tests {
     #[test]
     fn allocates_pool() {
         let pool = match IORuntimePool::<16>::allocate() {
-            IORuntimePoolAllocation::Succeeded(pool) => pool,
+            Ok(pool) => pool,
             _ => return assert!(false),
         };
 
@@ -258,7 +255,7 @@ mod tests {
             };
 
             let mut pool = match IORuntimePool::<1>::allocate() {
-                IORuntimePoolAllocation::Succeeded(pool) => pool,
+                Ok(pool) => pool,
                 _ => return assert!(false),
             };
 
@@ -357,7 +354,7 @@ mod tests {
             };
 
             let mut pool = match IORuntimePool::<1>::allocate() {
-                IORuntimePoolAllocation::Succeeded(pool) => pool,
+                Ok(pool) => pool,
                 _ => return assert!(false),
             };
 
@@ -497,7 +494,7 @@ mod tests {
             };
 
             let mut pool = match IORuntimePool::<1>::allocate() {
-                IORuntimePoolAllocation::Succeeded(pool) => pool,
+                Ok(pool) => pool,
                 _ => return assert!(false),
             };
 
