@@ -36,9 +36,9 @@ impl FasterCommand {
                 SelectResult::Failed() => return Some(APP_SELECT_FAILED),
                 SelectResult::Result2(result, timeout) => (result, timeout),
                 SelectResult::Result1(result, _) => match result {
-                    TimeoutResult::Succeeded() => break,
-                    TimeoutResult::OperationFailed(_) => return Some(APP_DELAY_FAILED),
-                    TimeoutResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+                    Ok(()) => break,
+                    Err(Some(_)) => return Some(APP_DELAY_FAILED),
+                    Err(None) => return Some(APP_INTERNALLY_FAILED),
                 },
             };
 

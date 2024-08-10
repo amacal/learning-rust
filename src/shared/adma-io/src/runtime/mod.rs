@@ -11,7 +11,6 @@ mod refs;
 mod registry;
 mod spawn;
 mod thread;
-mod time;
 mod token;
 mod utils;
 
@@ -20,5 +19,4 @@ pub use self::file::*;
 pub use self::ops::*;
 pub use self::pipe::*;
 pub use self::spawn::*;
-pub use self::time::*;
 pub use self::utils::*;

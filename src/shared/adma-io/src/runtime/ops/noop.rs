@@ -25,7 +25,7 @@ impl Future for NoopFuture {
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace0(b"# polling noop\n");
+        trace1(b"# polling noop; tid=%d\n", this.ops.tid());
 
         let (token, poll) = match this.token.take() {
             None => match this.ops.submit(IORingSubmitEntry::Noop()) {

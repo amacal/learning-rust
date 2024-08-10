@@ -12,17 +12,17 @@ impl SpawnCommand {
 
         for i in 0..self.times {
             match ops.timeout(self.delay, 0).await {
-                TimeoutResult::Succeeded() => (),
-                TimeoutResult::OperationFailed(_) => return Some(APP_DELAY_FAILED),
-                TimeoutResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+                Ok(()) => (),
+                Err(Some(_)) => return Some(APP_DELAY_FAILED),
+                Err(None) => return Some(APP_INTERNALLY_FAILED),
             };
 
             let spawned = ops.spawn_io(move |mut ops| async move {
                 for _ in 0..i + 1 {
                     let msg: Option<&'static [u8]> = match ops.timeout(5, 0).await {
-                        TimeoutResult::Succeeded() => continue,
-                        TimeoutResult::OperationFailed(_) => Some(APP_DELAY_FAILED),
-                        TimeoutResult::InternallyFailed() => Some(APP_INTERNALLY_FAILED),
+                        Ok(()) => continue,
+                        Err(Some(_)) => Some(APP_DELAY_FAILED),
+                        Err(None) => Some(APP_INTERNALLY_FAILED),
                     };
 
                     if let Some(msg) = msg {

@@ -592,8 +592,8 @@ mod tests {
 
         let callback = |mut ops: IORuntimeOps| async move {
             match ops.timeout(0, 1).await {
-                TimeoutResult::Succeeded() => assert!(true),
-                _ => assert!(false),
+                Ok(()) => assert!(true),
+                Err(_) => assert!(false),
             }
 
             None::<&'static [u8]>

@@ -31,7 +31,7 @@ extern "C" fn main(args: &'static ProcessArguments) -> ! {
         Some(b"spawn") => runtime.run(|ops| SpawnCommand { times: 30, delay: 3 }.execute(ops)),
         Some(b"sync") => runtime.run(|_| SyncCommand { msg: b"Hello, World!\n" }.execute()),
         Some(b"thread") => runtime.run(|ops| ThreadCommand { ios: 100, cpus: 100 }.execute(ops)),
-        Some(b"tick") => runtime.run(|ops| TickCommand { ticks: 2, delay: 1 }.execute(ops)),
+        Some(b"tick") => runtime.run(|ops| TickCommand { ticks: 30, delay: 1 }.execute(ops)),
         _ => fail(-2, b"I/O Runtime: Unrecognized command.\n"),
     };
 

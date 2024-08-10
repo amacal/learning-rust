@@ -6,6 +6,7 @@ mod open;
 mod read;
 mod std;
 mod write;
+mod time;
 
 use super::pool::*;
 use super::refs::*;
