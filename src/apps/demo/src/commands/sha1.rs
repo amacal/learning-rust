@@ -68,18 +68,15 @@ impl Sha1Command {
                     };
 
                     // to process it outside event loop
-                    let task = ops.spawn_cpu(move || -> Result<Sha1, ()> {
+                    let task = ops.execute(move || -> Result<Sha1, ()> {
                         // just processing a slice and returning new self
                         Ok(sha1.update(slice.ptr() as *const u8, slice.len()))
                     });
 
                     // the cpu task has to be awaited
-                    sha1 = match task {
-                        None => return Some(APP_CPU_SPAWNING_FAILED),
-                        Some(task) => match task.await {
-                            SpawnCPUResult::Succeeded(Some(Ok(sha1))) => sha1,
-                            _ => return Some(APP_CPU_SPAWNING_FAILED),
-                        },
+                    sha1 = match task.await {
+                        Ok(Ok(sha1)) => sha1,
+                        Ok(_) | Err(_) => return Some(APP_CPU_SPAWNING_FAILED),
                     };
 
                     // and in case we didn't full entire buffer
@@ -105,12 +102,9 @@ impl Sha1Command {
                 };
 
                 // a cpu task has to be awaited
-                let hash: [u32; 5] = match ops.spawn_cpu(task) {
-                    None => return Some(APP_CPU_SPAWNING_FAILED),
-                    Some(task) => match task.await {
-                        SpawnCPUResult::Succeeded(Some(Ok(hash))) => hash,
-                        _ => return Some(APP_CPU_SPAWNING_FAILED),
-                    },
+                let hash: [u32; 5] = match ops.execute(task).await {
+                    Ok(Ok(hash)) => hash,
+                    Ok(_) | Err(_) => return Some(APP_CPU_SPAWNING_FAILED),
                 };
 
                 // a message like sha1sum output is constructed

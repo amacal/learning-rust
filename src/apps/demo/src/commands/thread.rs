@@ -12,17 +12,9 @@ impl ThreadCommand {
         for j in 0..self.ios {
             let task = ops.spawn(move |mut ops| async move {
                 for i in 0..self.cpus {
-                    let value = match ops.spawn_cpu(move || -> Result<u32, ()> { Ok(i + j) }) {
-                        None => return Some(APP_CPU_SPAWNING_FAILED),
-                        Some(task) => match task.await {
-                            SpawnCPUResult::Succeeded(value) => value,
-                            SpawnCPUResult::OperationFailed() => return Some(APP_INTERNALLY_FAILED),
-                            SpawnCPUResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
-                        },
-                    };
-
-                    if let Some(Ok(val)) = value {
-                        trace3(b"completed %d %d %d\n", i, j, val);
+                    match ops.execute(move || -> Result<u32, ()> { Ok(i + j) }).await {
+                        Err(_) | Ok(Err(_)) => return Some(APP_CPU_SPAWNING_FAILED),
+                        Ok(Ok(value)) => trace3(b"completed %d %d %d\n", i, j, value),
                     }
                 }
 

@@ -1,13 +1,13 @@
 mod close;
-mod core;
 mod ctx;
+mod execute;
 mod noop;
 mod open;
 mod read;
-mod std;
-mod write;
-mod time;
 mod spawn;
+mod std;
+mod time;
+mod write;
 
 use super::pool::*;
 use super::refs::*;

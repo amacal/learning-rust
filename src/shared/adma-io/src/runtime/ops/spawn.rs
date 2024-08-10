@@ -15,14 +15,14 @@ impl IORuntimeOps {
         TFuture: Future<Output = Option<&'static [u8]>> + Send + 'a,
         TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send + 'a,
     {
-        Spawn {
+        SpawnFuture {
             ops: self.duplicate(),
             call: Some(call),
         }
     }
 }
 
-struct Spawn<TFnOnce, TFuture>
+struct SpawnFuture<TFnOnce, TFuture>
 where
     TFuture: Future<Output = Option<&'static [u8]>> + Send,
     TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send,
@@ -31,14 +31,14 @@ where
     call: Option<TFnOnce>,
 }
 
-unsafe impl<TFnOnce, TFuture> Send for Spawn<TFnOnce, TFuture>
+unsafe impl<TFnOnce, TFuture> Send for SpawnFuture<TFnOnce, TFuture>
 where
     TFuture: Future<Output = Option<&'static [u8]>> + Send,
     TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send,
 {
 }
 
-impl<TFnOnce, TFuture> Future for Spawn<TFnOnce, TFuture>
+impl<TFnOnce, TFuture> Future for SpawnFuture<TFnOnce, TFuture>
 where
     TFuture: Future<Output = Option<&'static [u8]>> + Send,
     TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send,
