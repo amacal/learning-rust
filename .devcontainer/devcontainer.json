@@ -10,7 +10,8 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-                "rust-lang.rust-analyzer"
+                "rust-lang.rust-analyzer",
+				"fill-labs.dependi"
 			],
 			"settings": {
 				"files.trimTrailingWhitespace": true,

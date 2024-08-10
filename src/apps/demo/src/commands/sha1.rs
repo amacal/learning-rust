@@ -28,7 +28,7 @@ impl Sha1Command {
                 };
 
                 // a file descriptor for a file we opened
-                let file: FileDescriptor = match ops.open_file(&path).await {
+                let file: FileDescriptor = match ops.open_at(&path).await {
                     Ok(value) => value,
                     _ => return Some(APP_FILE_OPENING_FAILED),
                 };
@@ -126,7 +126,7 @@ impl Sha1Command {
                 }
 
                 // and finally we close a file
-                match ops.close_file(file).await {
+                match ops.close(file).await {
                     Err(_) => return Some(APP_FILE_CLOSING_FAILED),
                     Ok(()) => (),
                 }

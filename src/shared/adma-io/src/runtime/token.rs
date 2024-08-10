@@ -2,10 +2,9 @@ use ::core::task::Waker;
 
 use super::callable::*;
 use super::core::*;
+use super::ops::*;
 use super::pollable::*;
 use super::refs::*;
-use super::IORuntimeContext;
-use super::IORuntimeOps;
 use crate::uring::*;
 
 pub struct IORingTaskToken {
