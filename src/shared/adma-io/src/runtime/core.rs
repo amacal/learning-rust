@@ -317,35 +317,24 @@ pub enum IORingRuntimeRun {
 }
 
 impl IORingRuntime {
-    pub fn run<'a, F, C>(&mut self, callback: C) -> IORingRuntimeRun
+    pub fn run<'a, TFuture, TFnOnce>(&mut self, callback: TFnOnce) -> IORingRuntimeRun
     where
-        F: Future<Output = Option<&'static [u8]>> + Send + 'a,
-        C: FnOnce(IORuntimeOps) -> F + Unpin + Send + 'a,
+        TFuture: Future<Output = Option<&'static [u8]>> + Send + 'a,
+        TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send + 'a,
     {
-        let task = match self.ctx.registry.prepare_task() {
-            Ok(val) => val,
-            Err(_) => return IORingRuntimeRun::InternallyFailed(),
-        };
 
-        let ops = IORuntimeContext::ops(&mut self.ctx, task);
-        let target = callback.call_once((ops,));
+        let runtime = self as *mut IORingRuntime;
+        let context = IORingRuntimeContext { task: IORingTaskRef::new(0, 0), runtime };
+        let data = &context as *const IORingRuntimeContext;
+        let waker = unsafe { Waker::from_raw(make_waker(data as *const ())) };
 
-        trace0(b"allocating memory to pin a future\n");
-        let pinned = match PollableTarget::allocate(&mut self.ctx.heap, target) {
-            Some(pinned) => pinned,
-            None => return IORingRuntimeRun::AllocationFailed(0),
-        };
+        let mut result: Option<&'static [u8]> = None;
+        let mut cx = Context::from_waker(&waker);
 
-        // spawning may fail due to many reasons
-        let mut result = None;
-        trace0(b"spawning pinned future\n");
-
-        let spawned = match self.spawn(Some(task), pinned) {
-            IORingRuntimeSpawn::InternallyFailed() => return IORingRuntimeRun::InternallyFailed(),
-            IORingRuntimeSpawn::NotEnoughSlots() => return IORingRuntimeRun::InternallyFailed(),
-            IORingRuntimeSpawn::Pending(task) => Some(task),
-            IORingRuntimeSpawn::Draining(task) => Some(task),
-            IORingRuntimeSpawn::Completed(res) => {
+        let spawned = match IORuntimeContext::spawn(&mut self.ctx, callback, &mut cx) {
+            None => return IORingRuntimeRun::InternallyFailed(),
+            Some((Some(task), _)) => Some(task),
+            Some((_, res)) => {
                 result = res;
                 None
             }
@@ -548,7 +537,6 @@ impl IORingRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::*;
 
     #[test]
     fn allocates_runtime() {

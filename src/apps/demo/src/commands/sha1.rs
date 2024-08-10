@@ -14,7 +14,7 @@ impl Sha1Command {
     pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
         for arg in 2..self.args.len() {
             // a task will be spawned for each argument
-            let task = ops.spawn_io(move |mut ops| async move {
+            let task = ops.spawn(move |mut ops| async move {
                 // an auto dropped memory for a buffer
                 let buffer: Droplet<Heap> = match Heap::allocate(32 * 4096) {
                     Ok(value) => value.droplet(),
@@ -135,12 +135,9 @@ impl Sha1Command {
             });
 
             // and task has to be awaited to be executed
-            match task {
-                None => return Some(APP_IO_SPAWNING_FAILED),
-                Some(task) => match task.await {
-                    Err(()) => return Some(APP_IO_SPAWNING_FAILED),
-                    Ok(()) => (),
-                },
+            match task.await {
+                Ok(()) => (),
+                Err(_) => return Some(APP_IO_SPAWNING_FAILED),
             }
         }
 

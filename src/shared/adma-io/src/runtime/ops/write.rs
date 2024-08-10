@@ -40,7 +40,7 @@ where
 {
     type Output = Result<u32, Option<i32>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         trace2(b"# polling file-write; tid=%d, fd=%d\n", this.ops.tid(), this.fd);
 

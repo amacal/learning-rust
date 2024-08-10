@@ -10,7 +10,7 @@ pub struct ThreadCommand {
 impl ThreadCommand {
     pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
         for j in 0..self.ios {
-            let task = ops.spawn_io(move |mut ops| async move {
+            let task = ops.spawn(move |mut ops| async move {
                 for i in 0..self.cpus {
                     let value = match ops.spawn_cpu(move || -> Result<u32, ()> { Ok(i + j) }) {
                         None => return Some(APP_CPU_SPAWNING_FAILED),
@@ -29,12 +29,9 @@ impl ThreadCommand {
                 None
             });
 
-            match task {
-                None => return Some(APP_INTERNALLY_FAILED),
-                Some(task) => match task.await {
-                    Err(()) => return Some(APP_INTERNALLY_FAILED),
-                    Ok(()) => (),
-                },
+            match task.await {
+                Ok(()) => (),
+                Err(_) => return Some(APP_INTERNALLY_FAILED),
             }
         }
 

@@ -83,10 +83,14 @@ impl IORuntimeContext {
         }
     }
 
-    pub fn spawn<'a, F, C>(ctx: &mut Smart<Self>, callback: C) -> Option<IORingTaskRef>
+    pub fn spawn<'a, TFuture, TFnOnce>(
+        ctx: &mut Smart<Self>,
+        callback: TFnOnce,
+        cx: &mut Context<'_>,
+    ) -> Option<(Option<IORingTaskRef>, Option<&'static [u8]>)>
     where
-        F: Future<Output = Option<&'static [u8]>> + Send + 'a,
-        C: FnOnce(IORuntimeOps) -> F + Unpin + Send + 'a,
+        TFuture: Future<Output = Option<&'static [u8]>> + Send + 'a,
+        TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send + 'a,
     {
         let task = match ctx.registry.prepare_task() {
             Ok(val) => val,
@@ -101,6 +105,36 @@ impl IORuntimeContext {
             None => return None,
         };
 
-        Some(ctx.registry.append_task(task, target))
+        Some(ctx.registry.append_task(task, target));
+
+        // to be initially polled
+        let (result, completions) = match ctx.poll(&task, cx) {
+            Some((cnt, Poll::Ready(val))) => (val, cnt),
+            Some((_, Poll::Pending)) => return Some((Some(task), None)),
+            None => return None,
+        };
+
+        if completions == 0 {
+            // to be immediately removed if ready without hanging completers
+            let result = match ctx.registry.remove_task(&task) {
+                Ok(task) => task.release(),
+                Err(_) => return None,
+            };
+
+            match result {
+                None => trace1(b"task completed; tid=%d\n", task.tid()),
+                Some(res) => trace2(b"task completed; tid=%d, res='%s'\n", task.tid(), res),
+            }
+
+            return Some((None, result));
+        }
+
+        match result {
+            None => trace1(b"task draining; tid=%d\n", task.tid()),
+            Some(res) => trace2(b"task draining; tid=%d, res='%s'\n", task.tid(), res),
+        }
+
+        // otherwise we left it in a draining mode
+        Some((Some(task), None))
     }
 }

@@ -14,7 +14,7 @@ impl PipeCommand {
             _ => return Some(APP_PIPE_CREATING_FAILED),
         };
 
-        let reader = ops.spawn_io(move |mut ops| async move {
+        let reader = ops.spawn(move |mut ops| async move {
             let buffer = match Heap::allocate(1 * 4096) {
                 Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
                 Ok(value) => value.droplet(),
@@ -45,7 +45,7 @@ impl PipeCommand {
             }
         });
 
-        let writer = ops.spawn_io(move |mut ops| async move {
+        let writer = ops.spawn(move |mut ops| async move {
             match ops.write(&writer, &self.msg).await {
                 Ok(_) => (),
                 Err(_) => return Some(APP_PIPE_WRITING_FAILED),
@@ -57,20 +57,14 @@ impl PipeCommand {
             }
         });
 
-        match reader {
-            None => return Some(APP_IO_SPAWNING_FAILED),
-            Some(reader) => match reader.await {
-                Err(()) => return Some(APP_IO_SPAWNING_FAILED),
-                Ok(()) => (),
-            },
+        match reader.await {
+            Ok(()) => (),
+            Err(_) => return Some(APP_IO_SPAWNING_FAILED),
         }
 
-        match writer {
-            None => return Some(APP_IO_SPAWNING_FAILED),
-            Some(writer) => match writer.await {
-                Err(()) => return Some(APP_IO_SPAWNING_FAILED),
-                Ok(()) => (),
-            },
+        match writer.await {
+            Ok(()) => (),
+            Err(_) => return Some(APP_IO_SPAWNING_FAILED),
         }
 
         None

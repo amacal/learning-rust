@@ -6,40 +6,9 @@ use ::core::task::Poll;
 
 use super::callable::*;
 use super::ops::*;
-use super::pollable::*;
-use super::refs::*;
 use super::token::*;
 use crate::heap::*;
 use crate::trace::*;
-
-pub struct Spawn {
-    pub task: IORingTaskRef,
-    pub callable: Option<PollableTarget>,
-}
-
-unsafe impl Send for Spawn {}
-
-impl Future for Spawn {
-    type Output = Result<(), ()>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let callable = match self.callable.take() {
-            Some(callable) => callable,
-            None => return Poll::Ready(Err(())),
-        };
-
-        match IORingTaskToken::spawn(cx.waker(), self.task, callable) {
-            true => {
-                trace0(b"task=%d; spawned\n");
-                Poll::Ready(Ok(()))
-            }
-            false => {
-                trace0(b"task=%d; not spawned\n");
-                Poll::Ready(Err(()))
-            }
-        }
-    }
-}
 
 pub struct SpawnCPU<'a, F, R, E>
 where

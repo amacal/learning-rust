@@ -7,6 +7,7 @@ mod read;
 mod std;
 mod write;
 mod time;
+mod spawn;
 
 use super::pool::*;
 use super::refs::*;
@@ -204,7 +205,7 @@ mod tests {
         let target = async move {
             match ops.noop().await {
                 Ok(()) => assert!(true),
-                Err(()) => assert!(false),
+                Err(_) => assert!(false),
             }
 
             None::<&'static [u8]>

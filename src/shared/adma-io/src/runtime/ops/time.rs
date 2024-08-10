@@ -30,9 +30,9 @@ struct TimeoutFuture {
 impl Future for TimeoutFuture {
     type Output = Result<(), Option<i32>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling noop; tid=%d\n", this.ops.tid());
+        trace1(b"# polling timeout; tid=%d\n", this.ops.tid());
 
         let op = IORingSubmitEntry::timeout(&this.timespec);
         let (token, poll) = match this.token.take() {
