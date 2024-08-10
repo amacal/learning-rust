@@ -1,48 +1,40 @@
 use ::core::future::*;
-use ::core::task::*;
 use ::core::pin::*;
+use ::core::task::*;
 
 use super::*;
 use crate::runtime::file::*;
-use crate::core::*;
-
 
 impl IORuntimeOps {
-    pub fn open_at<'a, TPath>(
+    pub fn close<TFileDescriptor>(
         &mut self,
-        path: &'a TPath,
-    ) -> impl Future<Output = Result<FileDescriptor, Option<i32>>> + 'a
+        descriptor: TFileDescriptor,
+    ) -> impl Future<Output = Result<(), Option<i32>>>
     where
-        TPath: AsNullTerminatedRef,
+        TFileDescriptor: AsFileDescriptor + AsClosableFileDescriptor,
     {
-        FileOpen {
-            path: path,
+        CloseFuture {
             token: None,
             ops: self.duplicate(),
+            fd: descriptor.as_fd(),
         }
     }
 }
 
-pub struct FileOpen<'a, TPath>
-where
-    TPath: AsNullTerminatedRef,
-{
-    path: &'a TPath,
+struct CloseFuture {
+    fd: u32,
     ops: IORuntimeOps,
     token: Option<IORingTaskToken>,
 }
 
-impl<'a, TPath> Future for FileOpen<'a, TPath>
-where
-    TPath: AsNullTerminatedRef,
-{
-    type Output = Result<FileDescriptor, Option<i32>>;
+impl Future for CloseFuture {
+    type Output = Result<(), Option<i32>>;
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace2(b"# polling file-open; tid=%d, addr=%x\n", this.ops.tid(), this.path.as_ptr());
+        trace2(b"# polling file-close; tid=%d, fd=%d\n", this.ops.tid(), this.fd);
 
-        let op = IORingSubmitEntry::open_at(this.path.as_ptr());
+        let op = IORingSubmitEntry::close(this.fd);
         let (token, poll) = match this.token.take() {
             None => match this.ops.submit(op) {
                 None => (None, Poll::Ready(Err(None))),
@@ -52,10 +44,7 @@ where
                 Err(token) => (Some(token), Poll::Pending),
                 Ok(val) => match val {
                     val if val < 0 => (None, Poll::Ready(Err(Some(val)))),
-                    val => match u32::try_from(val) {
-                        Ok(fd) => (None, Poll::Ready(Ok(FileDescriptor::new(fd)))),
-                        Err(_) => (None, Poll::Ready(Err(None))),
-                    },
+                    _ => (None, Poll::Ready(Ok(()))),
                 },
             },
         };

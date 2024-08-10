@@ -14,7 +14,7 @@ impl CatCommand {
             Ok(value) => value.droplet(),
         };
 
-        let stdout = ops.open_stdout();
+        let stdout = ops.stdout();
         let path = match self.args.get(2) {
             None => return Some(APP_ARGS_FAILED),
             Some(value) => value,
@@ -29,7 +29,7 @@ impl CatCommand {
         let mut offset = 0;
 
         loop {
-            let read = match ops.read_file(&file, &buffer, offset).await {
+            let read = match ops.read_at_offset(&file, &buffer, offset).await {
                 Ok(cnt) => cnt,
                 Err(None) => return Some(APP_INTERNALLY_FAILED),
                 Err(Some(_)) => return Some(APP_FILE_READING_FAILED),
@@ -50,10 +50,10 @@ impl CatCommand {
                     Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
                 };
 
-                let written = match ops.write_stdout(&stdout, &slice).await {
-                    StdOutWriteResult::Succeeded(_, written) => written as usize,
-                    StdOutWriteResult::OperationFailed(_, _) => return Some(APP_FILE_WRITING_FAILED),
-                    StdOutWriteResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+                let written = match ops.write(&stdout, &slice).await {
+                    Ok(cnt) => cnt as usize,
+                    Err(Some(_)) => return Some(APP_FILE_WRITING_FAILED),
+                    Err(None) => return Some(APP_INTERNALLY_FAILED),
                 };
 
                 if written <= 0 {

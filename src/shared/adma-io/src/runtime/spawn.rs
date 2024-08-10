@@ -108,7 +108,7 @@ where
                     trace1(b"# polling spawn-cpu; stage=executed, res=%d\n", result);
                     let result = match this.task.take() {
                         None => SpawnCPUResult::InternallyFailed(),
-                        Some(task) => match task.result::<16, F, R, E>(&mut this.ctx.heap_pool) {
+                        Some(task) => match task.result::<16, F, R, E>(&mut this.ctx.heap) {
                             Ok(value) => SpawnCPUResult::Succeeded(value),
                             Err(_) => SpawnCPUResult::InternallyFailed(),
                         },
@@ -152,7 +152,7 @@ where
         if let Some(task) = self.task.take() {
             let (ptr, len) = task.as_ref().as_ptr();
             trace2(b"callable; releasing task, heap=%x, size=%d\n", ptr, len);
-            task.release(&mut self.ctx.heap_pool);
+            task.release(&mut self.ctx.heap);
         }
     }
 }

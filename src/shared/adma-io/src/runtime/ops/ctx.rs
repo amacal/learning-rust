@@ -31,7 +31,7 @@ impl IORuntimeContext {
         trace1(b"initializing runtime context; uring=%d\n", ring.fd());
         let mut pool = HeapPool::new().droplet();
 
-        mem::swap(&mut pool, &mut ctx.heap_pool);
+        mem::swap(&mut pool, &mut ctx.heap);
         mem::forget(pool);
 
         mem::swap(&mut ring, &mut ctx.ring);
@@ -96,7 +96,7 @@ impl IORuntimeContext {
         let ops = IORuntimeContext::ops(ctx, task);
         let target = callback.call_once((ops,));
 
-        let target = match PollableTarget::allocate(&mut ctx.heap_pool, target) {
+        let target = match PollableTarget::allocate(&mut ctx.heap, target) {
             Some(pinned) => pinned,
             None => return None,
         };

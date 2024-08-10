@@ -46,7 +46,7 @@ impl Sha1Command {
                         };
 
                         // and read bytes into sliced memory from a given file offset
-                        let read = match ops.read_file(&file, &buffer, file_offset).await {
+                        let read = match ops.read_at_offset(&file, &buffer, file_offset).await {
                             Err(_) => return Some(APP_FILE_READING_FAILED),
                             Ok(cnt) => cnt as usize,
                         };
@@ -119,10 +119,10 @@ impl Sha1Command {
                     format6(&mut msg, b"%x%x%x%x%x  %s\n", hash[0], hash[1], hash[2], hash[3], hash[4], path.as_ptr());
 
                 // to be printed asynchronously in the stdout
-                let stdout = ops.open_stdout();
-                match ops.write_stdout(&stdout, (msg, len)).await {
-                    StdOutWriteResult::Succeeded(_, _) => (),
-                    _ => return Some(APP_STDOUT_FAILED),
+                let stdout = ops.stdout();
+                match ops.write(&stdout, &(msg, len)).await {
+                    Ok(_) => (),
+                    Err(_) => return Some(APP_STDOUT_FAILED),
                 }
 
                 // and finally we close a file

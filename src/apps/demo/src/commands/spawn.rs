@@ -8,7 +8,7 @@ pub struct SpawnCommand {
 
 impl SpawnCommand {
     pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
-        let stdout = ops.open_stdout();
+        let stdout = ops.stdout();
 
         for i in 0..self.times {
             match ops.timeout(self.delay, 0).await {
@@ -42,10 +42,10 @@ impl SpawnCommand {
             }
         }
 
-        match ops.write_stdout(&stdout, b"Spawning completed.\n").await {
-            StdOutWriteResult::Succeeded(_, _) => (),
-            StdOutWriteResult::OperationFailed(_, _) => return Some(APP_STDOUT_FAILED),
-            StdOutWriteResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+        match ops.write(&stdout, b"Spawning completed.\n").await {
+            Ok(_) => (),
+            Err(Some(_)) => return Some(APP_STDOUT_FAILED),
+            Err(None) => return Some(APP_INTERNALLY_FAILED),
         }
 
         None

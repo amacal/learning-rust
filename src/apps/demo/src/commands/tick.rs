@@ -8,7 +8,7 @@ pub struct TickCommand {
 
 impl TickCommand {
     pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
-        let stdout = ops.open_stdout();
+        let stdout = ops.stdout();
 
         for _ in 0..self.ticks {
             match ops.timeout(self.delay, 0).await {
@@ -17,17 +17,17 @@ impl TickCommand {
                 TimeoutResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
             };
 
-            match ops.write_stdout(&stdout, b".").await {
-                StdOutWriteResult::Succeeded(_, _) => (),
-                StdOutWriteResult::OperationFailed(_, _) => return Some(APP_STDOUT_FAILED),
-                StdOutWriteResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+            match ops.write(&stdout, b".").await {
+                Ok(_) => (),
+                Err(Some(_)) => return Some(APP_STDOUT_FAILED),
+                Err(None) => return Some(APP_INTERNALLY_FAILED),
             }
         }
 
-        match ops.write_stdout(&stdout, b"\n").await {
-            StdOutWriteResult::Succeeded(_, _) => (),
-            StdOutWriteResult::OperationFailed(_, _) => return Some(APP_STDOUT_FAILED),
-            StdOutWriteResult::InternallyFailed() => return Some(APP_INTERNALLY_FAILED),
+        match ops.write(&stdout, b"\n").await {
+            Ok(_) => (),
+            Err(Some(_)) => return Some(APP_STDOUT_FAILED),
+            Err(None) => return Some(APP_INTERNALLY_FAILED),
         }
 
         None

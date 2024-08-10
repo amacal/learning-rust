@@ -331,7 +331,7 @@ impl IORingRuntime {
         let target = callback.call_once((ops,));
 
         trace0(b"allocating memory to pin a future\n");
-        let pinned = match PollableTarget::allocate(&mut self.ctx.heap_pool, target) {
+        let pinned = match PollableTarget::allocate(&mut self.ctx.heap, target) {
             Some(pinned) => pinned,
             None => return IORingRuntimeRun::AllocationFailed(0),
         };

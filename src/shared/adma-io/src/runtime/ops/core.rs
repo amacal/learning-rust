@@ -1,12 +1,9 @@
 use ::core::future::*;
 use ::core::marker::*;
 use ::core::ops::*;
-use ::core::pin::*;
-use ::core::task::*;
 
 use super::*;
 use crate::runtime::callable::*;
-use crate::runtime::file::*;
 use crate::runtime::pollable::*;
 use crate::runtime::spawn::*;
 
@@ -26,7 +23,7 @@ impl IORuntimeOps {
 
         Some(Spawn {
             task: task,
-            callable: match PollableTarget::allocate(&mut self.ctx.heap_pool, target) {
+            callable: match PollableTarget::allocate(&mut self.ctx.heap, target) {
                 Some(task) => Some(task),
                 None => None,
             },
@@ -41,7 +38,7 @@ impl IORuntimeOps {
         R: Unpin + Send,
         E: Unpin + Send,
     {
-        let task = match CallableTarget::allocate(&mut self.ctx.heap_pool, target) {
+        let task = match CallableTarget::allocate(&mut self.ctx.heap, target) {
             Ok(target) => target,
             Err(_) => return None,
         };
@@ -53,51 +50,5 @@ impl IORuntimeOps {
             phantom: PhantomData,
             task: Some(task),
         })
-    }
-}
-
-impl IORuntimeOps {
-    pub fn close(
-        &mut self,
-        descriptor: impl AsClosableFileDescriptor,
-    ) -> impl Future<Output = Result<(), Option<i32>>> {
-        FileClose {
-            token: None,
-            ops: self.duplicate(),
-            fd: descriptor.as_file_descriptor(),
-        }
-    }
-}
-
-pub struct FileClose {
-    fd: u32,
-    ops: IORuntimeOps,
-    token: Option<IORingTaskToken>,
-}
-
-impl Future for FileClose {
-    type Output = Result<(), Option<i32>>;
-
-    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        trace2(b"# polling file-close; tid=%d, fd=%d\n", this.ops.tid(), this.fd);
-
-        let op = IORingSubmitEntry::close(this.fd);
-        let (token, poll) = match this.token.take() {
-            None => match this.ops.submit(op) {
-                None => (None, Poll::Ready(Err(None))),
-                Some(token) => (Some(token), Poll::Pending),
-            },
-            Some(token) => match token.extract_ctx(&mut this.ops.ctx) {
-                Err(token) => (Some(token), Poll::Pending),
-                Ok(val) => match val {
-                    val if val < 0 => (None, Poll::Ready(Err(Some(val)))),
-                    _ => (None, Poll::Ready(Ok(()))),
-                },
-            },
-        };
-
-        this.token = token;
-        poll
     }
 }
