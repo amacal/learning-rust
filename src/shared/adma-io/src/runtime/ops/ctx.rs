@@ -100,7 +100,7 @@ impl IORuntimeContext {
         };
 
         let ops = IORuntimeContext::ops(ctx, task);
-        let target = callback.call_once((ops,));
+        let target = callback(ops);
 
         let target = match PollableTarget::allocate(&mut ctx.heap, target) {
             Some(pinned) => pinned,

@@ -33,7 +33,7 @@ impl Future for NoopFuture {
                 None => (None, Poll::Ready(Err(None))),
                 Some(token) => (Some(token), Poll::Pending),
             },
-            Some(token) => match token.extract_ctx(&mut this.ops.ctx) {
+            Some(token) => match token.extract(&mut this.ops.ctx) {
                 Ok((None, Some(token))) => (Some(token), Poll::Pending),
                 Ok((Some(val), None)) => match val {
                     val if val < 0 => (None, Poll::Ready(Err(Some(val)))),

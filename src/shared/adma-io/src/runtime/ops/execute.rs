@@ -55,7 +55,7 @@ where
 
         if let Some(token) = this.queued.take() {
             trace0(b"# polling spawn-cpu; extracting queued\n");
-            let result = match token.extract_ctx(&mut this.ops.ctx) {
+            let result = match token.extract(&mut this.ops.ctx) {
                 Ok((Some(value), None)) => Some(value),
                 Ok((None, Some(token))) => {
                     this.queued = Some(token);
@@ -77,7 +77,7 @@ where
 
         if let Some(token) = this.executed.take() {
             trace0(b"# polling spawn-cpu; extracting executed\n");
-            let result = match token.extract_ctx(&mut this.ops.ctx) {
+            let result = match token.extract(&mut this.ops.ctx) {
                 Ok((Some(value), None)) => Some(value),
                 Ok((None, Some(token))) => {
                     this.executed = Some(token);

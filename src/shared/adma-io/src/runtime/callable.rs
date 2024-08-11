@@ -37,7 +37,7 @@ where
     pub fn call(&mut self) -> Result<(), CallableError> {
         self.result = match self.target.take() {
             None => return Err(CallableError::CalledTwice),
-            Some(target) => Some(target.call_once(())),
+            Some(target) => Some(target()),
         };
 
         Ok(())

@@ -1,8 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-#![feature(fn_traits)]
-#![feature(waker_getters)]
-
 pub mod core;
 pub mod heap;
 pub mod kernel;

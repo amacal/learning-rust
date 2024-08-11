@@ -40,7 +40,7 @@ impl IORingTaskToken {
 }
 
 impl IORingTaskToken {
-    pub fn extract_ctx(self, ctx: &mut IORuntimeContext) -> Result<(Option<i32>, Option<IORingTaskToken>), Option<i32>> {
+    pub fn extract(self, ctx: &mut IORuntimeContext) -> Result<(Option<i32>, Option<IORingTaskToken>), Option<i32>> {
         let value = match ctx.extract(&self.completer) {
             Ok(Some(value)) => value,
             Ok(None) => return Ok((None, Some(self))),
