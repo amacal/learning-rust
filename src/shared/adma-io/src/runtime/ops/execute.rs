@@ -49,7 +49,7 @@ where
 {
     type Output = Result<Result<TResult, TError>, Option<i32>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         trace1(b"# polling spawn-cpu; tid=%d\n", this.ops.tid());
 
@@ -60,7 +60,7 @@ where
                 Ok((None, Some(token))) => {
                     this.queued = Some(token);
                     None
-                },
+                }
                 Ok(_) | Err(None) => return Poll::Ready(Err(None)),
                 Err(err) => return Poll::Ready(Err(err)),
             };
@@ -82,7 +82,7 @@ where
                 Ok((None, Some(token))) => {
                     this.executed = Some(token);
                     None
-                },
+                }
                 Ok(_) | Err(None) => return Poll::Ready(Err(None)),
                 Err(err) => return Poll::Ready(Err(err)),
             };
@@ -107,19 +107,19 @@ where
             return Poll::Pending;
         }
 
-        let task = match &this.task {
+        let callable = match &this.task {
             Some(Ok(task)) => task,
             Some(Err(_)) | None => return Poll::Ready(Err(None)),
         };
 
-        match IORingTaskToken::execute(cx.waker(), task) {
-            Some((queued, executed)) => {
+        match this.ops.schedule(callable) {
+            Ok((queued, executed)) => {
                 trace2(b"callable; scheduled, qid=%d, eid=%d\n", queued.cid(), executed.cid());
                 this.queued = Some(queued);
                 this.executed = Some(executed);
                 Poll::Pending
             }
-            None => {
+            Err(_) => {
                 trace0(b"callable not scheduled\n");
                 Poll::Ready(Err(None))
             }

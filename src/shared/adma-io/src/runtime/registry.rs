@@ -324,7 +324,6 @@ impl<const T: usize, const C: usize> IORingRegistry<T, C> {
 
 #[cfg(test)]
 mod tests {
-    use ::core::ptr;
     use ::core::task::Waker;
 
     use super::*;
@@ -431,7 +430,7 @@ mod tests {
             Ok(task) => registry.append_task(task, target),
         };
 
-        let raw = make_waker(ptr::null());
+        let raw = make_waker();
         let waker = unsafe { Waker::from_raw(raw) };
         let mut cx = Context::from_waker(&waker);
 
@@ -466,7 +465,7 @@ mod tests {
             Ok(task) => registry.append_task(task, target),
         };
 
-        let raw = make_waker(ptr::null());
+        let raw = make_waker();
         let waker = unsafe { Waker::from_raw(raw) };
         let mut cx = Context::from_waker(&waker);
 
@@ -550,7 +549,7 @@ mod tests {
             Ok(_) => (),
         }
 
-        let raw = make_waker(ptr::null());
+        let raw = make_waker();
         let waker = unsafe { Waker::from_raw(raw) };
         let mut cx = Context::from_waker(&waker);
 

@@ -1,11 +1,12 @@
-use core::task::{RawWaker, RawWakerVTable};
+use ::core::ptr;
+use ::core::task::*;
 
 fn clone_fn(data: *const ()) -> RawWaker {
     RawWaker::new(data, IORING_WAKER_VTABLE)
 }
 
-pub fn make_waker(data: *const ()) -> RawWaker {
-    RawWaker::new(data, IORING_WAKER_VTABLE)
+pub fn make_waker() -> RawWaker {
+    RawWaker::new(ptr::null(), IORING_WAKER_VTABLE)
 }
 
 fn wake_fn(_: *const ()) {}

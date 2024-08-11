@@ -9,7 +9,6 @@ mod pool;
 mod raw;
 mod refs;
 mod registry;
-mod spawn;
 mod thread;
 mod token;
 mod utils;

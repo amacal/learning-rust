@@ -9,6 +9,7 @@ mod std;
 mod time;
 mod write;
 
+use super::callable::*;
 use super::pool::*;
 use super::refs::*;
 use super::registry::*;
@@ -18,15 +19,15 @@ use crate::trace::*;
 use crate::uring::*;
 
 pub struct IORuntimeContext {
-    pub heap: Droplet<HeapPool<16>>,
-    pub threads: Droplet<IORuntimePool<12>>,
+    heap: Droplet<HeapPool<16>>,
+    threads: Droplet<IORuntimePool<12>>,
     pub registry: Droplet<IORingRegistry<64, 256>>,
     ring: Droplet<IORing>,
 }
 
 pub struct IORuntimeOps {
     task: IORingTaskRef,
-    pub ctx: Smart<IORuntimeContext>,
+    ctx: Smart<IORuntimeContext>,
 }
 
 impl IORuntimeOps {
@@ -39,6 +40,10 @@ impl IORuntimeOps {
             task: self.task,
             ctx: self.ctx.duplicate(),
         }
+    }
+
+    pub fn schedule(&mut self, callable: &CallableTarget) -> Result<(IORingTaskToken, IORingTaskToken), Option<i32>> {
+        self.ctx.schedule(&self.task, callable)
     }
 
     pub fn submit(&mut self, op: IORingSubmitEntry) -> Option<IORingTaskToken> {
@@ -76,8 +81,8 @@ mod tests {
     use ::core::ptr;
     use ::core::task::*;
 
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(|_| NOOP, |_| {}, |_| {}, |_| {});
     const NOOP: RawWaker = RawWaker::new(ptr::null(), &VTABLE);
+    const VTABLE: RawWakerVTable = RawWakerVTable::new(|_| NOOP, |_| {}, |_| {}, |_| {});
 
     #[test]
     fn allocates_context() {

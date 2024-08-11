@@ -96,7 +96,7 @@ mod tests {
         let mut pool = HeapPool::<1>::new();
         let target = async { None::<&'static [u8]> };
 
-        let raw = make_waker(ptr::null());
+        let raw = make_waker();
         let waker = unsafe { Waker::from_raw(raw) };
         let mut cx = Context::from_waker(&waker);
 
