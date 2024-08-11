@@ -67,12 +67,13 @@ impl IORuntimeContext {
         }
     }
 
-    pub fn extract(&mut self, completer: &IORingCompleterRef) -> Option<i32> {
+    pub fn extract(&mut self, completer: &IORingCompleterRef) -> Result<Option<i32>, Option<i32>> {
         trace2(b"extracting completer; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
         match self.registry.remove_completer(completer) {
-            Err(_) => return None,
-            Ok(completer) => completer.result(),
+            Ok(completer) => Ok(completer.result()),
+            Err(IORegistryError::CompleterNotReady) => return Ok(None),
+            Err(_) => return Err(None),
         }
     }
 
@@ -136,5 +137,40 @@ impl IORuntimeContext {
 
         // otherwise we left it in a draining mode
         Some((Some(task), None))
+    }
+
+    pub fn enqueue(&mut self, completer: &IORingCompleterRef) -> Result<(), Option<i32>> {
+        self.threads.enqueue(completer);
+        self.trigger()
+    }
+
+    pub fn release(&mut self, completer: &IORingCompleterRef) -> Result<(), Option<i32>> {
+        self.threads.release(completer);
+        self.trigger()
+    }
+
+    fn trigger(&mut self) -> Result<(), Option<i32>> {
+        let mut slots: [Option<(u64, IORingSubmitEntry)>; 1] = [const { None }; 1];
+
+        // possibly it will be triggered now
+        let cnt = match self.threads.trigger(&mut slots) {
+            Ok(None) | Ok(Some(0)) => 0,
+            Ok(Some(cnt)) => cnt,
+            Err(err) => return Err(err),
+        };
+
+        // potentially received submits has to be processed
+        for index in 0..cnt {
+            let (user_data, entry) = unsafe {
+                match slots.get_unchecked_mut(index).take() {
+                    None => continue,
+                    Some((user_data, entry)) => (user_data, entry),
+                }
+            };
+
+            self.submit(user_data, [entry]);
+        }
+
+        Ok(())
     }
 }

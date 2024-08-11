@@ -50,43 +50,28 @@ impl IORingTaskToken {
 }
 
 impl IORingTaskToken {
-    pub fn extract(self, waker: &Waker) -> Result<i32, IORingTaskToken> {
-        let context = Self::context(waker);
-        let value = match context.extract(&self.completer) {
-            IORingRuntimeExtract::Succeeded(value) => value,
-            _ => return Err(self),
-        };
-
-        if let IORingTaskTokenKind::Queue = self.kind {
-            // enqueue sent callable
-            context.enqueue(&self.completer);
-        }
-
-        if let IORingTaskTokenKind::Execute = self.kind {
-            // trigger awaiting callable
-            context.trigger(&self.completer);
-        }
-
-        Ok(value)
-    }
-
-    pub fn extract_ctx(self, ctx: &mut IORuntimeContext) -> Result<i32, IORingTaskToken> {
+    pub fn extract_ctx(self, ctx: &mut IORuntimeContext) -> Result<(Option<i32>, Option<IORingTaskToken>), Option<i32>> {
         let value = match ctx.extract(&self.completer) {
-            Some(value) => value,
-            None => return Err(self),
+            Ok(Some(value)) => value,
+            Ok(None) => return Ok((None, Some(self))),
+            Err(err) => return Err(err),
         };
 
         if let IORingTaskTokenKind::Queue = self.kind {
             // enqueue sent callable
-            //ops.enqueue(&self.completer);
+            if let Err(err) = ctx.enqueue(&self.completer) {
+                return Err(err);
+            }
         }
 
         if let IORingTaskTokenKind::Execute = self.kind {
             // trigger awaiting callable
-            //ops.trigger(&self.completer);
+            if let Err(err) = ctx.release(&self.completer) {
+                return Err(err);
+            }
         }
 
-        Ok(value)
+        Ok((Some(value), None))
     }
 }
 

@@ -41,9 +41,11 @@ impl Future for TimeoutFuture {
                 Some(token) => (Some(token), Poll::Pending),
             },
             Some(token) => match token.extract_ctx(&mut this.ops.ctx) {
-                Err(token) => (Some(token), Poll::Pending),
-                Ok(val) if val == -62 => (None, Poll::Ready(Ok(()))),
-                Ok(val) => (None, Poll::Ready(Err(Some(val)))),
+                Ok((None, Some(token))) => (Some(token), Poll::Pending),
+                Ok((Some(val), None)) if val == -62 => (None, Poll::Ready(Ok(()))),
+                Ok((Some(val), None)) => (None, Poll::Ready(Err(Some(val)))),
+                Ok(_) => (None, Poll::Ready(Err(None))),
+                Err(err) => (None, Poll::Ready(Err(err))),
             },
         };
 

@@ -1,5 +1,3 @@
-use ::core::mem;
-
 use super::callable::*;
 use super::refs::*;
 use super::thread::*;
@@ -136,7 +134,7 @@ impl<const T: usize> IORuntimePool<T> {
 }
 
 impl<const T: usize> IORuntimePool<T> {
-    pub fn release_worker(&mut self, completer: &IORingCompleterRef) -> bool {
+    pub fn release(&mut self, completer: &IORingCompleterRef) -> bool {
         trace1(b"releasing worker; cid=%d\n", completer.cid());
 
         for slot in 0..T {
@@ -158,7 +156,7 @@ impl<const T: usize> IORuntimePool<T> {
 }
 
 impl<const T: usize> IORuntimePool<T> {
-    pub fn trigger(&mut self, slots: &mut [Option<(u64, IORingSubmitEntry)>; 1]) -> Result<Option<usize>, ()> {
+    pub fn trigger(&mut self, slots: &mut [Option<(u64, IORingSubmitEntry)>; 1]) -> Result<Option<usize>, Option<i32>> {
         if self.queue_counter <= 0 {
             return Ok(None);
         }
@@ -169,7 +167,7 @@ impl<const T: usize> IORuntimePool<T> {
             // worker still theoretically may fail
             let worker = match self.workers_array.get_mut(*slot) {
                 Some(Some(worker)) => worker,
-                _ => return Err(()),
+                Some(None) | None => return Err(None),
             };
 
             // buffer is needed to collect data from the pipe
@@ -177,13 +175,14 @@ impl<const T: usize> IORuntimePool<T> {
             let ptr = buffer.as_mut_ptr() as *mut ();
 
             // we expect to read ptr, len, encoded completer triple from a queue
-            let result = sys_read(self.queue_incoming, ptr, 24);
-            trace1(b"acquired callable; res=%d\n", result);
-
-            if result != 24 {
-                return Err(());
-            } else {
-                self.queue_counter -= 1;
+            trace0(b"acquiring callable\n");
+            match sys_read(self.queue_incoming, ptr, 24) {
+                value if value == 24 => self.queue_counter -= 1,
+                value if value >= 0 => return Err(None),
+                value => match i32::try_from(value) {
+                    Ok(value) => return Err(Some(value)),
+                    Err(_) => return Err(None),
+                },
             }
 
             // decoding payload
@@ -198,7 +197,7 @@ impl<const T: usize> IORuntimePool<T> {
             // then we try to follow known path
             let op = match worker.execute(&callable) {
                 WorkerExecute::Succeeded(op) => op,
-                _ => return Err(()),
+                _ => return Err(None),
             };
 
             // by registering it within I/O Ring
@@ -598,7 +597,7 @@ mod tests {
             pool.enqueue(&third);
             assert_eq!(pool.queue_counter, 1);
 
-            let res = pool.release_worker(&second);
+            let res = pool.release(&second);
             assert_eq!(res, true);
 
             let mut slots: [Option<(u64, IORingSubmitEntry)>; 1] = [const { None }; 1];

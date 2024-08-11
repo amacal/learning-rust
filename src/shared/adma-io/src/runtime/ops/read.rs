@@ -72,14 +72,14 @@ where
                 Some(token) => (Some(token), Poll::Pending),
             },
             Some(token) => match token.extract_ctx(&mut this.ops.ctx) {
-                Err(token) => (Some(token), Poll::Pending),
-                Ok(val) => match val {
-                    val if val < 0 => (None, Poll::Ready(Err(Some(val)))),
-                    val => match u32::try_from(val) {
-                        Ok(cnt) => (None, Poll::Ready(Ok(cnt))),
-                        Err(_) => (None, Poll::Ready(Err(None))),
-                    },
+                Ok((None, Some(token))) => (Some(token), Poll::Pending),
+                Ok((Some(val), None)) if val < 0 => (None, Poll::Ready(Err(Some(val)))),
+                Ok((Some(val), None)) => match u32::try_from(val) {
+                    Ok(cnt) => (None, Poll::Ready(Ok(cnt))),
+                    Err(_) => (None, Poll::Ready(Err(None))),
                 },
+                Ok(_) => (None, Poll::Ready(Err(None))),
+                Err(err) => (None, Poll::Ready(Err(err))),
             },
         };
 

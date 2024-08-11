@@ -445,7 +445,7 @@ impl IORingRuntime {
         let mut slots: [Option<(u64, IORingSubmitEntry)>; 1] = [const { None }; 1];
 
         // first release worker behind completer
-        self.ctx.threads.release_worker(completer);
+        self.ctx.threads.release(completer);
 
         // possibly it will be triggered now
         let cnt = match self.ctx.threads.trigger(&mut slots) {

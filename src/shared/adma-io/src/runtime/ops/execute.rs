@@ -55,12 +55,14 @@ where
 
         if let Some(token) = this.queued.take() {
             trace0(b"# polling spawn-cpu; extracting queued\n");
-            let result = match token.extract(cx.waker()) {
-                Ok(value) => Some(value),
-                Err(token) => {
+            let result = match token.extract_ctx(&mut this.ops.ctx) {
+                Ok((Some(value), None)) => Some(value),
+                Ok((None, Some(token))) => {
                     this.queued = Some(token);
                     None
-                }
+                },
+                Ok(_) | Err(None) => return Poll::Ready(Err(None)),
+                Err(err) => return Poll::Ready(Err(err)),
             };
 
             if let Some(result) = result {
@@ -75,12 +77,14 @@ where
 
         if let Some(token) = this.executed.take() {
             trace0(b"# polling spawn-cpu; extracting executed\n");
-            let result = match token.extract(cx.waker()) {
-                Ok(value) => Some(value),
-                Err(token) => {
+            let result = match token.extract_ctx(&mut this.ops.ctx) {
+                Ok((Some(value), None)) => Some(value),
+                Ok((None, Some(token))) => {
                     this.executed = Some(token);
-                    return Poll::Pending;
-                }
+                    None
+                },
+                Ok(_) | Err(None) => return Poll::Ready(Err(None)),
+                Err(err) => return Poll::Ready(Err(err)),
             };
 
             if let Some(result) = result {
