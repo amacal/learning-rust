@@ -15,7 +15,7 @@ impl IORuntimeOps {
     {
         CloseFuture {
             token: None,
-            ops: self.duplicate(),
+            handle: self.handle(),
             fd: descriptor.as_fd(),
         }
     }
@@ -23,7 +23,7 @@ impl IORuntimeOps {
 
 struct CloseFuture {
     fd: u32,
-    ops: IORuntimeOps,
+    handle: IORuntimeHandle,
     token: Option<IORingTaskToken>,
 }
 
@@ -32,15 +32,15 @@ impl Future for CloseFuture {
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace2(b"# polling file-close; tid=%d, fd=%d\n", this.ops.tid(), this.fd);
+        trace2(b"# polling file-close; tid=%d, fd=%d\n", this.handle.task.tid(), this.fd);
 
         let op = IORingSubmitEntry::close(this.fd);
         let (token, poll) = match this.token.take() {
-            None => match this.ops.submit(op) {
+            None => match this.handle.submit(op) {
                 None => (None, Poll::Ready(Err(None))),
                 Some(token) => (Some(token), Poll::Pending),
             },
-            Some(token) => match token.extract(&mut this.ops.ctx) {
+            Some(token) => match token.extract(&mut this.handle.ctx) {
                 Ok((None, Some(token))) => (Some(token), Poll::Pending),
                 Ok((Some(val), None)) => match val {
                     val if val < 0 => (None, Poll::Ready(Err(Some(val)))),

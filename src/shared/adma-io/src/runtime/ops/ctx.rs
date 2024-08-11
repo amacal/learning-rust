@@ -3,7 +3,6 @@ use ::core::mem;
 use ::core::task::*;
 
 use super::*;
-use crate::runtime::callable::*;
 use crate::runtime::pollable::*;
 use crate::trace::*;
 
@@ -49,10 +48,6 @@ impl IORuntimeContext {
 }
 
 impl IORuntimeContext {
-    pub fn submit<const C: usize>(&mut self, user_data: u64, entries: [IORingSubmitEntry; C]) -> IORingSubmit {
-        self.ring.tx.submit(user_data, entries)
-    }
-
     pub fn flush(&mut self) -> IORingSubmit {
         self.ring.tx.flush()
     }
@@ -169,52 +164,9 @@ impl IORuntimeContext {
                 }
             };
 
-            self.submit(user_data, [entry]);
+            self.ring.tx.submit(user_data, [entry]);
         }
 
         Ok(())
-    }
-
-    pub fn schedule(
-        &mut self,
-        task: &IORingTaskRef,
-        callable: &CallableTarget,
-    ) -> Result<(IORingTaskToken, IORingTaskToken), Option<i32>> {
-        let queued = match self.registry.append_completer(task) {
-            Ok(completer) => completer,
-            Err(IORegistryError::NotEnoughSlots) => return Err(None),
-            Err(_) => return Err(None),
-        };
-
-        let executed = match self.registry.append_completer(task) {
-            Ok(completer) => completer,
-            Err(IORegistryError::NotEnoughSlots) => return Err(None),
-            Err(_) => return Err(None),
-        };
-
-        let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
-        let cnt = match self.threads.execute(&mut slots, [&queued, &executed], callable) {
-            Ok(Some(cnt)) => cnt,
-            Ok(None) => 0,
-            Err(()) => return Err(None),
-        };
-
-        // potentially received submits has to be processed
-        for index in 0..cnt {
-            let (user_data, entry) = unsafe {
-                match slots.get_unchecked_mut(index).take() {
-                    None => continue,
-                    Some((user_data, entry)) => (user_data, entry),
-                }
-            };
-
-            self.submit(user_data, [entry]);
-        }
-
-        if cnt == 1 {
-            Ok((IORingTaskToken::from_queue(queued), IORingTaskToken::from_execute(executed)))
-        } else {
-            Ok((IORingTaskToken::from_op(queued), IORingTaskToken::from_execute(executed)))
-        }
     }
 }

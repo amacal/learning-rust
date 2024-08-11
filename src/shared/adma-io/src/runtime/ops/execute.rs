@@ -22,7 +22,7 @@ impl IORuntimeOps {
             queued: None,
             executed: None,
             phantom: PhantomData,
-            ops: self.duplicate(),
+            handle: self.handle(),
             task: Some(CallableTarget::allocate(&mut self.ctx.heap, target)),
         }
     }
@@ -34,7 +34,7 @@ where
     TResult: Unpin + Send,
     TError: Unpin + Send,
 {
-    ops: IORuntimeOps,
+    handle: IORuntimeHandle,
     task: Option<Result<CallableTarget, CallableError>>,
     queued: Option<IORingTaskToken>,
     executed: Option<IORingTaskToken>,
@@ -51,11 +51,11 @@ where
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling spawn-cpu; tid=%d\n", this.ops.tid());
+        trace1(b"# polling spawn-cpu; tid=%d\n", this.handle.task.tid());
 
         if let Some(token) = this.queued.take() {
             trace0(b"# polling spawn-cpu; extracting queued\n");
-            let result = match token.extract(&mut this.ops.ctx) {
+            let result = match token.extract(&mut this.handle.ctx) {
                 Ok((Some(value), None)) => Some(value),
                 Ok((None, Some(token))) => {
                     this.queued = Some(token);
@@ -77,7 +77,7 @@ where
 
         if let Some(token) = this.executed.take() {
             trace0(b"# polling spawn-cpu; extracting executed\n");
-            let result = match token.extract(&mut this.ops.ctx) {
+            let result = match token.extract(&mut this.handle.ctx) {
                 Ok((Some(value), None)) => Some(value),
                 Ok((None, Some(token))) => {
                     this.executed = Some(token);
@@ -94,10 +94,12 @@ where
                     trace1(b"# polling spawn-cpu; stage=executed, res=%d\n", result);
                     match this.task.take() {
                         None | Some(Err(_)) => Poll::Ready(Err(None)),
-                        Some(Ok(task)) => match task.result::<16, TFnOnce, TResult, TError>(&mut this.ops.ctx.heap) {
-                            Ok(Some(value)) => Poll::Ready(Ok(value)),
-                            Ok(None) | Err(_) => Poll::Ready(Err(None)),
-                        },
+                        Some(Ok(task)) => {
+                            match task.result::<16, TFnOnce, TResult, TError>(&mut this.handle.ctx.heap) {
+                                Ok(Some(value)) => Poll::Ready(Ok(value)),
+                                Ok(None) | Err(_) => Poll::Ready(Err(None)),
+                            }
+                        }
                     }
                 };
             }
@@ -112,7 +114,7 @@ where
             Some(Err(_)) | None => return Poll::Ready(Err(None)),
         };
 
-        match this.ops.schedule(callable) {
+        match this.handle.schedule(callable) {
             Ok((queued, executed)) => {
                 trace2(b"callable; scheduled, qid=%d, eid=%d\n", queued.cid(), executed.cid());
                 this.queued = Some(queued);
@@ -137,7 +139,7 @@ where
         if let Some(Ok(task)) = self.task.take() {
             let (ptr, len) = task.as_ref().as_ptr();
             trace2(b"callable; releasing task, heap=%x, size=%d\n", ptr, len);
-            task.release(&mut self.ops.ctx.heap);
+            task.release(&mut self.handle.ctx.heap);
         }
     }
 }

@@ -16,7 +16,7 @@ impl IORuntimeOps {
         TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send + 'a,
     {
         SpawnFuture {
-            ops: self.duplicate(),
+            handle: self.handle(),
             call: Some(call),
         }
     }
@@ -27,7 +27,7 @@ where
     TFuture: Future<Output = Option<&'static [u8]>> + Send,
     TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send,
 {
-    ops: IORuntimeOps,
+    handle: IORuntimeHandle,
     call: Option<TFnOnce>,
 }
 
@@ -47,14 +47,14 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling spawn; tid=%d\n", this.ops.tid());
+        trace1(b"# polling spawn; tid=%d\n", this.handle.task.tid());
 
         let callback = match this.call.take() {
             Some(callback) => callback,
             None => return Poll::Ready(Err(None)),
         };
 
-        match IORuntimeContext::spawn(&mut this.ops.ctx, callback, cx) {
+        match IORuntimeContext::spawn(&mut this.handle.ctx, callback, cx) {
             Some(_) => (),
             None => return Poll::Ready(Err(None)),
         };

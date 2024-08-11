@@ -17,7 +17,7 @@ impl IORuntimeOps {
         OpenAtFuture {
             path: path,
             token: None,
-            ops: self.duplicate(),
+            handle: self.handle(),
         }
     }
 }
@@ -27,7 +27,7 @@ where
     TPath: AsNullTerminatedRef,
 {
     path: &'a TPath,
-    ops: IORuntimeOps,
+    handle: IORuntimeHandle,
     token: Option<IORingTaskToken>,
 }
 
@@ -39,15 +39,15 @@ where
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace2(b"# polling file-open; tid=%d, addr=%x\n", this.ops.tid(), this.path.as_ptr());
+        trace2(b"# polling file-open; tid=%d, addr=%x\n", this.handle.task.tid(), this.path.as_ptr());
 
         let op = IORingSubmitEntry::open_at(this.path.as_ptr());
         let (token, poll) = match this.token.take() {
-            None => match this.ops.submit(op) {
+            None => match this.handle.submit(op) {
                 None => (None, Poll::Ready(Err(None))),
                 Some(token) => (Some(token), Poll::Pending),
             },
-            Some(token) => match token.extract(&mut this.ops.ctx) {
+            Some(token) => match token.extract(&mut this.handle.ctx) {
                 Ok((None, Some(token))) => (Some(token), Poll::Pending),
                 Ok((Some(val), None)) if val < 0 => (None, Poll::Ready(Err(Some(val)))),
                 Ok((Some(val), None)) => match u32::try_from(val) {

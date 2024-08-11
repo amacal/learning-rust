@@ -15,14 +15,14 @@ impl IORuntimeOps {
                 tv_sec: seconds as i64,
                 tv_nsec: nanos as i64,
             },
-            ops: self.duplicate(),
+            handle: self.handle(),
             token: None,
         }
     }
 }
 
 struct TimeoutFuture {
-    ops: IORuntimeOps,
+    handle: IORuntimeHandle,
     timespec: timespec,
     token: Option<IORingTaskToken>,
 }
@@ -32,15 +32,15 @@ impl Future for TimeoutFuture {
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling timeout; tid=%d\n", this.ops.tid());
+        trace1(b"# polling timeout; tid=%d\n", this.handle.task.tid());
 
         let op = IORingSubmitEntry::timeout(&this.timespec);
         let (token, poll) = match this.token.take() {
-            None => match this.ops.submit(op) {
+            None => match this.handle.submit(op) {
                 None => (None, Poll::Ready(Err(None))),
                 Some(token) => (Some(token), Poll::Pending),
             },
-            Some(token) => match token.extract(&mut this.ops.ctx) {
+            Some(token) => match token.extract(&mut this.handle.ctx) {
                 Ok((None, Some(token))) => (Some(token), Poll::Pending),
                 Ok((Some(val), None)) if val == -62 => (None, Poll::Ready(Ok(()))),
                 Ok((Some(val), None)) => (None, Poll::Ready(Err(Some(val)))),

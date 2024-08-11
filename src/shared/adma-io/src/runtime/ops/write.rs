@@ -18,7 +18,7 @@ impl IORuntimeOps {
     {
         WriteAtOffset {
             fd: file.as_fd(),
-            ops: self.duplicate(),
+            handle: self.handle(),
             buffer: buffer,
             offset: 0,
             token: None,
@@ -29,7 +29,7 @@ impl IORuntimeOps {
 pub struct WriteAtOffset<'a, TBuffer> {
     fd: u32,
     offset: u64,
-    ops: IORuntimeOps,
+    handle: IORuntimeHandle,
     buffer: &'a TBuffer,
     token: Option<IORingTaskToken>,
 }
@@ -42,17 +42,17 @@ where
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace2(b"# polling file-write; tid=%d, fd=%d\n", this.ops.tid(), this.fd);
+        trace2(b"# polling file-write; tid=%d, fd=%d\n", this.handle.task.tid(), this.fd);
 
         let (buf, len) = this.buffer.extract();
         let op = IORingSubmitEntry::write(this.fd, buf, len, this.offset);
 
         let (token, poll) = match this.token.take() {
-            None => match this.ops.submit(op) {
+            None => match this.handle.submit(op) {
                 None => (None, Poll::Ready(Err(None))),
                 Some(token) => (Some(token), Poll::Pending),
             },
-            Some(token) => match token.extract(&mut this.ops.ctx) {
+            Some(token) => match token.extract(&mut this.handle.ctx) {
                 Ok((None, Some(token))) => (Some(token), Poll::Pending),
                 Ok((Some(val), None)) if val < 0 => (None, Poll::Ready(Err(Some(val)))),
                 Ok((Some(val), None)) => match u32::try_from(val) {

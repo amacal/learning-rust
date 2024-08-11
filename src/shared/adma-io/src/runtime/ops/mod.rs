@@ -8,6 +8,7 @@ mod spawn;
 mod std;
 mod time;
 mod write;
+mod handle;
 
 use super::callable::*;
 use super::pool::*;
@@ -30,45 +31,16 @@ pub struct IORuntimeOps {
     ctx: Smart<IORuntimeContext>,
 }
 
-impl IORuntimeOps {
-    pub fn tid(&self) -> u32 {
-        self.task.tid()
-    }
+struct IORuntimeHandle {
+    task: IORingTaskRef,
+    ctx: Smart<IORuntimeContext>,
+}
 
-    pub fn duplicate(&self) -> IORuntimeOps {
-        Self {
+impl IORuntimeOps {
+    fn handle(&self) -> IORuntimeHandle {
+        IORuntimeHandle {
             task: self.task,
             ctx: self.ctx.duplicate(),
-        }
-    }
-
-    pub fn schedule(&mut self, callable: &CallableTarget) -> Result<(IORingTaskToken, IORingTaskToken), Option<i32>> {
-        self.ctx.schedule(&self.task, callable)
-    }
-
-    pub fn submit(&mut self, op: IORingSubmitEntry) -> Option<IORingTaskToken> {
-        trace1(b"appending completer to registry; tid=%d\n", self.task.tid());
-        let completer = match self.ctx.registry.append_completer(&self.task) {
-            Ok(completer) => completer,
-            Err(_) => return None,
-        };
-
-        let (user_data, entries) = (completer.encode(), [op]);
-        trace2(b"submitting op with uring; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
-
-        match self.ctx.submit(user_data, entries) {
-            IORingSubmit::Succeeded(_) => {
-                trace1(b"submitting op with uring; cidx=%d, succeeded\n", completer.cidx());
-                return Some(IORingTaskToken::from_op(completer));
-            }
-            IORingSubmit::SubmissionFailed(err) => {
-                trace2(b"submitting op with uring; cidx=%d, err=%d\n", completer.cidx(), err);
-                None
-            }
-            IORingSubmit::SubmissionMismatched(_) => {
-                trace1(b"submitting op with uring; cidx=%d, failed\n", completer.cidx());
-                None
-            }
         }
     }
 }
@@ -166,12 +138,12 @@ mod tests {
             Ok(task) => registry.append_task(task, target),
         };
 
-        let mut ops = match IORuntimeContext::allocate(ring, threads, registry) {
+        let ops = match IORuntimeContext::allocate(ring, threads, registry) {
             None => return assert!(false),
             Some(mut ctx) => IORuntimeContext::ops(&mut ctx, task),
         };
 
-        let token = match ops.submit(op) {
+        let token = match ops.handle().submit(op) {
             None => return assert!(false),
             Some(token) => token,
         };
