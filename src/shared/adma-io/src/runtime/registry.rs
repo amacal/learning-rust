@@ -1,8 +1,8 @@
-use ::core::task::Context;
-use ::core::task::Poll;
+use ::core::task::*;
 
 use super::pollable::*;
 use super::refs::*;
+use super::raw::*;
 use crate::heap::*;
 use crate::trace::*;
 
@@ -47,6 +47,7 @@ impl IORingTask {
 }
 
 pub struct IORingRegistry<const T: usize, const C: usize> {
+    waker: Waker,
     tasks_id: u32,
     tasks_count: usize,
     tasks_slots: [usize; T],
@@ -85,7 +86,11 @@ impl<const T: usize, const C: usize> IORingRegistry<T, C> {
             }
         }
 
+        let raw = make_waker();
+        let waker = unsafe { Waker::from_raw(raw) };
+
         Ok(Self {
+            waker: waker,
             tasks_id: 0,
             tasks_count: 0,
             tasks_array: tasks_array,
@@ -246,11 +251,7 @@ impl<const T: usize, const C: usize> IORingRegistry<T, C> {
 }
 
 impl<const T: usize, const C: usize> IORingRegistry<T, C> {
-    pub fn poll(
-        &mut self,
-        task: &IORingTaskRef,
-        cx: &mut Context<'_>,
-    ) -> Result<(usize, Poll<Option<&'static [u8]>>), IORegistryError> {
+    pub fn poll(&mut self, task: &IORingTaskRef) -> Result<(usize, Poll<Option<&'static [u8]>>), IORegistryError> {
         let tidx = task.tidx() % T;
         let node = unsafe { self.tasks_array.get_unchecked_mut(tidx) };
 
@@ -261,7 +262,8 @@ impl<const T: usize, const C: usize> IORingRegistry<T, C> {
         };
 
         // regular pending or actual future result
-        let value = match found.poll(cx) {
+        let mut cx = Context::from_waker(&self.waker);
+        let value = match found.poll(&mut cx) {
             Poll::Pending => return Ok((found.completions, Poll::Pending)),
             Poll::Ready(value) => value,
         };
@@ -324,10 +326,7 @@ impl<const T: usize, const C: usize> IORingRegistry<T, C> {
 
 #[cfg(test)]
 mod tests {
-    use ::core::task::Waker;
-
     use super::*;
-    use crate::runtime::raw::*;
 
     #[test]
     fn allocates_registry() {
@@ -430,11 +429,7 @@ mod tests {
             Ok(task) => registry.append_task(task, target),
         };
 
-        let raw = make_waker();
-        let waker = unsafe { Waker::from_raw(raw) };
-        let mut cx = Context::from_waker(&waker);
-
-        let (cnt, val) = match registry.poll(&task, &mut cx) {
+        let (cnt, val) = match registry.poll(&task) {
             Ok((cnt, Poll::Ready(val))) => (cnt, val),
             Ok(_) | Err(_) => return assert!(false),
         };
@@ -465,11 +460,7 @@ mod tests {
             Ok(task) => registry.append_task(task, target),
         };
 
-        let raw = make_waker();
-        let waker = unsafe { Waker::from_raw(raw) };
-        let mut cx = Context::from_waker(&waker);
-
-        match registry.poll(&task, &mut cx) {
+        match registry.poll(&task) {
             Ok((_, Poll::Ready(_))) => (),
             Ok(_) | Err(_) => assert!(false),
         };
@@ -549,11 +540,7 @@ mod tests {
             Ok(_) => (),
         }
 
-        let raw = make_waker();
-        let waker = unsafe { Waker::from_raw(raw) };
-        let mut cx = Context::from_waker(&waker);
-
-        match registry.poll(&task, &mut cx) {
+        match registry.poll(&task) {
             Ok((_, Poll::Ready(_))) => (),
             Ok(_) | Err(_) => assert!(false),
         };

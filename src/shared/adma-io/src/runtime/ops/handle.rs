@@ -21,17 +21,15 @@ impl IORuntimeHandle for IORuntimeOps {
         self.ctx.release(completer)
     }
 
-
     fn spawn<'a, TFuture, TFnOnce>(
         &mut self,
         callback: TFnOnce,
-        cx: &mut Context<'_>,
     ) -> Option<(Option<IORingTaskRef>, Option<&'static [u8]>)>
     where
         TFuture: Future<Output = Option<&'static [u8]>> + Send + 'a,
         TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send + 'a,
     {
-        IORuntimeContext::spawn(&mut self.ctx, callback, cx)
+        IORuntimeContext::spawn(&mut self.ctx, callback)
     }
 
     fn submit(&mut self, op: IORingSubmitEntry) -> Option<IORingTaskToken> {

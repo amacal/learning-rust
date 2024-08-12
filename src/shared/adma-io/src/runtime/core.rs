@@ -1,11 +1,8 @@
-use ::core::future::Future;
-use ::core::task::Context;
-use ::core::task::Poll;
-use ::core::task::Waker;
+use ::core::future::*;
+use ::core::task::*;
 
 use super::ops::*;
 use super::pool::*;
-use super::raw::*;
 use super::refs::*;
 use super::registry::*;
 use crate::heap::*;
@@ -57,18 +54,6 @@ impl IORingRuntime {
         };
 
         IORingRuntimeAllocate::Succeeded(runtime)
-    }
-}
-
-impl IORingRuntime {
-    fn poll(&mut self, task: &IORingTaskRef) -> Option<(usize, Poll<Option<&'static [u8]>>)> {
-        // waker contains always a null pointer
-        let waker = unsafe { Waker::from_raw(make_waker()) };
-        let mut cx = Context::from_waker(&waker);
-
-        // we always poll through registry to not expose details
-        trace1(b"# polling task; tid=%d\n", task.tid());
-        return self.ctx.poll(task, &mut cx);
     }
 }
 
@@ -144,7 +129,7 @@ impl IORingRuntime {
 
         if !ready {
             // when task is not yet ready we need to poll it again
-            let (_, completions) = match self.poll(&task) {
+            let (_, completions) = match self.ctx.poll(&task) {
                 Some((cnt, Poll::Ready(val))) => (val, cnt),
                 Some((_, Poll::Pending)) => return IORingRuntimeTick::Pending(task),
                 None => return IORingRuntimeTick::InternallyFailed(),
@@ -184,12 +169,9 @@ impl IORingRuntime {
         TFuture: Future<Output = Option<&'static [u8]>> + Send + 'a,
         TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send + 'a,
     {
-        let waker = unsafe { Waker::from_raw(make_waker()) };
-
         let mut result: Option<&'static [u8]> = None;
-        let mut cx = Context::from_waker(&waker);
 
-        let spawned = match IORuntimeContext::spawn(&mut self.ctx, callback, &mut cx) {
+        let spawned = match IORuntimeContext::spawn(&mut self.ctx, callback) {
             None => return IORingRuntimeRun::InternallyFailed(),
             Some((Some(task), _)) => Some(task),
             Some((_, res)) => {

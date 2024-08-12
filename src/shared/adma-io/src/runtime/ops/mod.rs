@@ -60,16 +60,15 @@ trait IORuntimeHandle {
     fn heap(&mut self) -> &mut HeapPool<16>;
 
     fn submit(&mut self, op: IORingSubmitEntry) -> Option<IORingTaskToken>;
-    fn schedule(&mut self, callable: &CallableTarget) -> Result<(IORingTaskToken, IORingTaskToken), Option<i32>>;
     fn extract(&mut self, completer: &IORingCompleterRef) -> Result<Option<i32>, Option<i32>>;
 
+    fn schedule(&mut self, callable: &CallableTarget) -> Result<(IORingTaskToken, IORingTaskToken), Option<i32>>;
     fn complete_queue(&mut self, completer: &IORingCompleterRef) -> Result<(), Option<i32>>;
     fn complete_execute(&mut self, completer: &IORingCompleterRef) -> Result<(), Option<i32>>;
 
     fn spawn<'a, TFuture, TFnOnce>(
         &mut self,
         callback: TFnOnce,
-        cx: &mut Context<'_>,
     ) -> Option<(Option<IORingTaskRef>, Option<&'static [u8]>)>
     where
         TFuture: Future<Output = Option<&'static [u8]>> + Send + 'a,
@@ -88,11 +87,6 @@ impl IORuntimeOps {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use ::core::ptr;
-
-    const NOOP: RawWaker = RawWaker::new(ptr::null(), &VTABLE);
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(|_| NOOP, |_| {}, |_| {}, |_| {});
 
     #[test]
     fn allocates_context() {
@@ -231,11 +225,8 @@ mod tests {
             Some(target) => target,
         };
 
-        let waker = unsafe { Waker::from_raw(NOOP) };
-        let mut cx = Context::from_waker(&waker);
-
         let task = ctx.registry.append_task(task, target);
-        let (completers, poll) = match ctx.poll(&task, &mut cx) {
+        let (completers, poll) = match ctx.poll(&task) {
             Some((completers, poll)) => (completers, poll),
             None => return assert!(false),
         };
@@ -260,7 +251,7 @@ mod tests {
             Err(_) => assert!(false),
         }
 
-        let (completers, poll) = match ctx.poll(&task, &mut cx) {
+        let (completers, poll) = match ctx.poll(&task) {
             Some((completers, poll)) => (completers, poll),
             None => return assert!(false),
         };

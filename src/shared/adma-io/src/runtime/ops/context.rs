@@ -50,8 +50,8 @@ impl IORuntimeContext {
         self.ring.rx.complete(entries)
     }
 
-    pub fn poll(&mut self, task: &IORingTaskRef, cx: &mut Context<'_>) -> Option<(usize, Poll<Option<&'static [u8]>>)> {
-        match self.registry.poll(&task, cx) {
+    pub fn poll(&mut self, task: &IORingTaskRef) -> Option<(usize, Poll<Option<&'static [u8]>>)> {
+        match self.registry.poll(&task) {
             Err(_) => None,
             Ok((completers, status)) => Some((completers, status)),
         }
@@ -77,7 +77,6 @@ impl IORuntimeContext {
     pub fn spawn<'a, TFuture, TFnOnce>(
         ctx: &mut Smart<Self>,
         callback: TFnOnce,
-        cx: &mut Context<'_>,
     ) -> Option<(Option<IORingTaskRef>, Option<&'static [u8]>)>
     where
         TFuture: Future<Output = Option<&'static [u8]>> + Send + 'a,
@@ -99,7 +98,7 @@ impl IORuntimeContext {
         Some(ctx.registry.append_task(task, target));
 
         // to be initially polled
-        let (result, completions) = match ctx.poll(&task, cx) {
+        let (result, completions) = match ctx.poll(&task) {
             Some((cnt, Poll::Ready(val))) => (val, cnt),
             Some((_, Poll::Pending)) => return Some((Some(task), None)),
             None => return None,

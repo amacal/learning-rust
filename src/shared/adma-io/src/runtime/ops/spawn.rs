@@ -42,7 +42,7 @@ where
 {
     type Output = Result<(), Option<i32>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
         trace1(b"# polling spawn; tid=%d\n", this.handle.tid());
 
@@ -51,7 +51,7 @@ where
             None => return Poll::Ready(Err(None)),
         };
 
-        match this.handle.spawn(callback, cx) {
+        match this.handle.spawn(callback) {
             Some(_) => (),
             None => return Poll::Ready(Err(None)),
         };
