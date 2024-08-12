@@ -94,7 +94,7 @@ impl Worker {
             result if result < 0 => match i32::try_from(result) {
                 Ok(value) => return release_pipes(Some(value), pipefd),
                 Err(_) => return release_pipes(None, pipefd),
-            }
+            },
             _ => (),
         }
 
@@ -102,7 +102,7 @@ impl Worker {
             result if result < 0 => match i32::try_from(result) {
                 Ok(value) => return release_pipes(Some(value), pipefd),
                 Err(_) => return release_pipes(None, pipefd),
-            }
+            },
             _ => (),
         }
 
@@ -142,13 +142,7 @@ impl Worker {
             }
         };
 
-        trace4(
-            b"worker spawned; tid=%d, heap=%x, in=%d, out=%d\n",
-            tid,
-            heap.as_ref().ptr(),
-            pipefd[3],
-            pipefd[1],
-        );
+        trace4(b"worker spawned; tid=%d, heap=%x, in=%d, out=%d\n", tid, heap.as_ref().ptr(), pipefd[3], pipefd[1]);
 
         let mut buffer: [u8; 1] = [0; 1];
         sys_read(pipefd[2], buffer.as_mut_ptr() as *const (), 1);
@@ -177,7 +171,7 @@ impl Worker {
 
 pub enum WorkerExecute {
     Succeeded(IORingSubmitEntry),
-    OutgoingPipeFailed(isize),
+    OutgoingPipeFailed(Option<i32>),
 }
 
 impl Worker {
@@ -188,10 +182,15 @@ impl Worker {
         trace2(b"worker sends bytes; ptr=%x, len=%d\n", ptr, len);
         let res = sys_write(self.outgoing, ptr as *mut (), len);
 
-        // we sends exactly 16 bytes, containing (ptr, len) of the heap
-        trace3(b"worker sends bytes; fd=%d, size=%d, res=%d\n", self.outgoing, len, res);
-        if res != len as isize {
-            return WorkerExecute::OutgoingPipeFailed(res);
+        match res {
+            value if value < 0 => match i32::try_from(value) {
+                Ok(value) => return WorkerExecute::OutgoingPipeFailed(Some(value)),
+                Err(_) => return WorkerExecute::OutgoingPipeFailed(None),
+            },
+            value if value as usize == len => {
+                trace3(b"worker sends bytes; fd=%d, size=%d, res=%d\n", self.outgoing, len, res)
+            }
+            _ => return WorkerExecute::OutgoingPipeFailed(None),
         }
 
         // asynchronous operation has to be returned referencing callable's header
@@ -303,18 +302,18 @@ mod tests {
 
         match ring.tx.submit(1, [IORingSubmitEntry::Read(read)]) {
             IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
-            _ => return assert!(false)
+            _ => return assert!(false),
         }
 
         match ring.tx.flush() {
             IORingSubmit::Succeeded(cnt) => assert_eq!(cnt, 1),
-            _ => return assert!(false)
+            _ => return assert!(false),
         }
 
         let mut entries = [IORingCompleteEntry::default(); 1];
         match ring.rx.complete(&mut entries) {
             IORingComplete::Succeeded(cnt) => assert_eq!(cnt, 1),
-            _ => return assert!(false)
+            _ => return assert!(false),
         }
 
         unsafe {

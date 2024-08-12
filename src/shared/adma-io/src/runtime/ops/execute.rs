@@ -140,7 +140,10 @@ where
         if let Some(callable) = self.callable.take() {
             let (ptr, len) = callable.as_ref().as_ptr();
             trace2(b"callable; releasing task, heap=%x, size=%d\n", ptr, len);
-            callable.release(self.handle.heap());
+
+            if let Err(_) = callable.release(self.handle.heap()) {
+                trace2(b"callable; releasing task, heap=%x, size=%d, failed\n", ptr, len);
+            }
         }
     }
 }

@@ -18,10 +18,10 @@ pub struct IORuntimePool<const T: usize> {
 }
 
 impl<const T: usize> IORuntimePool<T> {
-    pub fn allocate() -> Result<IORuntimePool<T>, ()> {
+    pub fn allocate() -> Result<IORuntimePool<T>, Option<i32>> {
         let queue = match PipeChannel::create() {
             Ok(value) => value,
-            Err(_) => return Err(()),
+            Err(_) => return Err(None),
         };
 
         let mut workers_slots: [usize; T] = [0; T];
@@ -30,9 +30,9 @@ impl<const T: usize> IORuntimePool<T> {
         for i in 0..T {
             let worker = match Worker::start() {
                 WorkerStart::Succeeded(worker) => worker,
-                WorkerStart::StartFailed(_) => return Err(()),
-                WorkerStart::PipesFailed(_) => return Err(()),
-                WorkerStart::StackFailed(_) => return Err(()),
+                WorkerStart::StartFailed(errno) => return Err(errno),
+                WorkerStart::PipesFailed(errno) => return Err(errno),
+                WorkerStart::StackFailed(errno) => return Err(errno),
             };
 
             workers_array[i] = Some(worker);
@@ -79,14 +79,14 @@ impl<const T: usize> IORuntimePool<T> {
         slots: &mut [Option<(u64, IORingSubmitEntry)>; 4],
         completers: [&IORingCompleterRef; 2],
         callable: &CallableTarget,
-    ) -> Result<Option<usize>, ()> {
+    ) -> Result<usize, Option<i32>> {
         // acquire worker
         if let Some(slot) = self.workers_slots.get(self.workers_count) {
             trace1(b"acquired worker; slot=%d\n", *slot);
 
             let worker = match self.workers_array.get_mut(*slot) {
                 Some(Some(worker)) => worker,
-                _ => return Err(()),
+                _ => return Err(None),
             };
 
             // confirm queuing
@@ -96,7 +96,7 @@ impl<const T: usize> IORuntimePool<T> {
             // prepare execute op
             let op = match worker.execute(callable) {
                 WorkerExecute::Succeeded(op) => op,
-                _ => return Err(()),
+                WorkerExecute::OutgoingPipeFailed(errno) => return Err(errno),
             };
 
             // confirm execution
@@ -106,7 +106,7 @@ impl<const T: usize> IORuntimePool<T> {
             self.workers_count += 1;
             self.workers_completers[*slot] = Some(completers[1].encode());
 
-            return Ok(Some(2));
+            return Ok(2);
         }
 
         // append encoded completer to a callable header
@@ -122,7 +122,7 @@ impl<const T: usize> IORuntimePool<T> {
         let op = IORingSubmitEntry::write(self.queue_outgoing, ptr, len, 0);
         slots[0] = Some((completers[0].encode(), op));
 
-        return Ok(Some(1));
+        return Ok(1);
     }
 }
 
@@ -263,7 +263,7 @@ mod tests {
 
             let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
             match pool.execute(&mut slots, [&first, &second], &callable) {
-                Ok(Some(cnt)) => assert_eq!(cnt, 2),
+                Ok(cnt) => assert_eq!(cnt, 2),
                 _ => assert!(false),
             }
 
@@ -362,7 +362,7 @@ mod tests {
 
             let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
             match pool.execute(&mut slots, [&first, &second], &callable1) {
-                Ok(Some(cnt)) => assert_eq!(cnt, 2),
+                Ok(cnt) => assert_eq!(cnt, 2),
                 _ => assert!(false),
             }
 
@@ -421,7 +421,7 @@ mod tests {
 
             let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
             match pool.execute(&mut slots, [&first, &second], &callable2) {
-                Ok(Some(cnt)) => assert_eq!(cnt, 1),
+                Ok(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 
@@ -504,7 +504,7 @@ mod tests {
 
             let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
             match pool.execute(&mut slots, [&first, &second], &callable1) {
-                Ok(Some(cnt)) => assert_eq!(cnt, 2),
+                Ok(cnt) => assert_eq!(cnt, 2),
                 _ => assert!(false),
             }
 
@@ -563,7 +563,7 @@ mod tests {
 
             let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
             match pool.execute(&mut slots, [&third, &fourth], &callable2) {
-                Ok(Some(cnt)) => assert_eq!(cnt, 1),
+                Ok(cnt) => assert_eq!(cnt, 1),
                 _ => assert!(false),
             }
 

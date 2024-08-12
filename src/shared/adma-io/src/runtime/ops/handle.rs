@@ -73,9 +73,8 @@ impl IORuntimeHandle for IORuntimeOps {
 
         let mut slots: [Option<(u64, IORingSubmitEntry)>; 4] = [const { None }; 4];
         let cnt = match self.ctx.threads.execute(&mut slots, [&queued, &executed], callable) {
-            Ok(Some(cnt)) => cnt,
-            Ok(None) => 0,
-            Err(()) => return Err(None),
+            Ok(cnt) => cnt,
+            Err(errno) => return Err(errno),
         };
 
         // potentially received submits has to be processed
