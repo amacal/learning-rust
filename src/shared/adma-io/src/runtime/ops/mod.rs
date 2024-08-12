@@ -1,26 +1,36 @@
 mod close;
-mod ctx;
+mod context;
 mod execute;
+mod file;
 mod handle;
+mod mem;
 mod noop;
 mod open;
 mod read;
 mod spawn;
 mod std;
 mod time;
+mod token;
 mod write;
 
 use ::core::future::*;
+use ::core::marker::*;
+use ::core::pin::*;
 use ::core::task::*;
 
 use super::callable::*;
+use super::pollable::*;
 use super::pool::*;
 use super::refs::*;
 use super::registry::*;
-use super::token::*;
+use crate::core::*;
 use crate::heap::*;
 use crate::trace::*;
 use crate::uring::*;
+
+pub use file::*;
+pub use mem::*;
+pub use std::*;
 
 pub struct IORuntimeContext {
     heap: Droplet<HeapPool<16>>,
@@ -34,7 +44,18 @@ pub struct IORuntimeOps {
     ctx: Smart<IORuntimeContext>,
 }
 
-pub trait IORuntimeHandle {
+struct IORingTaskToken {
+    kind: IORingTaskTokenKind,
+    completer: IORingCompleterRef,
+}
+
+enum IORingTaskTokenKind {
+    Op,
+    Queue,
+    Execute,
+}
+
+trait IORuntimeHandle {
     fn tid(&self) -> u32;
     fn heap(&mut self) -> &mut HeapPool<16>;
 
@@ -67,7 +88,6 @@ impl IORuntimeOps {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::pollable::*;
 
     use ::core::ptr;
 

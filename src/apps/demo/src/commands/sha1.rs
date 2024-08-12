@@ -1,4 +1,5 @@
 use super::errno::*;
+
 use adma_io::core::*;
 use adma_io::heap::*;
 use adma_io::proc::*;
@@ -28,7 +29,7 @@ impl Sha1Command {
                 };
 
                 // a file descriptor for a file we opened
-                let file: FileDescriptor = match ops.open_at(&path).await {
+                let file = match ops.open_at(&path).await {
                     Ok(value) => value,
                     _ => return Some(APP_FILE_OPENING_FAILED),
                 };

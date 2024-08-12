@@ -1,4 +1,4 @@
-use crate::heap::*;
+use super::*;
 
 pub trait IORingSubmitBuffer {
     fn extract(&self) -> (*const u8, usize);

@@ -1,10 +1,4 @@
-use ::core::future::*;
-use ::core::mem;
-use ::core::task::*;
-
 use super::*;
-use crate::runtime::pollable::*;
-use crate::trace::*;
 
 unsafe impl Send for IORuntimeContext {}
 
@@ -31,17 +25,17 @@ impl IORuntimeContext {
         trace1(b"initializing runtime context; uring=%d\n", ring.fd());
         let mut pool = HeapPool::new().droplet();
 
-        mem::swap(&mut pool, &mut ctx.heap);
-        mem::forget(pool);
+        core::mem::swap(&mut pool, &mut ctx.heap);
+        core::mem::forget(pool);
 
-        mem::swap(&mut ring, &mut ctx.ring);
-        mem::forget(ring);
+        core::mem::swap(&mut ring, &mut ctx.ring);
+        core::mem::forget(ring);
 
-        mem::swap(&mut threads, &mut ctx.threads);
-        mem::forget(threads);
+        core::mem::swap(&mut threads, &mut ctx.threads);
+        core::mem::forget(threads);
 
-        mem::swap(&mut registry, &mut ctx.registry);
-        mem::forget(registry);
+        core::mem::swap(&mut registry, &mut ctx.registry);
+        core::mem::forget(registry);
 
         ctx
     }

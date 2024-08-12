@@ -1,16 +1,4 @@
-use super::ops::*;
-use super::refs::*;
-
-pub struct IORingTaskToken {
-    kind: IORingTaskTokenKind,
-    completer: IORingCompleterRef,
-}
-
-enum IORingTaskTokenKind {
-    Op,
-    Queue,
-    Execute,
-}
+use super::*;
 
 impl IORingTaskToken {
     pub fn from_op(completer: IORingCompleterRef) -> Self {

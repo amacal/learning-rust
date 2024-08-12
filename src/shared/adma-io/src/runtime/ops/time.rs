@@ -1,12 +1,4 @@
-use ::core::future::Future;
-use ::core::pin::Pin;
-use ::core::task::Context;
-use ::core::task::Poll;
-
 use super::*;
-use crate::runtime::token::*;
-use crate::trace::*;
-use crate::uring::*;
 
 impl IORuntimeOps {
     pub fn timeout(&mut self, seconds: u32, nanos: u32) -> impl Future<Output = Result<(), Option<i32>>> {

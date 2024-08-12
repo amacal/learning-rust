@@ -1,7 +1,5 @@
 mod callable;
 mod core;
-mod file;
-mod mem;
 mod ops;
 mod pipe;
 mod pollable;
@@ -10,11 +8,9 @@ mod raw;
 mod refs;
 mod registry;
 mod thread;
-mod token;
 mod utils;
 
 pub use self::core::*;
-pub use self::file::*;
-pub use self::ops::*;
+pub use self::ops::IORuntimeOps;
 pub use self::pipe::*;
 pub use self::utils::*;
