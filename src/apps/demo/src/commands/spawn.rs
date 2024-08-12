@@ -39,7 +39,7 @@ impl SpawnCommand {
             }
         }
 
-        match ops.write(&stdout, b"Spawning completed.\n").await {
+        match ops.write(stdout, b"Spawning completed.\n").await {
             Ok(_) => (),
             Err(Some(_)) => return Some(APP_STDOUT_FAILED),
             Err(None) => return Some(APP_INTERNALLY_FAILED),

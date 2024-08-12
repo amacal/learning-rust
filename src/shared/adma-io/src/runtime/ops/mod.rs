@@ -6,6 +6,7 @@ mod handle;
 mod mem;
 mod noop;
 mod open;
+mod pipe;
 mod read;
 mod spawn;
 mod std;
@@ -30,7 +31,6 @@ use crate::uring::*;
 
 pub use file::*;
 pub use mem::*;
-pub use std::*;
 
 pub struct IORuntimeContext {
     heap: Droplet<HeapPool<16>>,

@@ -70,9 +70,9 @@ pub struct WorkerArgs {
 
 pub enum WorkerStart {
     Succeeded(Worker),
-    StartFailed(isize),
-    StackFailed(isize),
-    PipesFailed(isize),
+    StartFailed(Option<i32>),
+    StackFailed(Option<i32>),
+    PipesFailed(Option<i32>),
 }
 
 impl Worker {
@@ -80,7 +80,7 @@ impl Worker {
         let mut pipefd = [0; 4];
         let ptr = pipefd.as_mut_ptr();
 
-        fn release_pipes(result: isize, pipefd: [u32; 4]) -> WorkerStart {
+        fn release_pipes(result: Option<i32>, pipefd: [u32; 4]) -> WorkerStart {
             for fd in pipefd {
                 if fd > 0 {
                     sys_close(fd);
@@ -91,12 +91,18 @@ impl Worker {
         }
 
         match sys_pipe2(unsafe { ptr.add(0) }, O_DIRECT) {
-            result if result < 0 => return release_pipes(result, pipefd),
+            result if result < 0 => match i32::try_from(result) {
+                Ok(value) => return release_pipes(Some(value), pipefd),
+                Err(_) => return release_pipes(None, pipefd),
+            }
             _ => (),
         }
 
         match sys_pipe2(unsafe { ptr.add(2) }, O_DIRECT) {
-            result if result < 0 => return release_pipes(result, pipefd),
+            result if result < 0 => match i32::try_from(result) {
+                Ok(value) => return release_pipes(Some(value), pipefd),
+                Err(_) => return release_pipes(None, pipefd),
+            }
             _ => (),
         }
 
@@ -122,10 +128,17 @@ impl Worker {
         let tid = match unsafe { start_thread(&heap, worker_callback, args) } {
             result if result > 0 => result as u32,
             result => {
-                heap.free();
-                release_pipes(result, pipefd);
+                if let Err(_) = heap.free() {
+                    trace0(b"releasing stack for a thread failed\n");
+                }
 
-                return WorkerStart::StartFailed(result);
+                let value = match i32::try_from(result) {
+                    Ok(value) => Some(value),
+                    Err(_) => None,
+                };
+
+                release_pipes(None, pipefd);
+                return WorkerStart::StartFailed(value);
             }
         };
 

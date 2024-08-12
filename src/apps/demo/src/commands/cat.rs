@@ -29,7 +29,7 @@ impl CatCommand {
         let mut offset = 0;
 
         loop {
-            let read = match ops.read_at_offset(&file, &buffer, offset).await {
+            let read = match ops.read_at_offset(file, &buffer, offset).await {
                 Ok(cnt) => cnt,
                 Err(None) => return Some(APP_INTERNALLY_FAILED),
                 Err(Some(_)) => return Some(APP_FILE_READING_FAILED),
@@ -50,7 +50,7 @@ impl CatCommand {
                     Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
                 };
 
-                let written = match ops.write(&stdout, &slice).await {
+                let written = match ops.write(stdout, &slice).await {
                     Ok(cnt) => cnt as usize,
                     Err(Some(_)) => return Some(APP_FILE_WRITING_FAILED),
                     Err(None) => return Some(APP_INTERNALLY_FAILED),

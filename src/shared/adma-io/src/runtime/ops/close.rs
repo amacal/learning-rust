@@ -6,7 +6,7 @@ impl IORuntimeOps {
         descriptor: TFileDescriptor,
     ) -> impl Future<Output = Result<(), Option<i32>>>
     where
-        TFileDescriptor: AsFileDescriptor + AsClosableFileDescriptor,
+        TFileDescriptor: FileDescriptor + Closable,
     {
         CloseFuture {
             token: None,

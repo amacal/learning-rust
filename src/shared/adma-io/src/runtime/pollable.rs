@@ -44,8 +44,12 @@ impl PollableTarget {
                 trace2(b"allocating memory to pin a future; size=%d, addr=%x\n", size, value.as_ref().ptr());
                 value
             }
-            Err(err) => {
-                trace2(b"allocating memory to pin a future; size=%d,s err=%d\n", size, err);
+            Err(None) => {
+                trace1(b"allocating memory to pin a future; size=%d, failed\n", size);
+                return None;
+            }
+            Err(Some(errno)) => {
+                trace2(b"allocating memory to pin a future; size=%d, err=%d\n", size, errno);
                 return None;
             }
         };

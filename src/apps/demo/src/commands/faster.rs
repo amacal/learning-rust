@@ -31,7 +31,7 @@ impl FasterCommand {
         let mut timeout = ops.timeout(self.delay, 0);
 
         loop {
-            let read = ops.read_at_offset(&file, &buffer, offset);
+            let read = ops.read_at_offset(file, &buffer, offset);
             let (result, returned) = match select(timeout, read).await {
                 SelectResult::Failed() => return Some(APP_SELECT_FAILED),
                 SelectResult::Result2(result, timeout) => (result, timeout),
@@ -64,7 +64,7 @@ impl FasterCommand {
                     Err(()) => return Some(APP_MEMORY_SLICE_FAILED),
                 };
 
-                let written = match ops.write(&stdout, &slice).await {
+                let written = match ops.write(stdout, &slice).await {
                     Ok(cnt) => cnt as usize,
                     Err(Some(_)) => return Some(APP_STDOUT_FAILED),
                     Err(None) => return Some(APP_INTERNALLY_FAILED),

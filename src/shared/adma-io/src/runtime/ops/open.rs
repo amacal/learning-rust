@@ -1,10 +1,12 @@
+use file::FileDescriptor;
+
 use super::*;
 
 impl IORuntimeOps {
     pub fn open_at<'a, TPath>(
         &mut self,
         path: &'a TPath,
-    ) -> impl Future<Output = Result<FileDescriptor, Option<i32>>> + 'a
+    ) -> impl Future<Output = Result<impl FileDescriptor + ReadableAtOffset + Closable + Copy, Option<i32>>> + 'a
     where
         TPath: AsNullTerminatedRef,
     {
@@ -31,7 +33,7 @@ where
     THandle: IORuntimeHandle + Unpin,
     TPath: AsNullTerminatedRef,
 {
-    type Output = Result<FileDescriptor, Option<i32>>;
+    type Output = Result<FileDescriptorValue, Option<i32>>;
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -47,7 +49,7 @@ where
                 Ok((None, Some(token))) => (Some(token), Poll::Pending),
                 Ok((Some(val), None)) if val < 0 => (None, Poll::Ready(Err(Some(val)))),
                 Ok((Some(val), None)) => match u32::try_from(val) {
-                    Ok(fd) => (None, Poll::Ready(Ok(FileDescriptor::new(fd)))),
+                    Ok(fd) => (None, Poll::Ready(Ok(FileDescriptorValue { fd }))),
                     Err(_) => (None, Poll::Ready(Err(None))),
                 },
                 Ok(_) => (None, Poll::Ready(Err(None))),
@@ -59,3 +61,17 @@ where
         poll
     }
 }
+
+#[derive(Clone, Copy)]
+struct FileDescriptorValue {
+    fd: u32,
+}
+
+impl FileDescriptor for FileDescriptorValue {
+    fn as_fd(&self) -> u32 {
+        self.fd
+    }
+}
+
+impl Closable for FileDescriptorValue {}
+impl ReadableAtOffset for FileDescriptorValue {}

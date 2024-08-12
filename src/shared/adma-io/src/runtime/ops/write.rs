@@ -3,15 +3,15 @@ use super::*;
 impl IORuntimeOps {
     pub fn write<'a, TBuffer, TFileDescriptor>(
         &mut self,
-        file: TFileDescriptor,
+        descriptor: TFileDescriptor,
         buffer: &'a TBuffer,
     ) -> impl Future<Output = Result<u32, Option<i32>>> + 'a
     where
         TBuffer: IORingSubmitBuffer + Unpin + 'a,
-        TFileDescriptor: AsFileDescriptor + AsWrittableFileDescriptor,
+        TFileDescriptor: FileDescriptor + Writtable,
     {
         WriteAtOffset {
-            fd: file.as_fd(),
+            fd: descriptor.as_fd(),
             handle: self.handle(),
             buffer: buffer,
             offset: 0,

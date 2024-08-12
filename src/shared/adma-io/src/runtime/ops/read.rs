@@ -3,15 +3,15 @@ use super::*;
 impl IORuntimeOps {
     pub fn read<'a, TBuffer, TFileDescriptor>(
         &mut self,
-        file: TFileDescriptor,
+        descriptor: TFileDescriptor,
         buffer: &'a TBuffer,
     ) -> impl Future<Output = Result<u32, Option<i32>>> + 'a
     where
         TBuffer: IORingSubmitBuffer + Unpin + 'a,
-        TFileDescriptor: AsFileDescriptor + AsReadableFileDescriptor,
+        TFileDescriptor: FileDescriptor + Readable,
     {
         ReadAtOffset {
-            fd: file.as_fd(),
+            fd: descriptor.as_fd(),
             handle: self.handle(),
             buffer: buffer,
             offset: 0,
@@ -21,16 +21,16 @@ impl IORuntimeOps {
 
     pub fn read_at_offset<'a, TBuffer, TFileDescriptor>(
         &mut self,
-        file: TFileDescriptor,
+        descriptor: TFileDescriptor,
         buffer: &'a TBuffer,
         offset: u64,
     ) -> impl Future<Output = Result<u32, Option<i32>>> + 'a
     where
         TBuffer: IORingSubmitBuffer + Unpin + 'a,
-        TFileDescriptor: AsFileDescriptor + AsReadableAtOffsetFileDescriptor,
+        TFileDescriptor: FileDescriptor + ReadableAtOffset,
     {
         ReadAtOffset {
-            fd: file.as_fd(),
+            fd: descriptor.as_fd(),
             handle: self.handle(),
             buffer: buffer,
             offset: offset,

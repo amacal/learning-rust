@@ -1,10 +1,10 @@
-pub trait AsFileDescriptor {
-    fn as_fd(self) -> u32;
+pub trait FileDescriptor {
+    fn as_fd(&self) -> u32;
 }
 
-pub trait AsClosableFileDescriptor {}
+pub trait Closable {}
 
-pub trait AsReadableFileDescriptor {}
-pub trait AsReadableAtOffsetFileDescriptor {}
+pub trait Readable {}
+pub trait ReadableAtOffset {}
 
-pub trait AsWrittableFileDescriptor {}
+pub trait Writtable {}

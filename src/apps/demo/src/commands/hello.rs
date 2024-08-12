@@ -8,7 +8,7 @@ pub struct HelloCommand {
 impl HelloCommand {
     pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
         let stdout = ops.stdout();
-        let written = match ops.write(&stdout, &self.msg).await {
+        let written = match ops.write(stdout, &self.msg).await {
             Ok(cnt) => cnt,
             Err(Some(_)) => return Some(APP_STDOUT_FAILED),
             Err(None) => return Some(APP_INTERNALLY_FAILED),

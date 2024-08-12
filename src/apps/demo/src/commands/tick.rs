@@ -17,14 +17,14 @@ impl TickCommand {
                 Err(None) => return Some(APP_INTERNALLY_FAILED),
             };
 
-            match ops.write(&stdout, b".").await {
+            match ops.write(stdout, b".").await {
                 Ok(_) => (),
                 Err(Some(_)) => return Some(APP_STDOUT_FAILED),
                 Err(None) => return Some(APP_INTERNALLY_FAILED),
             }
         }
 
-        match ops.write(&stdout, b"\n").await {
+        match ops.write(stdout, b"\n").await {
             Ok(_) => (),
             Err(Some(_)) => return Some(APP_STDOUT_FAILED),
             Err(None) => return Some(APP_INTERNALLY_FAILED),
