@@ -15,17 +15,23 @@ impl IORuntimeOps {
     }
 }
 
-struct NoopFuture {
-    handle: IORuntimeHandle,
+struct NoopFuture<THandle>
+where
+    THandle: IORuntimeHandle + Unpin,
+{
+    handle: THandle,
     token: Option<IORingTaskToken>,
 }
 
-impl Future for NoopFuture {
+impl<THandle> Future for NoopFuture<THandle>
+where
+    THandle: IORuntimeHandle + Unpin,
+{
     type Output = Result<(), Option<i32>>;
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling noop; tid=%d\n", this.handle.task.tid());
+        trace1(b"# polling noop; tid=%d\n", this.handle.tid());
 
         let op = IORingSubmitEntry::Noop();
         let (token, poll) = match this.token.take() {
@@ -33,7 +39,7 @@ impl Future for NoopFuture {
                 None => (None, Poll::Ready(Err(None))),
                 Some(token) => (Some(token), Poll::Pending),
             },
-            Some(token) => match token.extract(&mut this.handle.ctx) {
+            Some(token) => match token.extract(&mut this.handle) {
                 Ok((None, Some(token))) => (Some(token), Poll::Pending),
                 Ok((Some(val), None)) => match val {
                     val if val < 0 => (None, Poll::Ready(Err(Some(val)))),

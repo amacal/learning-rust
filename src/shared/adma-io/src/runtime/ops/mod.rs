@@ -1,6 +1,7 @@
 mod close;
 mod ctx;
 mod execute;
+mod handle;
 mod noop;
 mod open;
 mod read;
@@ -8,7 +9,9 @@ mod spawn;
 mod std;
 mod time;
 mod write;
-mod handle;
+
+use ::core::future::*;
+use ::core::task::*;
 
 use super::callable::*;
 use super::pool::*;
@@ -31,14 +34,30 @@ pub struct IORuntimeOps {
     ctx: Smart<IORuntimeContext>,
 }
 
-struct IORuntimeHandle {
-    task: IORingTaskRef,
-    ctx: Smart<IORuntimeContext>,
+pub trait IORuntimeHandle {
+    fn tid(&self) -> u32;
+    fn heap(&mut self) -> &mut HeapPool<16>;
+
+    fn submit(&mut self, op: IORingSubmitEntry) -> Option<IORingTaskToken>;
+    fn schedule(&mut self, callable: &CallableTarget) -> Result<(IORingTaskToken, IORingTaskToken), Option<i32>>;
+    fn extract(&mut self, completer: &IORingCompleterRef) -> Result<Option<i32>, Option<i32>>;
+
+    fn complete_queue(&mut self, completer: &IORingCompleterRef) -> Result<(), Option<i32>>;
+    fn complete_execute(&mut self, completer: &IORingCompleterRef) -> Result<(), Option<i32>>;
+
+    fn spawn<'a, TFuture, TFnOnce>(
+        &mut self,
+        callback: TFnOnce,
+        cx: &mut Context<'_>,
+    ) -> Option<(Option<IORingTaskRef>, Option<&'static [u8]>)>
+    where
+        TFuture: Future<Output = Option<&'static [u8]>> + Send + 'a,
+        TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send + 'a;
 }
 
 impl IORuntimeOps {
-    fn handle(&self) -> IORuntimeHandle {
-        IORuntimeHandle {
+    fn handle(&self) -> impl IORuntimeHandle {
+        Self {
             task: self.task,
             ctx: self.ctx.duplicate(),
         }
@@ -51,7 +70,6 @@ mod tests {
     use crate::runtime::pollable::*;
 
     use ::core::ptr;
-    use ::core::task::*;
 
     const NOOP: RawWaker = RawWaker::new(ptr::null(), &VTABLE);
     const VTABLE: RawWakerVTable = RawWakerVTable::new(|_| NOOP, |_| {}, |_| {}, |_| {});

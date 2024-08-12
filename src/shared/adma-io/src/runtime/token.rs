@@ -40,8 +40,9 @@ impl IORingTaskToken {
 }
 
 impl IORingTaskToken {
-    pub fn extract(self, ctx: &mut IORuntimeContext) -> Result<(Option<i32>, Option<IORingTaskToken>), Option<i32>> {
-        let value = match ctx.extract(&self.completer) {
+    pub fn extract<THandle>(self, handle: &mut THandle) -> Result<(Option<i32>, Option<IORingTaskToken>), Option<i32>>
+    where THandle: IORuntimeHandle {
+        let value = match handle.extract(&self.completer) {
             Ok(Some(value)) => value,
             Ok(None) => return Ok((None, Some(self))),
             Err(err) => return Err(err),
@@ -49,14 +50,14 @@ impl IORingTaskToken {
 
         if let IORingTaskTokenKind::Queue = self.kind {
             // enqueue sent callable
-            if let Err(err) = ctx.enqueue(&self.completer) {
+            if let Err(err) = handle.complete_queue(&self.completer) {
                 return Err(err);
             }
         }
 
         if let IORingTaskTokenKind::Execute = self.kind {
             // trigger awaiting callable
-            if let Err(err) = ctx.release(&self.completer) {
+            if let Err(err) = handle.complete_execute(&self.completer) {
                 return Err(err);
             }
         }

@@ -45,23 +45,28 @@ impl IORuntimeOps {
     }
 }
 
-struct ReadAtOffset<'a, TBuffer> {
+struct ReadAtOffset<'a, THandle, TBuffer>
+where
+    THandle: IORuntimeHandle + Unpin,
+    TBuffer: IORingSubmitBuffer + Unpin + 'a,
+{
     fd: u32,
     offset: u64,
-    handle: IORuntimeHandle,
+    handle: THandle,
     buffer: &'a TBuffer,
     token: Option<IORingTaskToken>,
 }
 
-impl<'a, TBuffer> Future for ReadAtOffset<'a, TBuffer>
+impl<'a, THandle, TBuffer> Future for ReadAtOffset<'a, THandle, TBuffer>
 where
+    THandle: IORuntimeHandle + Unpin,
     TBuffer: IORingSubmitBuffer + Unpin + 'a,
 {
     type Output = Result<u32, Option<i32>>;
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace2(b"# polling file-read; tid=%d, fd=%d\n", this.handle.task.tid(), this.fd);
+        trace2(b"# polling file-read; tid=%d, fd=%d\n", this.handle.tid(), this.fd);
 
         let (buf, len) = this.buffer.extract();
         let op = IORingSubmitEntry::read(this.fd, buf, len, this.offset);
@@ -71,7 +76,7 @@ where
                 None => (None, Poll::Ready(Err(None))),
                 Some(token) => (Some(token), Poll::Pending),
             },
-            Some(token) => match token.extract(&mut this.handle.ctx) {
+            Some(token) => match token.extract(&mut this.handle) {
                 Ok((None, Some(token))) => (Some(token), Poll::Pending),
                 Ok((Some(val), None)) if val < 0 => (None, Poll::Ready(Err(Some(val)))),
                 Ok((Some(val), None)) => match u32::try_from(val) {

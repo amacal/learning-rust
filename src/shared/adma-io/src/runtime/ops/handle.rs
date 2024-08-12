@@ -1,7 +1,40 @@
 use super::*;
 
-impl IORuntimeHandle {
-    pub fn submit(&mut self, op: IORingSubmitEntry) -> Option<IORingTaskToken> {
+impl IORuntimeHandle for IORuntimeOps {
+    fn tid(&self) -> u32 {
+        self.task.tid()
+    }
+
+    fn heap(&mut self) -> &mut HeapPool<16> {
+        &mut self.ctx.heap
+    }
+
+    fn extract(&mut self, completer: &IORingCompleterRef) -> Result<Option<i32>, Option<i32>> {
+        self.ctx.extract(completer)
+    }
+
+    fn complete_queue(&mut self, completer: &IORingCompleterRef) -> Result<(), Option<i32>> {
+        self.ctx.enqueue(completer)
+    }
+
+    fn complete_execute(&mut self, completer: &IORingCompleterRef) -> Result<(), Option<i32>> {
+        self.ctx.release(completer)
+    }
+
+
+    fn spawn<'a, TFuture, TFnOnce>(
+        &mut self,
+        callback: TFnOnce,
+        cx: &mut Context<'_>,
+    ) -> Option<(Option<IORingTaskRef>, Option<&'static [u8]>)>
+    where
+        TFuture: Future<Output = Option<&'static [u8]>> + Send + 'a,
+        TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send + 'a,
+    {
+        IORuntimeContext::spawn(&mut self.ctx, callback, cx)
+    }
+
+    fn submit(&mut self, op: IORingSubmitEntry) -> Option<IORingTaskToken> {
         trace1(b"appending completer to registry; tid=%d\n", self.task.tid());
         let completer = match self.ctx.registry.append_completer(&self.task) {
             Ok(completer) => completer,
@@ -27,10 +60,7 @@ impl IORuntimeHandle {
         }
     }
 
-    pub fn schedule(
-        &mut self,
-        callable: &CallableTarget,
-    ) -> Result<(IORingTaskToken, IORingTaskToken), Option<i32>> {
+    fn schedule(&mut self, callable: &CallableTarget) -> Result<(IORingTaskToken, IORingTaskToken), Option<i32>> {
         let queued = match self.ctx.registry.append_completer(&self.task) {
             Ok(completer) => completer,
             Err(IORegistryError::NotEnoughSlots) => return Err(None),
@@ -68,5 +98,4 @@ impl IORuntimeHandle {
             Ok((IORingTaskToken::from_op(queued), IORingTaskToken::from_execute(executed)))
         }
     }
-
 }

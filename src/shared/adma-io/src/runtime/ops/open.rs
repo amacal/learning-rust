@@ -22,24 +22,26 @@ impl IORuntimeOps {
     }
 }
 
-struct OpenAtFuture<'a, TPath>
+struct OpenAtFuture<'a, THandle, TPath>
 where
+    THandle: IORuntimeHandle + Unpin,
     TPath: AsNullTerminatedRef,
 {
     path: &'a TPath,
-    handle: IORuntimeHandle,
+    handle: THandle,
     token: Option<IORingTaskToken>,
 }
 
-impl<'a, TPath> Future for OpenAtFuture<'a, TPath>
+impl<'a, THandle, TPath> Future for OpenAtFuture<'a, THandle, TPath>
 where
+    THandle: IORuntimeHandle + Unpin,
     TPath: AsNullTerminatedRef,
 {
     type Output = Result<FileDescriptor, Option<i32>>;
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace2(b"# polling file-open; tid=%d, addr=%x\n", this.handle.task.tid(), this.path.as_ptr());
+        trace2(b"# polling file-open; tid=%d, addr=%x\n", this.handle.tid(), this.path.as_ptr());
 
         let op = IORingSubmitEntry::open_at(this.path.as_ptr());
         let (token, poll) = match this.token.take() {
@@ -47,7 +49,7 @@ where
                 None => (None, Poll::Ready(Err(None))),
                 Some(token) => (Some(token), Poll::Pending),
             },
-            Some(token) => match token.extract(&mut this.handle.ctx) {
+            Some(token) => match token.extract(&mut this.handle) {
                 Ok((None, Some(token))) => (Some(token), Poll::Pending),
                 Ok((Some(val), None)) if val < 0 => (None, Poll::Ready(Err(Some(val)))),
                 Ok((Some(val), None)) => match u32::try_from(val) {

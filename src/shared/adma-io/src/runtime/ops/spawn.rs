@@ -22,24 +22,27 @@ impl IORuntimeOps {
     }
 }
 
-struct SpawnFuture<TFnOnce, TFuture>
+struct SpawnFuture<THandle, TFnOnce, TFuture>
 where
+    THandle: IORuntimeHandle + Unpin,
     TFuture: Future<Output = Option<&'static [u8]>> + Send,
     TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send,
 {
-    handle: IORuntimeHandle,
+    handle: THandle,
     call: Option<TFnOnce>,
 }
 
-unsafe impl<TFnOnce, TFuture> Send for SpawnFuture<TFnOnce, TFuture>
+unsafe impl<THandle, TFnOnce, TFuture> Send for SpawnFuture<THandle, TFnOnce, TFuture>
 where
+    THandle: IORuntimeHandle + Unpin,
     TFuture: Future<Output = Option<&'static [u8]>> + Send,
     TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send,
 {
 }
 
-impl<TFnOnce, TFuture> Future for SpawnFuture<TFnOnce, TFuture>
+impl<THandle, TFnOnce, TFuture> Future for SpawnFuture<THandle, TFnOnce, TFuture>
 where
+    THandle: IORuntimeHandle + Unpin,
     TFuture: Future<Output = Option<&'static [u8]>> + Send,
     TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send,
 {
@@ -47,14 +50,14 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        trace1(b"# polling spawn; tid=%d\n", this.handle.task.tid());
+        trace1(b"# polling spawn; tid=%d\n", this.handle.tid());
 
         let callback = match this.call.take() {
             Some(callback) => callback,
             None => return Poll::Ready(Err(None)),
         };
 
-        match IORuntimeContext::spawn(&mut this.handle.ctx, callback, cx) {
+        match this.handle.spawn(callback, cx) {
             Some(_) => (),
             None => return Poll::Ready(Err(None)),
         };
