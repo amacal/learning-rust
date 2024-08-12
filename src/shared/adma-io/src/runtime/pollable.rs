@@ -1,10 +1,9 @@
-use ::core::future::Future;
+use ::core::future::*;
 use ::core::mem;
-use ::core::ops::DerefMut;
-use ::core::pin::Pin;
+use ::core::ops::*;
+use ::core::pin::*;
 use ::core::ptr;
-use ::core::task::Context;
-use ::core::task::Poll;
+use ::core::task::*;
 
 use crate::heap::*;
 use crate::trace::*;
@@ -31,10 +30,6 @@ impl PollableTarget {
             target: target,
             poll: poll::<F>,
         }
-    }
-
-    pub fn as_ref(&self) -> HeapRef {
-        self.target.as_ref()
     }
 
     pub fn allocate<const T: usize, F>(_pool: &mut HeapPool<T>, target: F) -> Option<PollableTarget>
@@ -84,7 +79,7 @@ mod tests {
 
         let heap = match PollableTarget::allocate(&mut pool, target) {
             None => return assert!(false),
-            Some(target) => target.as_ref(),
+            Some(pollable) => pollable.target.as_ref(),
         };
 
         assert_ne!(heap.ptr(), 0);

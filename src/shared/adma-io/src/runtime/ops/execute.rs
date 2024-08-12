@@ -15,7 +15,8 @@ impl IORuntimeOps {
             executed: None,
             phantom: PhantomData,
             handle: self.handle(),
-            task: Some(CallableTarget::allocate(&mut self.ctx.heap, target)),
+            task: Some(target),
+            callable: None,
         }
     }
 }
@@ -28,9 +29,10 @@ where
     TError: Unpin + Send,
 {
     handle: THandle,
-    task: Option<Result<CallableTarget, CallableError>>,
+    task: Option<TFnOnce>,
     queued: Option<IORingTaskToken>,
     executed: Option<IORingTaskToken>,
+    callable: Option<CallableTarget>,
     phantom: PhantomData<&'a (TFnOnce, TResult, TError)>,
 }
 
@@ -86,9 +88,9 @@ where
                     Poll::Ready(Err(Some(result)))
                 } else {
                     trace1(b"# polling spawn-cpu; stage=executed, res=%d\n", result);
-                    match this.task.take() {
-                        None | Some(Err(_)) => Poll::Ready(Err(None)),
-                        Some(Ok(task)) => match task.result::<16, TFnOnce, TResult, TError>(this.handle.heap()) {
+                    match this.callable.take() {
+                        None => Poll::Ready(Err(None)),
+                        Some(callable) => match callable.result::<16, TFnOnce, TResult, TError>(this.handle.heap()) {
                             Ok(Some(value)) => Poll::Ready(Ok(value)),
                             Ok(None) | Err(_) => Poll::Ready(Err(None)),
                         },
@@ -101,12 +103,15 @@ where
             return Poll::Pending;
         }
 
-        let callable = match &this.task {
-            Some(Ok(task)) => task,
-            Some(Err(_)) | None => return Poll::Ready(Err(None)),
+        let callable = match this.task.take() {
+            Some(target) => match CallableTarget::allocate(this.handle.heap(), target) {
+                Ok(callable) => callable,
+                Err(_) => return Poll::Ready(Err(None)),
+            },
+            None => return Poll::Ready(Err(None)),
         };
 
-        match this.handle.schedule(callable) {
+        let poll = match this.handle.schedule(&callable) {
             Ok((queued, executed)) => {
                 trace2(b"callable; scheduled, qid=%d, eid=%d\n", queued.cid(), executed.cid());
                 this.queued = Some(queued);
@@ -117,7 +122,10 @@ where
                 trace0(b"callable not scheduled\n");
                 Poll::Ready(Err(None))
             }
-        }
+        };
+
+        this.callable = Some(callable);
+        poll
     }
 }
 
@@ -129,10 +137,10 @@ where
     TError: Unpin + Send + 'a,
 {
     fn drop(&mut self) {
-        if let Some(Ok(task)) = self.task.take() {
-            let (ptr, len) = task.as_ref().as_ptr();
+        if let Some(callable) = self.callable.take() {
+            let (ptr, len) = callable.as_ref().as_ptr();
             trace2(b"callable; releasing task, heap=%x, size=%d\n", ptr, len);
-            task.release(self.handle.heap());
+            callable.release(self.handle.heap());
         }
     }
 }
