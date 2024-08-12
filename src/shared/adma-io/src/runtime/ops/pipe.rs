@@ -27,7 +27,7 @@ struct ReadPipeDescriptor {
 }
 
 impl FileDescriptor for ReadPipeDescriptor {
-    fn as_fd(&self) -> u32 {
+    fn as_fd(self) -> u32 {
         self.fd
     }
 }
@@ -41,7 +41,7 @@ struct WritePipeDescriptor {
 }
 
 impl FileDescriptor for WritePipeDescriptor {
-    fn as_fd(&self) -> u32 {
+    fn as_fd(self) -> u32 {
         self.fd
     }
 }

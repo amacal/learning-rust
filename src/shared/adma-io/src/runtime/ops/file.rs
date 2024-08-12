@@ -1,5 +1,5 @@
 pub trait FileDescriptor {
-    fn as_fd(&self) -> u32;
+    fn as_fd(self) -> u32;
 }
 
 pub trait Closable {}

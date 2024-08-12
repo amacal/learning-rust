@@ -68,7 +68,7 @@ struct FileDescriptorValue {
 }
 
 impl FileDescriptor for FileDescriptorValue {
-    fn as_fd(&self) -> u32 {
+    fn as_fd(self) -> u32 {
         self.fd
     }
 }

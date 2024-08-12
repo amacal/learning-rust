@@ -13,12 +13,15 @@ impl PipeChannel {
         Self { incoming, outgoing }
     }
 
-    pub fn create() -> Result<Self, isize> {
+    pub fn create() -> Result<Self, Option<i32>> {
         let mut pipefd = [0; 2];
         let ptr = pipefd.as_mut_ptr();
 
         match sys_pipe2(ptr, O_DIRECT) {
-            result if result < 0 => Err(result),
+            result if result < 0 => match i32::try_from(result) {
+                Ok(value) => Err(Some(value)),
+                Err(_) => Err(None),
+            },
             _ => Ok(PipeChannel::new(pipefd[0], pipefd[1])),
         }
     }

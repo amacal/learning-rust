@@ -21,7 +21,7 @@ impl<const T: usize> IORuntimePool<T> {
     pub fn allocate() -> Result<IORuntimePool<T>, Option<i32>> {
         let queue = match PipeChannel::create() {
             Ok(value) => value,
-            Err(_) => return Err(None),
+            Err(errno) => return Err(errno),
         };
 
         let mut workers_slots: [usize; T] = [0; T];

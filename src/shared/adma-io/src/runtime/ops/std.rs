@@ -10,7 +10,7 @@ impl IORuntimeOps {
 struct StdOutDescriptor {}
 
 impl FileDescriptor for StdOutDescriptor {
-    fn as_fd(&self) -> u32 {
+    fn as_fd(self) -> u32 {
         1
     }
 }
