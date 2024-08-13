@@ -6,7 +6,7 @@ pub struct HelloCommand {
 }
 
 impl HelloCommand {
-    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
+    pub async fn execute(self, ops: IORuntimeOps) -> Option<&'static [u8]> {
         let stdout = ops.stdout();
         let written = match ops.write(stdout, &self.msg).await {
             Ok(cnt) => cnt,

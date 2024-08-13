@@ -2,7 +2,7 @@ use super::*;
 
 impl IORuntimeOps {
     pub fn close<TFileDescriptor>(
-        &mut self,
+        &self,
         descriptor: TFileDescriptor,
     ) -> impl Future<Output = Result<(), Option<i32>>>
     where

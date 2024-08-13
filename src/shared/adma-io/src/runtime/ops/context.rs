@@ -71,6 +71,7 @@ impl IORuntimeContext {
         IORuntimeOps {
             task: task.clone(),
             ctx: ctx.duplicate(),
+            none: PhantomData,
         }
     }
 

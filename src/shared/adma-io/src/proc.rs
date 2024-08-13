@@ -1,3 +1,5 @@
+use adma_heap::*;
+
 use crate::core::*;
 
 #[repr(C)]
@@ -72,5 +74,16 @@ impl AsNullTerminatedRef for ProcessArgument {
     fn as_ptr(&self) -> *const u8 {
         self.ptr
     }
+}
 
+impl Pinned for ProcessArgument {
+    fn into(self: Self) -> HeapRef {
+        HeapRef::new(self.ptr as usize, 0)
+    }
+
+    fn from(heap: HeapRef) -> Self {
+        Self {
+            ptr: heap.ptr() as *const u8,
+        }
+    }
 }

@@ -20,6 +20,11 @@ use crate::kernel::*;
 use crate::syscall::*;
 use crate::trace::*;
 
+pub trait Pinned {
+    fn into(self: Self) -> HeapRef;
+    fn from(heap: HeapRef) -> Self;
+}
+
 pub struct Heap {
     ptr: usize,
     len: usize,

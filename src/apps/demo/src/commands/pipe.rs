@@ -7,14 +7,14 @@ pub struct PipeCommand {
 }
 
 impl PipeCommand {
-    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
+    pub async fn execute(self, ops: IORuntimeOps) -> Option<&'static [u8]> {
         let stdout = ops.stdout();
         let (reader, writer) = match ops.pipe() {
             Ok((reader, writer)) => (reader, writer),
             Err(_) => return Some(APP_PIPE_CREATING_FAILED),
         };
 
-        let reader = ops.spawn(move |mut ops| async move {
+        let reader = ops.spawn(move |ops| async move {
             let buffer = match Heap::allocate(1 * 4096) {
                 Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
                 Ok(value) => value.droplet(),
@@ -45,7 +45,7 @@ impl PipeCommand {
             }
         });
 
-        let writer = ops.spawn(move |mut ops| async move {
+        let writer = ops.spawn(move |ops| async move {
             match ops.write(writer, &self.msg).await {
                 Ok(_) => (),
                 Err(_) => return Some(APP_PIPE_WRITING_FAILED),

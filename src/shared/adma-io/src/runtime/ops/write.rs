@@ -2,7 +2,7 @@ use super::*;
 
 impl IORuntimeOps {
     pub fn write<'a, TBuffer, TFileDescriptor>(
-        &mut self,
+        &self,
         descriptor: TFileDescriptor,
         buffer: &'a TBuffer,
     ) -> impl Future<Output = Result<u32, Option<i32>>> + 'a
@@ -45,6 +45,7 @@ where
 
         let (buf, len) = this.buffer.extract();
         let op = IORingSubmitEntry::write(this.fd, buf, len, this.offset);
+        trace4(b"# polling file-write; tid=%d, fd=%d, buf=%x, len=%d\n", this.handle.tid(), this.fd, buf, len);
 
         let (token, poll) = match this.token.take() {
             None => match this.handle.submit(op) {
@@ -62,6 +63,17 @@ where
                 Err(err) => (None, Poll::Ready(Err(err))),
             },
         };
+
+        if let Poll::Ready(Err(Some(errno))) = &poll {
+            trace5(
+                b"# polling file-write; tid=%d, fd=%d, buf=%x, len=%d, res=%d\n",
+                this.handle.tid(),
+                this.fd,
+                buf,
+                len,
+                errno,
+            );
+        }
 
         this.token = token;
         poll

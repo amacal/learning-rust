@@ -72,7 +72,6 @@ macro_rules! trace {
         #[cfg(feature = $feature)]
         pub fn $name<$($T),*>(fmt: &'static [u8], $($val: $T),*)
         where $($T: FormatArg + Copy),* {
-            use crate::syscall::*;
             let mut msg: [u8; 80] = [0; 80];
 
             let len = $format(&mut msg, fmt, $($val),*);

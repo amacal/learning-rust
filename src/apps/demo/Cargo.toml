@@ -6,10 +6,11 @@ authors = ["Adrian Macal <adma@amacal.pl>"]
 
 [dependencies]
 adma-io = { path = "../../shared/adma-io", default-features = false }
+adma-trace = { path = "../../shared/adma-trace", default-features = false }
 
 [features]
 default = []
-tracing = ["io-tracing", "heap-tracing", "uring-tracing"]
+tracing = []
 io-tracing = ["adma-io/tracing"]
 heap-tracing = ["adma-io/heap-tracing"]
 uring-tracing = ["adma-io/uring-tracing"]

@@ -7,7 +7,7 @@ pub struct SpawnCommand {
 }
 
 impl SpawnCommand {
-    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
+    pub async fn execute(self, ops: IORuntimeOps) -> Option<&'static [u8]> {
         let stdout = ops.stdout();
 
         for i in 0..self.times {
@@ -17,7 +17,7 @@ impl SpawnCommand {
                 Err(None) => return Some(APP_INTERNALLY_FAILED),
             };
 
-            let spawned = ops.spawn(move |mut ops| async move {
+            let spawned = ops.spawn(move |ops| async move {
                 for _ in 0..i + 1 {
                     let msg: Option<&'static [u8]> = match ops.timeout(5, 0).await {
                         Ok(()) => continue,

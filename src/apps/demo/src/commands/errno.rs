@@ -21,3 +21,10 @@ pub const APP_FILE_CLOSING_FAILED: &'static [u8] = b"File: Cannot Close File.";
 
 pub const APP_IO_SPAWNING_FAILED: &'static [u8] = b"Task: I/O Task Spawning Failed.";
 pub const APP_CPU_SPAWNING_FAILED: &'static [u8] = b"Task: CPU Task Spawning Failed.";
+
+pub const APP_CHANNEL_CREATING_FAILED: &'static [u8] = b"Channel: Cannot Create Channel.";
+pub const APP_CHANNEL_WRITING_FAILED: &'static [u8] = b"Channel: Cannot Write Channel.";
+pub const APP_CHANNEL_READING_FAILED: &'static [u8] = b"Channel: Cannot Read Channel.";
+pub const APP_CHANNEL_COMPLETING_FAILED: &'static [u8] = b"Channel: Cannot Complete Receipt.";
+pub const APP_CHANNEL_CLOSING_FAILED: &'static [u8] = b"Channel: Cannot Close Channel.";
+pub const APP_CHANNEL_FLUSHING_FAILED: &'static [u8] = b"Channel: Cannot Flush Channel.";

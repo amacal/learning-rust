@@ -2,7 +2,7 @@ use super::*;
 
 impl IORuntimeOps {
     pub fn execute<'a, TFnOnce, TResult, TError>(
-        &mut self,
+        &self,
         target: TFnOnce,
     ) -> impl Future<Output = Result<Result<TResult, TError>, Option<i32>>> + 'a
     where

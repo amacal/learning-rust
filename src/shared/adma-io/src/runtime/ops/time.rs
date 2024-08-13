@@ -1,7 +1,7 @@
 use super::*;
 
 impl IORuntimeOps {
-    pub fn timeout(&mut self, seconds: u32, nanos: u32) -> impl Future<Output = Result<(), Option<i32>>> {
+    pub fn timeout(&self, seconds: u32, nanos: u32) -> impl Future<Output = Result<(), Option<i32>>> {
         TimeoutFuture {
             timespec: timespec {
                 tv_sec: seconds as i64,

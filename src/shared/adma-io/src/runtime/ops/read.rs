@@ -2,7 +2,7 @@ use super::*;
 
 impl IORuntimeOps {
     pub fn read<'a, TBuffer, TFileDescriptor>(
-        &mut self,
+        &self,
         descriptor: TFileDescriptor,
         buffer: &'a TBuffer,
     ) -> impl Future<Output = Result<u32, Option<i32>>> + 'a
@@ -20,7 +20,7 @@ impl IORuntimeOps {
     }
 
     pub fn read_at_offset<'a, TBuffer, TFileDescriptor>(
-        &mut self,
+        &self,
         descriptor: TFileDescriptor,
         buffer: &'a TBuffer,
         offset: u64,

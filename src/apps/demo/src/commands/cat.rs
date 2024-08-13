@@ -8,7 +8,7 @@ pub struct CatCommand {
 }
 
 impl CatCommand {
-    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
+    pub async fn execute(self, ops: IORuntimeOps) -> Option<&'static [u8]> {
         let buffer = match Heap::allocate(32 * 4096) {
             Err(_) => return Some(APP_MEMORY_ALLOC_FAILED),
             Ok(value) => value.droplet(),

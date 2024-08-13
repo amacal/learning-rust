@@ -1,3 +1,5 @@
+use ::core::mem;
+
 use super::*;
 
 pub trait IORingSubmitBuffer {
@@ -40,9 +42,9 @@ impl<const T: usize> IORingSubmitBuffer for &'static [u8; T] {
     }
 }
 
-impl<const T: usize> IORingSubmitBuffer for [u8; T] {
+impl<T, const L: usize> IORingSubmitBuffer for [T; L] {
     fn extract(&self) -> (*const u8, usize) {
-        (self.as_ptr(), T)
+        (self.as_ptr() as usize as *const u8, L * mem::size_of::<T>())
     }
 }
 

@@ -1,18 +1,18 @@
 use super::errno::*;
+use crate::trace::*;
 
 use adma_io::core::*;
 use adma_io::heap::*;
 use adma_io::proc::*;
 use adma_io::runtime::*;
 use adma_io::sha1::*;
-use adma_io::trace::*;
 
 pub struct Sha1Command {
     pub args: &'static ProcessArguments,
 }
 
 impl Sha1Command {
-    async fn sha1(ops: &mut IORuntimeOps, path: ProcessArgument) -> Option<&'static [u8]> {
+    async fn sha1sum(ops: &IORuntimeOps, path: ProcessArgument) -> Option<&'static [u8]> {
         // an auto dropped memory for a buffer
         let buffer: Droplet<Heap> = match Heap::allocate(32 * 4096) {
             Ok(value) => value.droplet(),
@@ -119,25 +119,77 @@ impl Sha1Command {
         None
     }
 
-    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
-        for arg in 2..self.args.len() {
-            // a path of the file to hash
-            let path: ProcessArgument = match self.args.get(arg) {
-                None => return Some(APP_ARGS_FAILED),
-                Some(value) => value,
+    pub async fn execute(self, ops: IORuntimeOps) -> Option<&'static [u8]> {
+        let (rx, tx) = match ops.channel::<ProcessArgument>(4) {
+            Ok((rx, tx)) => (rx, tx),
+            Err(_) => return Some(APP_CHANNEL_CREATING_FAILED),
+        };
+
+        // a task will be spawned to queue all files
+        let write = |ops| async move {
+            let mut tx = tx.create(&ops);
+
+            for arg in 2..self.args.len() {
+                // a path of the file to hash
+                let path: ProcessArgument = match self.args.get(arg) {
+                    None => return Some(APP_ARGS_FAILED),
+                    Some(value) => value,
+                };
+
+                if let Err(_) = tx.write(path).await {
+                    return Some(APP_CHANNEL_WRITING_FAILED);
+                }
+            }
+
+            if let Err(_) = tx.flush().await {
+                return Some(APP_CHANNEL_FLUSHING_FAILED);
+            }
+
+            if let Err(_) = tx.close().await {
+                return Some(APP_CHANNEL_CLOSING_FAILED);
+            }
+
+            None
+        };
+
+        if let Err(_) = ops.spawn(write).await {
+            return Some(APP_IO_SPAWNING_FAILED);
+        }
+
+        // a task will be spawned to process n files concurrently
+        let read = |ops| async move {
+            let mut rx = rx.create(&ops);
+
+            while let Some(item) = rx.read().await {
+                let (mut receipt, data) = match item {
+                    Ok((receipt, data)) => (receipt, data),
+                    Err(_) => return Some(APP_CHANNEL_READING_FAILED),
+                };
+
+                // a task will be spawned to process each file separately
+                let process = |ops| async move {
+                    if let Some(msg) = Self::sha1sum(&ops, data).await {
+                        return Some(msg);
+                    }
+
+                    if let Err(_) = receipt.complete(&ops).await {
+                        return Some(APP_CHANNEL_COMPLETING_FAILED);
+                    }
+
+                    None
+                };
+
+                // and task has to be awaited to be executed
+                if let Err(_) = ops.spawn(process).await {
+                    break;
+                }
             };
 
-            // a task will be spawned for each argument
-            let task = ops.spawn(|mut ops| async move {
-                // call a function which will hash it
-                Self::sha1(&mut ops, path).await
-            });
+            None
+        };
 
-            // and task has to be awaited to be executed
-            match task.await {
-                Ok(()) => (),
-                Err(_) => return Some(APP_IO_SPAWNING_FAILED),
-            }
+        if let Err(_) = ops.spawn(read).await {
+            return Some(APP_IO_SPAWNING_FAILED);
         }
 
         None

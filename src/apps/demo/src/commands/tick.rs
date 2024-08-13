@@ -7,7 +7,7 @@ pub struct TickCommand {
 }
 
 impl TickCommand {
-    pub async fn execute(self, mut ops: IORuntimeOps) -> Option<&'static [u8]> {
+    pub async fn execute(self, ops: IORuntimeOps) -> Option<&'static [u8]> {
         let stdout = ops.stdout();
 
         for _ in 0..self.ticks {

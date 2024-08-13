@@ -1,3 +1,4 @@
+mod channel;
 mod close;
 mod context;
 mod execute;
@@ -31,6 +32,7 @@ use crate::uring::*;
 
 pub use file::*;
 pub use mem::*;
+pub use channel::*;
 
 pub struct IORuntimeContext {
     heap: Droplet<HeapPool<16>>,
@@ -42,6 +44,7 @@ pub struct IORuntimeContext {
 pub struct IORuntimeOps {
     task: IORingTaskRef,
     ctx: Smart<IORuntimeContext>,
+    none: PhantomData<()>,
 }
 
 struct IORingTaskToken {
@@ -76,13 +79,24 @@ trait IORuntimeHandle {
 }
 
 impl IORuntimeOps {
+    fn duplicate(&self) -> Self {
+        Self {
+            task: self.task,
+            ctx: self.ctx.duplicate(),
+            none: PhantomData,
+        }
+    }
+
     fn handle(&self) -> impl IORuntimeHandle {
         Self {
             task: self.task,
             ctx: self.ctx.duplicate(),
+            none: PhantomData,
         }
     }
 }
+
+unsafe impl Sync for IORuntimeOps {}
 
 #[cfg(test)]
 mod tests {

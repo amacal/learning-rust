@@ -4,7 +4,7 @@ use super::*;
 
 impl IORuntimeOps {
     pub fn open_at<'a, TPath>(
-        &mut self,
+        &self,
         path: &'a TPath,
     ) -> impl Future<Output = Result<impl FileDescriptor + ReadableAtOffset + Closable + Copy, Option<i32>>> + 'a
     where

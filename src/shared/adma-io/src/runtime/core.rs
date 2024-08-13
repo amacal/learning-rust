@@ -263,7 +263,7 @@ mod tests {
             _ => return assert!(false),
         };
 
-        let callback = |mut ops: IORuntimeOps| async move {
+        let callback = |ops: IORuntimeOps| async move {
             match ops.timeout(0, 1).await {
                 Ok(()) => assert!(true),
                 Err(_) => assert!(false),
