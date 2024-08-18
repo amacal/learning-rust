@@ -1,10 +1,7 @@
 use super::*;
 
 impl IORuntimeOps {
-    pub fn close<TFileDescriptor>(
-        &self,
-        descriptor: TFileDescriptor,
-    ) -> impl Future<Output = Result<(), Option<i32>>>
+    pub fn close<TFileDescriptor>(&self, descriptor: TFileDescriptor) -> impl Future<Output = Result<(), Option<i32>>>
     where
         TFileDescriptor: FileDescriptor + Closable,
     {
@@ -51,6 +48,10 @@ where
                 Err(err) => (None, Poll::Ready(Err(err))),
             },
         };
+
+        if let Poll::Ready(Err(Some(errno))) = &poll {
+            trace3(b"polling file-close; tid=%d, fd=%d, res=%d\n", this.handle.tid(), this.fd, *errno);
+        }
 
         this.token = token;
         poll

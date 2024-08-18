@@ -4,6 +4,10 @@ pub trait FileDescriptor {
 
 pub trait Closable {}
 
+pub trait Duplicable {
+    fn from(fd: u32) -> Self;
+}
+
 pub trait Readable {}
 pub trait ReadableAtOffset {}
 

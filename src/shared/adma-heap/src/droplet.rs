@@ -1,3 +1,4 @@
+use ::core::mem;
 use ::core::ops::*;
 
 use super::*;
@@ -8,6 +9,11 @@ impl<T> Droplet<T> {
             target: target,
             destroy: destroy,
         }
+    }
+
+    pub fn forget<R>(target: Self, result: R) -> R {
+        mem::forget(target);
+        result
     }
 }
 

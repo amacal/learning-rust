@@ -5,7 +5,7 @@ unsafe impl Send for IORuntimeContext {}
 impl IORuntimeContext {
     pub fn allocate(
         ring: Droplet<IORing>,
-        threads: Droplet<IORuntimePool<12>>,
+        threads: Droplet<IORuntimePool<1>>,
         registry: Droplet<IORingRegistry<64, 256>>,
     ) -> Option<Smart<Self>> {
         let ctx: Smart<IORuntimeContext> = match Smart::allocate() {
@@ -19,7 +19,7 @@ impl IORuntimeContext {
     fn initialize(
         mut ctx: Smart<Self>,
         mut ring: Droplet<IORing>,
-        mut threads: Droplet<IORuntimePool<12>>,
+        mut threads: Droplet<IORuntimePool<1>>,
         mut registry: Droplet<IORingRegistry<64, 256>>,
     ) -> Smart<Self> {
         trace1(b"initializing runtime context; uring=%d\n", ring.fd());
@@ -60,11 +60,17 @@ impl IORuntimeContext {
     pub fn extract(&mut self, completer: &IORingCompleterRef) -> Result<Option<i32>, Option<i32>> {
         trace2(b"extracting completer; cidx=%d, cid=%d\n", completer.cidx(), completer.cid());
 
-        match self.registry.remove_completer(completer) {
-            Ok(completer) => Ok(completer.result()),
+        let result = match self.registry.remove_completer(completer) {
+            Ok(completer) => completer.result(),
             Err(IORegistryError::CompleterNotReady) => return Ok(None),
             Err(_) => return Err(None),
+        };
+
+        if let Some(res) = result {
+            trace3(b"extracting completer; cidx=%d, cid=%d, res=%d\n", completer.cidx(), completer.cid(), res);
         }
+
+        Ok(result)
     }
 
     pub fn ops(ctx: &mut Smart<Self>, task: IORingTaskRef) -> IORuntimeOps {

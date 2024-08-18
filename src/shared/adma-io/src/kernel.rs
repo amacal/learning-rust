@@ -5,8 +5,14 @@ pub const P_PIDFD: i32 = 3;
 pub const F_GETFL: u32 = 3;
 pub const F_SETFL: u32 = 4;
 
-pub const O_NONBLOCK: u32 = 0x0800;
-pub const O_DIRECT: u32 = 0x4000;
+pub const O_NONBLOCK: u64 = 0x00000800;
+pub const O_DIRECT: u64 = 0x00004000;
+
+pub const EAGAIN: isize = -11;
+pub const SIGPIPE: i32 = 13;
+
+pub const SIG_DFL: usize = 0x00;
+pub const SIG_IGN: usize = 0x01;
 
 pub const PROT_READ: usize = 0x00000001;
 pub const PROT_WRITE: usize = 0x00000002;
@@ -47,13 +53,12 @@ pub struct siginfo {
     _padding: [u8; 116],
 }
 
-impl Default for siginfo {
-    fn default() -> Self {
-        Self {
-            si_signo: 0,
-            si_errno: 0,
-            si_code: 0,
-            _padding: [0; 116],
-        }
-    }
+#[repr(C)]
+#[allow(dead_code)]
+#[allow(non_camel_case_types)]
+pub struct sigaction {
+    pub sa_sigaction: usize,
+    pub sa_flags: i32,
+    pub sa_restorer: usize,
+    pub sa_mask: u64,
 }

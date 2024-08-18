@@ -1,5 +1,5 @@
-#[cfg_attr(feature = "tracing", macro_use)]
+#[cfg(feature = "tracing")]
 use adma_trace::*;
 
-#[cfg_attr(feature = "tracing", macro_use)]
+#[cfg(feature = "tracing")]
 tracing!("tracing");

@@ -6,8 +6,10 @@ use super::pool::*;
 use super::refs::*;
 use super::registry::*;
 use crate::heap::*;
+use crate::kernel::*;
 use crate::trace::*;
 use crate::uring::*;
+use crate::syscall::*;
 
 pub struct IORingRuntime {
     iteration: usize,
@@ -24,6 +26,15 @@ pub enum IORingRuntimeAllocate {
 
 impl IORingRuntime {
     pub fn allocate() -> IORingRuntimeAllocate {
+        let action = sigaction{
+            sa_sigaction: SIG_IGN,
+            sa_flags: 0,
+            sa_restorer: 0,
+            sa_mask: 0,
+        };
+
+        sys_sigaction(SIGPIPE, &action);
+
         // registry needs to be alocated on the heap
         let registry = match IORingRegistry::allocate() {
             Ok(registry) => registry.droplet(),

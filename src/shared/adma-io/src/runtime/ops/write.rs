@@ -71,7 +71,7 @@ where
                 this.fd,
                 buf,
                 len,
-                errno,
+                *errno,
             );
         }
 

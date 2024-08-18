@@ -2,7 +2,6 @@ use ::core::arch::*;
 
 use crate::kernel::*;
 
-#[allow(dead_code)]
 #[inline(never)]
 pub fn sys_read(fd: u32, buf: *const (), count: usize) -> isize {
     unsafe {
@@ -134,7 +133,47 @@ pub fn sys_munmap(addr: *mut (), len: usize) -> isize {
     }
 }
 
-#[allow(dead_code)]
+#[inline(never)]
+pub fn sys_sigaction(signum: i32, action: &sigaction) -> isize {
+    unsafe {
+        let ret: isize;
+
+        asm!(
+            "syscall",
+            in("rax") 13,
+            in("rdi") signum,
+            in("rsi") action,
+            in("rdx") 0,
+            in("r10") 8,
+            lateout("rcx") _,
+            lateout("r11") _,
+            lateout("rax") ret,
+            options(nostack)
+        );
+
+        ret
+    }
+}
+
+#[inline(never)]
+pub fn sys_dup(fd: u32) -> isize {
+    unsafe {
+        let ret: isize;
+
+        asm!(
+            "syscall",
+            in("rax") 32,
+            in("rdi") fd,
+            lateout("rcx") _,
+            lateout("r11") _,
+            lateout("rax") ret,
+            options(nostack)
+        );
+
+        ret
+    }
+}
+
 #[inline(never)]
 pub fn sys_exit(status: i32) -> ! {
     unsafe {
@@ -218,7 +257,7 @@ pub fn sys_waitid(which: i32, pid: u32, info: *mut siginfo, options: u32, rusage
 
 #[allow(dead_code)]
 #[inline(never)]
-pub fn sys_pipe2(pipefd: *mut u32, flags: u32) -> isize {
+pub fn sys_pipe2(pipefd: *mut u32, flags: u64) -> isize {
     unsafe {
         let ret: isize;
 
