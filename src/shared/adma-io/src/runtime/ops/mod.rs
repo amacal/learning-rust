@@ -36,7 +36,7 @@ pub use channel::*;
 
 pub struct IORuntimeContext {
     heap: Droplet<HeapPool<16>>,
-    threads: Droplet<IORuntimePool<1>>,
+    threads: Droplet<IORuntimePool<12>>,
     pub registry: Droplet<IORingRegistry<64, 256>>,
     ring: Droplet<IORing>,
 }

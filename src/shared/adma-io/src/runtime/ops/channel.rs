@@ -32,32 +32,56 @@ where
 {
     tx: TTx,
     ops: IORuntimeOps,
+    ack: bool,
+    cls: bool,
 }
 
 impl<TTx> RxReceipt<TTx>
 where
-    TTx: FileDescriptor + Closable + Copy,
+    TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
 {
     pub fn droplet(self) -> Droplet<Self> {
         fn drop_by_reference<TTx>(target: &mut RxReceipt<TTx>)
         where
-            TTx: FileDescriptor + Closable + Copy,
+            TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
         {
-            //target.ops.drop(target.ops.channel_ack(target));
+            let tx = target.tx;
+            let fd = tx.as_fd();
 
-            let buffer: [u8; 1] = [1; 1];
-            let fd = target.tx.as_fd();
+            let ack = target.ack;
+            let cls = target.cls;
 
-            trace1(b"releasing channel receipt droplet; fd=%d\n", fd);
-            match sys_write(fd, buffer.as_ptr() as *const (), 1) {
-                value if value == 1 => (),
-                errno => match i32::try_from(errno) {
-                    Ok(errno) => trace2(b"releasing channel receipt droplet; fd=%d, err=%d\n", fd, errno),
-                    Err(_) => trace1(b"releasing channel receipt droplet; fd=%d, failed\n", fd),
-                },
+            let drop = move |ops: IORuntimeOps| async move {
+                if ack == false {
+                    let buffer: [u8; 1] = [1; 1];
+
+                    trace1(b"releasing channel receipt droplet; fd=%d, ack\n", fd);
+                    match ops.write(tx, &buffer).await {
+                        Ok(value) if value == 1 => (),
+                        Ok(value) => trace2(b"releasing channel receipt droplet; fd=%d, ack, res=%d\n", fd, value),
+                        Err(None) => trace1(b"releasing channel receipt droplet; fd=%d, ack, failed\n", fd),
+                        Err(Some(errno)) => trace2(b"releasing channel receipt droplet; fd=%d, ack, err=%d\n", fd, errno),
+                    }
+                }
+
+                if cls == false {
+                    trace1(b"releasing channel receipt droplet; fd=%d, closing\n", fd);
+                    match ops.close(tx).await {
+                        Ok(_) => (),
+                        Err(None) => trace1(b"releasing channel receipt droplet; fd=%d, failed\n", fd),
+                        Err(Some(errno)) => trace2(b"releasing channel receipt droplet; fd=%d, err=%d\n", fd, errno),
+                    }
+                }
+
+                trace1(b"releasing channel receipt droplet; fd=%d, completed\n", fd);
+                None::<&'static [u8]>
+            };
+
+            if ack == false || cls == false {
+                if let Err(_) = target.ops.spawn(drop) {
+                    trace1(b"releasing channel receipt droplet; fd=%d, failed\n", fd);
+                }
             }
-
-            trace1(b"releasing channel receipt droplet; fd=%d, completed\n", fd);
         }
 
         trace1(b"creating channel receipt droplet; fd=%d\n", self.tx.as_fd());
@@ -151,8 +175,17 @@ impl IORuntimeOps {
                 Err(errno) => return Some(Err(errno)),
             };
 
-            trace1(b"reading channel message; fd=%d, completed\n", this.rx.as_fd());
-            Some(Ok((data, RxReceipt { ops: ops.duplicate(), tx: tx })))
+            trace2(b"reading channel message; fd=%d, tx=%d, completed\n", this.rx.as_fd(), tx.as_fd());
+
+            Some(Ok((
+                data,
+                RxReceipt {
+                    ops: ops.duplicate(),
+                    tx: tx,
+                    ack: false,
+                    cls: false,
+                },
+            )))
         }
 
         execute(self, rx)
@@ -192,7 +225,7 @@ impl IORuntimeOps {
                     value => match i32::try_from(value) {
                         Ok(value) => return Err(Some(value)),
                         Err(_) => return Err(None),
-                    }
+                    },
                 }
 
                 if buffer[0] == 0 {
@@ -215,6 +248,7 @@ impl IORuntimeOps {
             }
 
             trace1(b"draining channel; fd=%d, completed\n", fd);
+
             Ok(())
         }
 
@@ -363,25 +397,30 @@ impl IORuntimeOps {
     where
         TTx: FileDescriptor + Writtable + Closable + Copy + 'a,
     {
-        async fn execute<TTx>(ops: &IORuntimeOps, this: Droplet<RxReceipt<TTx>>) -> Result<(), Option<i32>>
+        async fn execute<TTx>(ops: &IORuntimeOps, mut this: Droplet<RxReceipt<TTx>>) -> Result<(), Option<i32>>
         where
             TTx: FileDescriptor + Writtable + Closable + Copy,
         {
             let buffer: [u8; 1] = [1; 1];
 
-            trace0(b"ack channel message\n");
+            trace1(b"ack channel message; fd=%d, started\n", this.tx.as_fd());
             match ops.write(this.tx, &buffer).await {
                 Ok(cnt) if cnt == 1 => (),
                 Ok(_) => return Err(None),
                 Err(errno) => return Err(errno),
             }
 
-            trace1(b"closing receipt channel; tx=%d\n", this.tx.as_fd());
+            this.ack = true;
+            trace1(b"ack channel message; fd=%d, completed\n", this.tx.as_fd());
+
             if let Err(errno) = ops.close(this.tx).await {
+                trace1(b"ack channel message; fd=%d, failed\n", this.tx.as_fd());
                 return Err(errno);
             }
 
-            trace0(b"ack channel message; completed\n");
+            this.cls = true;
+            trace1(b"ack channel message; fd=%d, completed\n", this.tx.as_fd());
+
             Ok(())
         }
 

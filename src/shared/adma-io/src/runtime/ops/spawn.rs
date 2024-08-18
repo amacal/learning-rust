@@ -10,8 +10,8 @@ impl IORuntimeOps {
         TFnOnce: FnOnce(IORuntimeOps) -> TFuture + Unpin + Send + 'a,
     {
         match self.handle().spawn(call) {
-            Some((Some(_), _)) => Ok(()),
-            _ => Err(None),
+            Some(_) => Ok(()),
+            None => Err(None),
         }
     }
 }

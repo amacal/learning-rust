@@ -5,7 +5,7 @@ unsafe impl Send for IORuntimeContext {}
 impl IORuntimeContext {
     pub fn allocate(
         ring: Droplet<IORing>,
-        threads: Droplet<IORuntimePool<1>>,
+        threads: Droplet<IORuntimePool<12>>,
         registry: Droplet<IORingRegistry<64, 256>>,
     ) -> Option<Smart<Self>> {
         let ctx: Smart<IORuntimeContext> = match Smart::allocate() {
@@ -19,7 +19,7 @@ impl IORuntimeContext {
     fn initialize(
         mut ctx: Smart<Self>,
         mut ring: Droplet<IORing>,
-        mut threads: Droplet<IORuntimePool<1>>,
+        mut threads: Droplet<IORuntimePool<12>>,
         mut registry: Droplet<IORingRegistry<64, 256>>,
     ) -> Smart<Self> {
         trace1(b"initializing runtime context; uring=%d\n", ring.fd());

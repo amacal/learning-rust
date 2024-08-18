@@ -163,16 +163,14 @@ impl Sha1Command {
                 };
 
                 // a task will be spawned to process each file separately
-                let process = |ops| async move {
-                    if let Some(msg) = Self::sha1sum(&ops, data).await {
-                        return Some(msg);
-                    }
+                let process = |ops: IORuntimeOps| async move {
+                    let result = Self::sha1sum(&ops, data).await;
 
                     if let Err(_) = ops.channel_ack(receipt).await {
                         return Some(APP_CHANNEL_ACK_FAILED);
                     }
 
-                    None
+                    result
                 };
 
                 // and task has to be awaited to be executed
