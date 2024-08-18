@@ -121,7 +121,7 @@ impl Sha1Command {
 
     pub async fn execute(self, ops: IORuntimeOps) -> Option<&'static [u8]> {
         let (mut rx, mut tx) = match ops.channel_create::<ProcessArgument>(4) {
-            Ok((rx, tx)) => (rx, tx),
+            Ok((rx, tx)) => (rx.droplet(), tx),
             Err(_) => return Some(APP_CHANNEL_CREATING_FAILED),
         };
 
@@ -156,34 +156,37 @@ impl Sha1Command {
 
         // a task will be spawned to process n files concurrently
         let read = |ops: IORuntimeOps| async move {
-            while let Some(item) = ops.channel_read(&mut rx).await {
-                let (data, receipt) = match item {
-                    Ok((data, receipt)) => (data, receipt.droplet()),
-                    Err(_) => return Some(APP_CHANNEL_READING_FAILED),
-                };
+            let result = async {
+                while let Some(item) = ops.channel_read(&mut rx).await {
+                    let (data, receipt) = match item {
+                        Ok((data, receipt)) => (data, receipt.droplet()),
+                        Err(_) => return Some(APP_CHANNEL_READING_FAILED),
+                    };
 
-                // a task will be spawned to process each file separately
-                let process = |ops: IORuntimeOps| async move {
-                    let result = Self::sha1sum(&ops, data).await;
+                    // a task will be spawned to process each file separately
+                    let process = |ops: IORuntimeOps| async move {
+                        let result = Self::sha1sum(&ops, data).await;
 
-                    if let Err(_) = ops.channel_ack(receipt).await {
-                        return Some(APP_CHANNEL_ACK_FAILED);
+                        if let Err(_) = ops.channel_ack(receipt).await {
+                            return Some(APP_CHANNEL_ACK_FAILED);
+                        }
+
+                        result
+                    };
+
+                    if let Err(_) = ops.spawn(process) {
+                        break;
                     }
-
-                    result
                 };
 
-                // and task has to be awaited to be executed
-                if let Err(_) = ops.spawn(process) {
-                    break;
-                }
-            };
+                None
+            }.await;
 
             if let Err(_) = ops.channel_drain(rx).await {
                 return Some(APP_CHANNEL_DRAINING_FAILED);
             }
 
-            None
+            result
         };
 
         if let Err(_) = ops.spawn(read) {
