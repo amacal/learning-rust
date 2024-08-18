@@ -17,7 +17,7 @@ impl SpawnCommand {
                 Err(None) => return Some(APP_INTERNALLY_FAILED),
             };
 
-            let spawned = ops.spawn(move |ops| async move {
+            let task = move |ops: IORuntimeOps| async move {
                 for _ in 0..i + 1 {
                     let msg: Option<&'static [u8]> = match ops.timeout(5, 0).await {
                         Ok(()) => continue,
@@ -31,9 +31,9 @@ impl SpawnCommand {
                 }
 
                 None
-            });
+            };
 
-            match spawned.await {
+            match ops.spawn(task) {
                 Ok(()) => (),
                 Err(_) => return Some(APP_INTERNALLY_FAILED),
             }

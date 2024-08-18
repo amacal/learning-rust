@@ -150,7 +150,7 @@ impl Sha1Command {
             None
         };
 
-        if let Err(_) = ops.spawn(write).await {
+        if let Err(_) = ops.spawn(write) {
             return Some(APP_IO_SPAWNING_FAILED);
         }
 
@@ -176,7 +176,7 @@ impl Sha1Command {
                 };
 
                 // and task has to be awaited to be executed
-                if let Err(_) = ops.spawn(process).await {
+                if let Err(_) = ops.spawn(process) {
                     break;
                 }
             };
@@ -188,7 +188,7 @@ impl Sha1Command {
             None
         };
 
-        if let Err(_) = ops.spawn(read).await {
+        if let Err(_) = ops.spawn(read) {
             return Some(APP_IO_SPAWNING_FAILED);
         }
 
