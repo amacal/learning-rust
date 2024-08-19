@@ -18,6 +18,25 @@ impl IORuntimeOps {
             token: None,
         }
     }
+
+    pub fn write_at_offset<'a, TBuffer, TFileDescriptor>(
+        &self,
+        descriptor: TFileDescriptor,
+        buffer: &'a TBuffer,
+        offset: u64,
+    ) -> impl Future<Output = Result<u32, Option<i32>>> + 'a
+    where
+        TBuffer: IORingSubmitBuffer + Unpin + 'a,
+        TFileDescriptor: FileDescriptor + Writtable,
+    {
+        WriteAtOffset {
+            fd: descriptor.as_fd(),
+            handle: self.handle(),
+            buffer: buffer,
+            offset: offset,
+            token: None,
+        }
+    }
 }
 
 pub struct WriteAtOffset<'a, THandle, TBuffer>

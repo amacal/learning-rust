@@ -16,3 +16,4 @@ impl FileDescriptor for StdOutDescriptor {
 }
 
 impl Writtable for StdOutDescriptor {}
+impl WrittableAtOffset for StdOutDescriptor {}

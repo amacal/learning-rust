@@ -12,3 +12,4 @@ pub trait Readable {}
 pub trait ReadableAtOffset {}
 
 pub trait Writtable {}
+pub trait WrittableAtOffset {}

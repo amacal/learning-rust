@@ -9,9 +9,10 @@ where
     TTx: FileDescriptor,
 {
     rx: TRx,
-    rx_cls: bool,
+    rx_closed: bool,
+    rx_drained: bool,
     tx: TTx,
-    tx_cls: bool,
+    tx_closed: bool,
     ops: IORuntimeOps,
     __: PhantomData<TPayload>,
 }
@@ -32,11 +33,50 @@ where
             let rx = target.rx;
             let tx = target.tx;
 
-            let rx_cls = target.rx_cls;
-            let tx_cls = target.tx_cls;
+            let rx_drained = target.rx_drained;
+            let rx_closed = target.rx_closed;
+            let tx_closed = target.tx_closed;
 
+            // drops asynchronously all involved components
             let drop = move |ops: IORuntimeOps| async move {
-                if rx_cls == false {
+                if rx_drained == false {
+                    let fd = rx.as_fd();
+                    let buffer: [usize; 2] = [0; 2];
+
+                    let result = loop {
+                        trace1(b"draining channel-rx droplet; fd=%d\n", fd);
+                        match sys_read(fd, buffer.as_ptr() as *const (), 16) {
+                            value if value == 16 => (),
+                            value if value == 0 || value == EAGAIN => break Ok(()),
+                            value if value > 0 => break Err(None),
+                            value => match i32::try_from(value) {
+                                Ok(value) => break Err(Some(value)),
+                                Err(_) => break Err(None),
+                            },
+                        }
+
+                        if buffer[0] == 0 {
+                            trace1(b"draining channel-rx droplet; fd=%d, breaking\n", fd);
+                            break Err(None);
+                        }
+
+                        let (ptr, len) = (buffer[0], buffer[1]);
+                        drop(TPayload::from(HeapRef::new(ptr, len)));
+                        trace2(b"draining channel-rx droplet; addr=%x, len=%d, dropped\n", ptr, len);
+                    };
+
+                    if let Err(Some(errno)) = result {
+                        trace2(b"draining channel-rx droplet; fd=%d, failed, res=%d\n", fd, errno);
+                    }
+
+                    if let Err(None) = result {
+                        trace1(b"draining channel-rx droplet; fd=%d, failed\n", fd);
+                    }
+
+                    trace1(b"draining channel-rx droplet; fd=%d, completed\n", fd);
+                }
+
+                if rx_closed == false {
                     trace1(b"releasing channel-rx droplet; rx=%d, closing\n", rx.as_fd());
                     match ops.close(rx).await {
                         Ok(_) => (),
@@ -47,7 +87,7 @@ where
                     trace1(b"releasing channel-rx droplet; rx=%d, completed\n", rx.as_fd());
                 }
 
-                if tx_cls == false {
+                if tx_closed == false {
                     trace1(b"releasing channel-rx droplet; tx=%d, closing\n", tx.as_fd());
                     match ops.close(rx).await {
                         Ok(_) => (),
@@ -61,7 +101,7 @@ where
                 None::<&'static [u8]>
             };
 
-            if rx_cls == false || tx_cls == false {
+            if rx_drained == false || rx_closed == false || tx_closed == false {
                 if let Err(_) = target.ops.spawn(drop) {
                     trace2(b"releasing channel-rx droplet; rx=%d, tx=%d, failed\n", rx.as_fd(), tx.as_fd());
                 }
@@ -93,7 +133,7 @@ where
     tx: TTx,
     ops: IORuntimeOps,
     ack: bool,
-    cls: bool,
+    closed: bool,
 }
 
 impl<TTx> RxReceipt<TTx>
@@ -109,7 +149,7 @@ where
             let fd = tx.as_fd();
 
             let ack = target.ack;
-            let cls = target.cls;
+            let closed = target.closed;
 
             let drop = move |ops: IORuntimeOps| async move {
                 if ack == false {
@@ -126,7 +166,7 @@ where
                     }
                 }
 
-                if cls == false {
+                if closed == false {
                     trace1(b"releasing channel receipt droplet; fd=%d, closing\n", fd);
                     match ops.close(tx).await {
                         Ok(_) => (),
@@ -139,7 +179,7 @@ where
                 None::<&'static [u8]>
             };
 
-            if ack == false || cls == false {
+            if ack == false || closed == false {
                 if let Err(_) = target.ops.spawn(drop) {
                     trace1(b"releasing channel receipt droplet; fd=%d, failed\n", fd);
                 }
@@ -182,9 +222,10 @@ impl IORuntimeOps {
 
         let rx = RxChannel::<TPayload, _, _> {
             rx: rx_rx,
+            rx_closed: false,
+            rx_drained: false,
             tx: rx_tx,
-            rx_cls: false,
-            tx_cls: false,
+            tx_closed: false,
             ops: self.duplicate(),
             __: PhantomData,
         };
@@ -248,7 +289,7 @@ impl IORuntimeOps {
                     ops: ops.duplicate(),
                     tx: tx,
                     ack: false,
-                    cls: false,
+                    closed: false,
                 },
             )))
         }
@@ -274,64 +315,65 @@ impl IORuntimeOps {
             TRx: FileDescriptor + Readable + Closable + Copy,
             TTx: FileDescriptor + Closable + Copy,
         {
-            let fd = this.rx.as_fd();
-            let buffer: [usize; 2] = [0; 2];
+            if this.rx_drained == false {
+                let fd = this.rx.as_fd();
+                let buffer: [usize; 2] = [0; 2];
 
-            if let Err(errno) = ops.noop().await {
-                return Err(errno);
-            }
+                let result = loop {
+                    trace1(b"draining channel-rx; fd=%d\n", fd);
+                    match sys_read(fd, buffer.as_ptr() as *const (), 16) {
+                        value if value == 16 => (),
+                        value if value == 0 || value == EAGAIN => break Ok(()),
+                        value if value > 0 => break Err(None),
+                        value => match i32::try_from(value) {
+                            Ok(value) => break Err(Some(value)),
+                            Err(_) => break Err(None),
+                        },
+                    }
 
-            let result = loop {
-                trace1(b"draining channel; fd=%d\n", fd);
-                match sys_read(fd, buffer.as_ptr() as *const (), 16) {
-                    value if value == 16 => (),
-                    value if value == 0 || value == EAGAIN => break Ok(()),
-                    value if value > 0 => break Err(None),
-                    value => match i32::try_from(value) {
-                        Ok(value) => break Err(Some(value)),
-                        Err(_) => break Err(None),
-                    },
+                    if buffer[0] == 0 {
+                        trace1(b"draining channel-rx; fd=%d, breaking\n", fd);
+                        break Err(None);
+                    }
+
+                    let (ptr, len) = (buffer[0], buffer[1]);
+                    drop(TPayload::from(HeapRef::new(ptr, len)));
+                    trace2(b"draining channel-rx; addr=%x, len=%d, dropped\n", ptr, len);
+                };
+
+                if let Err(Some(errno)) = result {
+                    trace2(b"draining channel-rx; fd=%d, failed, res=%d\n", fd, errno);
+                    return Err(Some(errno));
                 }
 
-                if buffer[0] == 0 {
-                    trace1(b"draining channel; fd=%d, breaking\n", fd);
-                    break Err(None);
+                if let Err(None) = result {
+                    trace1(b"draining channel-rx; fd=%d, failed\n", fd);
+                    return Err(None);
                 }
 
-                let (ptr, len) = (buffer[0], buffer[1]);
-                drop(TPayload::from(HeapRef::new(ptr, len)));
-                trace2(b"payload dropped; addr=%x, len=%d\n", ptr, len);
-            };
-
-            if let Err(Some(errno)) = result {
-                trace2(b"draining channel; fd=%d, failed, res=%d\n", fd, errno);
-                return Err(Some(errno));
+                this.rx_drained = true;
+                trace1(b"draining channel-rx; fd=%d, completed\n", fd);
             }
 
-            if let Err(None) = result {
-                trace1(b"draining channel; fd=%d, failed\n", fd);
-                return Err(None);
-            }
-
-            if this.rx_cls == false {
+            if this.rx_closed == false {
                 trace1(b"closing channel-rx; rx=%d\n", this.rx.as_fd());
                 if let Err(errno) = ops.close(this.rx).await {
                     return Err(errno);
                 }
 
-                this.rx_cls = true;
+                this.rx_closed = true;
+                trace1(b"closing channel-rx; rx=%d, completed\n", this.rx.as_fd());
             }
 
-            if this.tx_cls == false {
+            if this.tx_closed == false {
                 trace1(b"closing channel-rx; tx=%d\n", this.tx.as_fd());
                 if let Err(errno) = ops.close(this.tx).await {
                     return Err(errno);
                 }
 
-                this.tx_cls = true;
+                this.tx_closed = true;
+                trace1(b"closing channel-rx; tx=%d, completed\n", this.tx.as_fd());
             }
-
-            trace1(b"draining channel; fd=%d, completed\n", fd);
 
             Ok(())
         }
@@ -502,7 +544,7 @@ impl IORuntimeOps {
                 return Err(errno);
             }
 
-            this.cls = true;
+            this.closed = true;
             trace1(b"ack channel message; fd=%d, completed\n", this.tx.as_fd());
 
             Ok(())
