@@ -165,7 +165,7 @@ impl Sha1Command {
         // a task will be spawned to process n files concurrently
         let read = |ops: IORuntimeOps| async move {
             let result = async {
-                while let Some(item) = ops.channel_read(rx.deref_mut()).await {
+                while let Some(item) = ops.channel_read(&mut rx).await {
                     let (data, receipt) = match item {
                         Ok((data, receipt)) => (data, receipt.droplet()),
                         Err(_) => return Some(APP_CHANNEL_READING_FAILED),
