@@ -117,3 +117,58 @@ where
         Droplet::from(self, drop_by_reference)
     }
 }
+
+impl<TTx> RxReceipt<Open, TTx>
+where
+    TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
+{
+    pub fn droplet(self) -> Droplet<Self> {
+        fn drop_by_reference<TTx>(target: &mut RxReceipt<Open, TTx>)
+        where
+            TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
+        {
+            let tx = target.tx;
+            let fd = tx.as_fd();
+
+            let ack = target.ack;
+            let closed = target.closed;
+
+            let drop = move |ops: IORuntimeOps| async move {
+                if ack == false {
+                    let buffer: [u8; 1] = [1; 1];
+
+                    trace1(b"releasing channel receipt droplet; fd=%d, ack\n", fd);
+                    match ops.write(tx, &buffer).await {
+                        Ok(value) if value == 1 => (),
+                        Ok(value) => trace2(b"releasing channel receipt droplet; fd=%d, ack, res=%d\n", fd, value),
+                        Err(None) => trace1(b"releasing channel receipt droplet; fd=%d, ack, failed\n", fd),
+                        Err(Some(errno)) => {
+                            trace2(b"releasing channel receipt droplet; fd=%d, ack, err=%d\n", fd, errno)
+                        }
+                    }
+                }
+
+                if closed == false {
+                    trace1(b"releasing channel receipt droplet; fd=%d, closing\n", fd);
+                    match ops.close(tx).await {
+                        Ok(_) => (),
+                        Err(None) => trace1(b"releasing channel receipt droplet; fd=%d, failed\n", fd),
+                        Err(Some(errno)) => trace2(b"releasing channel receipt droplet; fd=%d, err=%d\n", fd, errno),
+                    }
+                }
+
+                trace1(b"releasing channel receipt droplet; fd=%d, completed\n", fd);
+                None::<&'static [u8]>
+            };
+
+            if ack == false || closed == false {
+                if let Err(_) = target.ops.spawn(drop) {
+                    trace1(b"releasing channel receipt droplet; fd=%d, failed\n", fd);
+                }
+            }
+        }
+
+        trace1(b"creating channel receipt droplet; fd=%d\n", self.tx.as_fd());
+        Droplet::from(self, drop_by_reference)
+    }
+}
