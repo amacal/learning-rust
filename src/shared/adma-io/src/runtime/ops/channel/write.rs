@@ -1,13 +1,19 @@
+use super::wait::wait_descriptor;
 use super::*;
 
 pub trait ChannelWritable {
     type Source;
     type Target;
     type Result;
-    type Receipt;
+    type Payload;
 
     fn source(&mut self) -> &mut Droplet<Self::Source>;
-    fn execute(ops: &IORuntimeOps, target: &mut Droplet<Self::Source>) -> impl Future<Output = Self::Result>;
+
+    fn execute(
+        ops: &IORuntimeOps,
+        target: &mut Droplet<Self::Source>,
+        data: Self::Payload,
+    ) -> impl Future<Output = Self::Result>;
 }
 
 async fn write_descriptor<TPayload: Pinned>(
@@ -37,43 +43,53 @@ async fn write_descriptor<TPayload: Pinned>(
 }
 
 impl IORuntimeOps {
-    pub fn channel_write<'a, TPayload, TRx, TTx, TSx>(
+    pub fn channel_write<'a, TChannel: ChannelWritable + 'a>(
         &'a self,
-        channel: &'a mut TxChannel<Open, TPayload, TRx, TTx, TSx>,
+        target: &'a mut TChannel,
+        data: TChannel::Payload,
+    ) -> impl Future<Output = TChannel::Result> + 'a {
+        TChannel::execute(self, target.source(), data)
+    }
+}
+
+impl<TPayload, TRx, TTx, TSx> ChannelWritable for Droplet<TxChannel<Open, TPayload, TRx, TTx, TSx>>
+where
+    TPayload: Pinned + Send + Unpin,
+    TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+    TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
+    TSx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+{
+    type Source = TxChannel<Open, TPayload, TRx, TTx, TSx>;
+    type Target = TxChannel<Drained, TPayload, TRx, TTx, TSx>;
+    type Result = Result<(), Option<i32>>;
+    type Payload = TPayload;
+
+    fn source(&mut self) -> &mut Droplet<Self::Source> {
+        self
+    }
+
+    fn execute(
+        ops: &IORuntimeOps,
+        target: &mut Droplet<Self::Source>,
         data: TPayload,
-    ) -> impl Future<Output = Result<(), Option<i32>>> + 'a
-    where
-        TPayload: Pinned,
-        TRx: FileDescriptor + Readable + Copy,
-        TTx: FileDescriptor + Writtable + Copy,
-        TSx: FileDescriptor + Readable + Copy,
-    {
+    ) -> impl Future<Output = Self::Result> {
         async move {
-            while channel.cnt == 0 {
-                let buffer: [u8; 1] = [0; 1];
-
-                trace1(b"increasing channel slots; cnt=%d, reading\n", buffer[0]);
-                match self.read(channel.rx, &buffer).await {
-                    Ok(cnt) if cnt == 1 => (),
-                    Ok(_) => return Err(None),
+            while target.cnt == 0 {
+                let cnt = match wait_descriptor(ops, target.rx).await {
+                    Ok(cnt) => cnt,
                     Err(errno) => return Err(errno),
-                }
+                };
 
-                if buffer[0] == 0 {
-                    trace1(b"increasing channel slots; cnt=%d, unexpected\n", buffer[0]);
-                    return Err(None);
-                }
-
-                channel.cnt += buffer[0] as usize;
-                trace1(b"increasing channel slots; cnt=%d, completed\n", channel.cnt);
+                target.cnt += cnt;
+                trace2(b"awaiting channel message; rx=%d, cnt=%d, completed\n", target.rx.as_fd(), target.cnt);
             }
 
-            if let Err(errno) = write_descriptor(self, channel.tx, data).await {
+            if let Err(errno) = write_descriptor(ops, target.tx, data).await {
                 return Err(errno);
             }
 
-            channel.cnt -= 1;
-            trace1(b"writing channel message; cnt=%d, completed\n", channel.cnt);
+            target.cnt -= 1;
+            trace2(b"writing channel message; tx=%d, cnt=%d, completed\n", target.tx.as_fd(), target.cnt);
 
             Ok(())
         }

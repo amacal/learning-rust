@@ -10,7 +10,7 @@ pub trait ChannelReadable {
     fn execute(ops: &IORuntimeOps, target: &mut Droplet<Self::Source>) -> impl Future<Output = Self::Result>;
 }
 
-async fn read_descriptor<TPayload: Pinned>(
+pub async fn read_descriptor<TPayload: Pinned>(
     ops: &IORuntimeOps,
     rx: impl FileDescriptor + Readable + Copy,
 ) -> Result<Option<TPayload>, Option<i32>> {
