@@ -9,6 +9,7 @@ pub const O_NONBLOCK: u64 = 0x00000800;
 pub const O_DIRECT: u64 = 0x00004000;
 
 pub const EAGAIN: isize = -11;
+pub const EPIPE: isize = -32;
 pub const SIGPIPE: i32 = 13;
 
 pub const SIG_DFL: usize = 0x00;

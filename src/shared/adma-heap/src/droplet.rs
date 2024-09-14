@@ -1,5 +1,7 @@
 use ::core::mem;
+use ::core::mem::*;
 use ::core::ops::*;
+use ::core::ptr;
 
 use super::*;
 
@@ -14,6 +16,14 @@ impl<T> Droplet<T> {
     pub fn forget<R>(target: Self, result: R) -> R {
         mem::forget(target);
         result
+    }
+
+    pub fn extract(target: Self) -> T {
+        let t = ManuallyDrop::new(target);
+        let v = unsafe { ptr::read(&t.target)};
+
+        mem::forget(t);
+        v
     }
 }
 

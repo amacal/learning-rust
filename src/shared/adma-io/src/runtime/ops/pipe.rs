@@ -7,7 +7,7 @@ impl IORuntimeOps {
         &self,
     ) -> Result<
         (
-            impl FileDescriptor + Readable + Closable + Copy,
+            impl FileDescriptor + Readable + Duplicable + Closable + Copy,
             impl FileDescriptor + Writtable + Duplicable + Closable + Copy,
         ),
         Option<i32>,
@@ -58,6 +58,12 @@ impl FileDescriptor for ReadPipeDescriptor {
 
 impl Closable for ReadPipeDescriptor {}
 impl Readable for ReadPipeDescriptor {}
+
+impl Duplicable for ReadPipeDescriptor {
+    fn from(fd: u32) -> Self {
+        ReadPipeDescriptor { fd: fd }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct WritePipeDescriptor {

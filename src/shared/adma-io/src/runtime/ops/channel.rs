@@ -2,32 +2,183 @@ use super::*;
 use crate::kernel::*;
 use crate::syscall::*;
 
-pub struct RxChannel<TPayload, TRx, TTx>
+pub struct Open {}
+pub struct Drained {}
+pub struct Closed {}
+
+pub trait ChannelClosable {
+    type Source;
+    type Target;
+
+    fn source(self) -> Droplet<Self::Source>;
+
+    fn execute(
+        ops: &IORuntimeOps,
+        target: Droplet<Self::Source>,
+    ) -> impl Future<Output = Result<Droplet<Self::Target>, Option<i32>>>;
+}
+
+pub trait ChanelDrainable {
+    type Source;
+    type Target;
+
+    fn source(self) -> Droplet<Self::Source>;
+
+    fn execute(
+        ops: &IORuntimeOps,
+        target: Droplet<Self::Source>,
+    ) -> impl Future<Output = Result<Droplet<Self::Target>, Option<i32>>>;
+}
+
+fn close_descriptor<'a>(
+    ops: &'a IORuntimeOps,
+    descriptor: impl FileDescriptor + Closable + Copy + 'a,
+) -> impl Future<Output = Result<(), Option<i32>>> + 'a {
+    async move {
+        trace1(b"closing channel; fd=%d\n", descriptor.as_fd());
+        let result = ops.close(descriptor).await;
+
+        if let Err(None) = result {
+            trace1(b"closing channel; fd=%d, failed\n", descriptor.as_fd());
+        }
+
+        if let Err(Some(errno)) = result {
+            trace2(b"closing channel; fd=%d, err=%d\n", descriptor.as_fd(), errno);
+        }
+
+        trace1(b"closing channel; fd=%d, completed\n", descriptor.as_fd());
+        result
+    }
+}
+
+fn drain_descriptor<TPayload: Pinned>(rx: impl FileDescriptor + Readable) -> Result<(), Option<i32>> {
+    let fd = rx.as_fd();
+    let buffer: [usize; 2] = [0; 2];
+
+    let result = loop {
+        // we expect that the read operation won't block due to O_NONBLOCK mode
+        trace1(b"draining channel; fd=%d\n", fd);
+        match sys_read(fd, buffer.as_ptr() as *const (), 16) {
+            value if value == 16 => (),
+            value if value == 0 || value == EAGAIN => break Ok(()),
+            value if value > 0 => break Err(None),
+            value => match i32::try_from(value) {
+                Ok(value) => break Err(Some(value)),
+                Err(_) => break Err(None),
+            },
+        }
+
+        if buffer[0] == 0 {
+            trace1(b"draining channel; fd=%d, breaking\n", fd);
+            break Err(None);
+        }
+
+        let (ptr, len) = (buffer[0], buffer[1]);
+        drop(TPayload::from(HeapRef::new(ptr, len)));
+        trace2(b"draining channel; addr=%x, len=%d, dropped\n", ptr, len);
+    };
+
+    if let Err(None) = result {
+        trace1(b"draining channel; fd=%d, failed\n", fd);
+    }
+
+    if let Err(Some(errno)) = result {
+        trace2(b"draining channel; fd=%d, failed, res=%d\n", fd, errno);
+    }
+
+    trace1(b"draining channel; fd=%d, completed\n", fd);
+    result
+}
+
+pub struct RxChannel<TState, TPayload, TRx, TTx>
 where
     TPayload: Pinned,
     TRx: FileDescriptor,
     TTx: FileDescriptor,
 {
+    ops: IORuntimeOps,
+
     rx: TRx,
     rx_closed: bool,
     rx_drained: bool,
     tx: TTx,
     tx_closed: bool,
-    ops: IORuntimeOps,
-    __: PhantomData<TPayload>,
+
+    _state: PhantomData<TState>,
+    _payload: PhantomData<TPayload>,
 }
 
-impl<TPayload, TRx, TTx> RxChannel<TPayload, TRx, TTx>
+impl<TPayload, TRx, TTx> ChannelClosable for Droplet<RxChannel<Drained, TPayload, TRx, TTx>>
 where
     TPayload: Pinned + Send + Unpin,
-    TRx: FileDescriptor + Closable + Copy + Send + Unpin,
+    TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+    TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
+{
+    type Source = RxChannel<Drained, TPayload, TRx, TTx>;
+    type Target = RxChannel<Closed, TPayload, TRx, TTx>;
+
+    fn source(self) -> Droplet<Self::Source> {
+        self
+    }
+
+    fn execute(
+        ops: &IORuntimeOps,
+        mut target: Droplet<Self::Source>,
+    ) -> impl Future<Output = Result<Droplet<Self::Target>, Option<i32>>> {
+        async move {
+            if target.rx_closed == false {
+                match close_descriptor(&ops, target.rx).await {
+                    Err(errno) => return Err(errno),
+                    Ok(()) => target.rx_closed = true,
+                }
+            }
+
+            if target.tx_closed == false {
+                match close_descriptor(&ops, target.tx).await {
+                    Err(errno) => return Err(errno),
+                    Ok(()) => target.tx_closed = true,
+                }
+            }
+
+            Ok(RxChannel::transform::<Closed>(target))
+        }
+    }
+}
+
+impl<TState, TPayload, TRx, TTx> RxChannel<TState, TPayload, TRx, TTx>
+where
+    TPayload: Pinned + Send + Unpin,
+    TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+    TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
+{
+    fn transform<TOther>(target: Droplet<Self>) -> Droplet<RxChannel<TOther, TPayload, TRx, TTx>> {
+        let target = Droplet::extract(target);
+        let target = RxChannel {
+            ops: target.ops,
+            rx: target.rx,
+            rx_closed: target.rx_closed,
+            rx_drained: target.rx_drained,
+            tx: target.tx,
+            tx_closed: target.tx_closed,
+            _state: PhantomData,
+            _payload: PhantomData,
+        };
+
+        target.droplet()
+    }
+}
+
+impl<TState, TPayload, TRx, TTx> RxChannel<TState, TPayload, TRx, TTx>
+where
+    TPayload: Pinned + Send + Unpin,
+    TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
     TTx: FileDescriptor + Closable + Copy + Send + Unpin,
 {
     pub fn droplet(self) -> Droplet<Self> {
-        fn drop_by_reference<TPayload, TRx, TTx>(target: &mut RxChannel<TPayload, TRx, TTx>)
+        fn drop_by_reference<TState, TPayload, TRx, TTx>(target: &mut RxChannel<TState, TPayload, TRx, TTx>)
         where
             TPayload: Pinned + Send + Unpin,
-            TRx: FileDescriptor + Closable + Copy + Send + Unpin,
+            TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
             TTx: FileDescriptor + Closable + Copy + Send + Unpin,
         {
             let rx = target.rx;
@@ -40,67 +191,22 @@ where
             // drops asynchronously all involved components
             let drop = move |ops: IORuntimeOps| async move {
                 if rx_drained == false {
-                    let fd = rx.as_fd();
-                    let buffer: [usize; 2] = [0; 2];
-
-                    let result = loop {
-                        trace1(b"draining channel-rx droplet; fd=%d\n", fd);
-                        match sys_read(fd, buffer.as_ptr() as *const (), 16) {
-                            value if value == 16 => (),
-                            value if value == 0 || value == EAGAIN => break Ok(()),
-                            value if value > 0 => break Err(None),
-                            value => match i32::try_from(value) {
-                                Ok(value) => break Err(Some(value)),
-                                Err(_) => break Err(None),
-                            },
-                        }
-
-                        if buffer[0] == 0 {
-                            trace1(b"draining channel-rx droplet; fd=%d, breaking\n", fd);
-                            break Err(None);
-                        }
-
-                        let (ptr, len) = (buffer[0], buffer[1]);
-                        drop(TPayload::from(HeapRef::new(ptr, len)));
-                        trace2(b"draining channel-rx droplet; addr=%x, len=%d, dropped\n", ptr, len);
-                    };
-
-                    if let Err(Some(errno)) = result {
-                        trace2(b"draining channel-rx droplet; fd=%d, failed, res=%d\n", fd, errno);
-                    }
-
-                    if let Err(None) = result {
-                        trace1(b"draining channel-rx droplet; fd=%d, failed\n", fd);
-                    }
-
-                    trace1(b"draining channel-rx droplet; fd=%d, completed\n", fd);
+                    let _ = drain_descriptor::<TPayload>(rx);
                 }
 
                 if rx_closed == false {
-                    trace1(b"releasing channel-rx droplet; rx=%d, closing\n", rx.as_fd());
-                    match ops.close(rx).await {
-                        Ok(_) => (),
-                        Err(None) => trace1(b"releasing channel-rx droplet; rx=%d, failed\n", rx.as_fd()),
-                        Err(Some(errno)) => trace2(b"releasing channel-rx droplet; rx=%d, err=%d\n", rx.as_fd(), errno),
-                    }
-
-                    trace1(b"releasing channel-rx droplet; rx=%d, completed\n", rx.as_fd());
+                    let _ = close_descriptor(&ops, rx).await;
                 }
 
                 if tx_closed == false {
-                    trace1(b"releasing channel-rx droplet; tx=%d, closing\n", tx.as_fd());
-                    match ops.close(rx).await {
-                        Ok(_) => (),
-                        Err(None) => trace1(b"releasing channel-rx droplet; tx=%d, failed\n", tx.as_fd()),
-                        Err(Some(errno)) => trace2(b"releasing channel-rx droplet; tx=%d, err=%d\n", tx.as_fd(), errno),
-                    }
-
-                    trace1(b"releasing channel-rx droplet; tx=%d, completed\n", tx.as_fd());
+                    let _ = close_descriptor(&ops, tx).await;
                 }
 
+                trace2(b"releasing channel-rx droplet; rx=%d, tx=%d, completed\n", rx.as_fd(), tx.as_fd());
                 None::<&'static [u8]>
             };
 
+            trace2(b"triggering channel-rx droplet; rx=%d, tx=%d\n", rx.as_fd(), tx.as_fd());
             if rx_drained == false || rx_closed == false || tx_closed == false {
                 if let Err(_) = target.ops.spawn(drop) {
                     trace2(b"releasing channel-rx droplet; rx=%d, tx=%d, failed\n", rx.as_fd(), tx.as_fd());
@@ -113,17 +219,156 @@ where
     }
 }
 
-pub struct TxChannel<TPayload, TRx, TTx>
+pub struct TxChannel<TState, TPayload, TRx, TTx, TSx>
 where
     TPayload: Pinned,
     TRx: FileDescriptor,
     TTx: FileDescriptor,
+    TSx: FileDescriptor,
 {
     total: usize,
     cnt: usize,
+    ops: IORuntimeOps,
+
     rx: TRx,
+    rx_closed: bool,
     tx: TTx,
-    none: PhantomData<TPayload>,
+    tx_closed: bool,
+    sx: TSx,
+    sx_closed: bool,
+
+    _state: PhantomData<TState>,
+    _payload: PhantomData<TPayload>,
+}
+
+impl<TPayload, TRx, TTx, TSx> ChannelClosable for Droplet<TxChannel<Open, TPayload, TRx, TTx, TSx>>
+where
+    TPayload: Pinned + Send + Unpin,
+    TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+    TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
+    TSx: FileDescriptor + Closable + Copy + Send + Unpin,
+{
+    type Source = TxChannel<Open, TPayload, TRx, TTx, TSx>;
+    type Target = TxChannel<Closed, TPayload, TRx, TTx, TSx>;
+
+    fn source(self) -> Droplet<Self::Source> {
+        self
+    }
+
+    fn execute(
+        ops: &IORuntimeOps,
+        mut target: Droplet<Self::Source>,
+    ) -> impl Future<Output = Result<Droplet<Self::Target>, Option<i32>>> {
+        async move {
+            if target.rx_closed == false {
+                match close_descriptor(&ops, target.rx).await {
+                    Err(errno) => return Err(errno),
+                    Ok(()) => target.rx_closed = true,
+                }
+            }
+
+            if target.tx_closed == false {
+                match close_descriptor(&ops, target.tx).await {
+                    Err(errno) => return Err(errno),
+                    Ok(()) => target.tx_closed = true,
+                }
+            }
+
+            Ok(TxChannel::transform::<Closed>(target))
+        }
+    }
+}
+
+impl<TState, TPayload, TRx, TTx, TSx> TxChannel<TState, TPayload, TRx, TTx, TSx>
+where
+    TPayload: Pinned + Send + Unpin,
+    TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+    TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
+    TSx: FileDescriptor + Closable + Copy + Send + Unpin,
+{
+    fn transform<TOther>(target: Droplet<Self>) -> Droplet<TxChannel<TOther, TPayload, TRx, TTx, TSx>> {
+        let target = Droplet::extract(target);
+        let target = TxChannel {
+            total: target.total,
+            cnt: target.cnt,
+            ops: target.ops,
+            rx: target.rx,
+            rx_closed: target.rx_closed,
+            tx: target.tx,
+            tx_closed: target.tx_closed,
+            sx: target.sx,
+            sx_closed: target.sx_closed,
+            _state: PhantomData,
+            _payload: PhantomData,
+        };
+
+        target.droplet()
+    }
+}
+
+impl<TState, TPayload, TRx, TTx, TSx> TxChannel<TState, TPayload, TRx, TTx, TSx>
+where
+    TPayload: Pinned + Send + Unpin,
+    TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+    TTx: FileDescriptor + Closable + Copy + Send + Unpin,
+    TSx: FileDescriptor + Closable + Copy + Send + Unpin,
+{
+    pub fn droplet(self) -> Droplet<Self> {
+        fn drop_by_reference<TState, TPayload, TRx, TTx, TSx>(target: &mut TxChannel<TState, TPayload, TRx, TTx, TSx>)
+        where
+            TPayload: Pinned + Send + Unpin,
+            TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+            TTx: FileDescriptor + Closable + Copy + Send + Unpin,
+            TSx: FileDescriptor + Closable + Copy + Send + Unpin,
+        {
+            let rx = target.rx;
+            let tx = target.tx;
+            let sx = target.sx;
+
+            let rx_closed = target.rx_closed;
+            let tx_closed = target.tx_closed;
+            let sx_closed = target.tx_closed;
+
+            // drops asynchronously all involved components
+            let drop = move |ops: IORuntimeOps| async move {
+                if rx_closed == false {
+                    let _ = close_descriptor(&ops, rx).await;
+                }
+
+                if tx_closed == false {
+                    let _ = close_descriptor(&ops, tx).await;
+                }
+
+                if sx_closed == false {
+                    let _ = close_descriptor(&ops, sx).await;
+                }
+
+                trace3(
+                    b"releasing channel-tx droplet; rx=%d, tx=%d, sx=%d, completed\n",
+                    rx.as_fd(),
+                    tx.as_fd(),
+                    sx.as_fd(),
+                );
+
+                None::<&'static [u8]>
+            };
+
+            trace3(b"triggering channel-tx droplet; rx=%d, tx=%d, sx=%d\n", rx.as_fd(), tx.as_fd(), sx.as_fd());
+            if rx_closed == false || tx_closed == false || sx_closed == false {
+                if let Err(_) = target.ops.spawn(drop) {
+                    trace3(
+                        b"releasing channel-tx droplet; rx=%d, tx=%d, sx=%d, failed\n",
+                        rx.as_fd(),
+                        tx.as_fd(),
+                        sx.as_fd(),
+                    );
+                }
+            }
+        }
+
+        trace1(b"creating channel-rx droplet; fd=%d\n", self.tx.as_fd());
+        Droplet::from(self, drop_by_reference)
+    }
 }
 
 pub struct RxReceipt<TTx>
@@ -198,14 +443,17 @@ impl IORuntimeOps {
     ) -> Result<
         (
             RxChannel<
+                Open,
                 TPayload,
                 impl FileDescriptor + Readable + Closable + Copy,
                 impl FileDescriptor + Writtable + Duplicable + Closable + Copy,
             >,
             TxChannel<
+                Open,
                 TPayload,
                 impl FileDescriptor + Readable + Closable + Copy,
                 impl FileDescriptor + Writtable + Closable + Copy,
+                impl FileDescriptor + Readable + Closable + Copy,
             >,
         ),
         Option<i32>,
@@ -220,22 +468,34 @@ impl IORuntimeOps {
             Err(errno) => return Err(errno),
         };
 
-        let rx = RxChannel::<TPayload, _, _> {
+        let sx = match self.clone(rx_rx) {
+            Ok(sx) => sx,
+            Err(errno) => return Err(errno),
+        };
+
+        let rx = RxChannel::<Open, TPayload, _, _> {
             rx: rx_rx,
             rx_closed: false,
             rx_drained: false,
             tx: rx_tx,
             tx_closed: false,
             ops: self.duplicate(),
-            __: PhantomData,
+            _state: PhantomData,
+            _payload: PhantomData,
         };
 
-        let tx = TxChannel::<TPayload, _, _> {
+        let tx = TxChannel::<Open, TPayload, _, _, _> {
             total: size,
             cnt: size,
+            ops: self.duplicate(),
             rx: tx_rx,
+            rx_closed: false,
             tx: tx_tx,
-            none: PhantomData,
+            tx_closed: false,
+            sx: sx,
+            sx_closed: false,
+            _state: PhantomData,
+            _payload: PhantomData,
         };
 
         Ok((rx, tx))
@@ -243,7 +503,7 @@ impl IORuntimeOps {
 
     pub fn channel_read<'a, TPayload, TRx, TTx>(
         &'a self,
-        rx: &'a mut RxChannel<TPayload, TRx, TTx>,
+        rx: &'a mut RxChannel<Open, TPayload, TRx, TTx>,
     ) -> impl Future<Output = Option<Result<(TPayload, RxReceipt<TTx>), Option<i32>>>> + 'a
     where
         TPayload: Pinned,
@@ -252,7 +512,7 @@ impl IORuntimeOps {
     {
         async fn execute<TPayload, TRx, TTx>(
             ops: &IORuntimeOps,
-            this: &mut RxChannel<TPayload, TRx, TTx>,
+            this: &mut RxChannel<Open, TPayload, TRx, TTx>,
         ) -> Option<Result<(TPayload, RxReceipt<TTx>), Option<i32>>>
         where
             TPayload: Pinned,
@@ -299,107 +559,48 @@ impl IORuntimeOps {
 
     pub fn channel_drain<'a, TPayload, TRx, TTx>(
         &'a self,
-        rx: Droplet<RxChannel<TPayload, TRx, TTx>>,
-    ) -> impl Future<Output = Result<(), Option<i32>>> + 'a
+        mut target: Droplet<RxChannel<Open, TPayload, TRx, TTx>>,
+    ) -> impl Future<Output = Result<Droplet<RxChannel<Drained, TPayload, TRx, TTx>>, Option<i32>>> + 'a
     where
-        TPayload: Pinned + 'a,
-        TRx: FileDescriptor + Readable + Closable + Copy + 'a,
-        TTx: FileDescriptor + Closable + Copy + 'a,
+        TPayload: Pinned + Send + Unpin,
+        TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+        TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
+        Droplet<RxChannel<Open, TPayload, TRx, TTx>>: 'a,
     {
-        async fn execute<TPayload, TRx, TTx>(
-            ops: &IORuntimeOps,
-            mut this: Droplet<RxChannel<TPayload, TRx, TTx>>,
-        ) -> Result<(), Option<i32>>
-        where
-            TPayload: Pinned,
-            TRx: FileDescriptor + Readable + Closable + Copy,
-            TTx: FileDescriptor + Closable + Copy,
-        {
-            if this.rx_drained == false {
-                let fd = this.rx.as_fd();
-                let buffer: [usize; 2] = [0; 2];
-
-                let result = loop {
-                    trace1(b"draining channel-rx; fd=%d\n", fd);
-                    match sys_read(fd, buffer.as_ptr() as *const (), 16) {
-                        value if value == 16 => (),
-                        value if value == 0 || value == EAGAIN => break Ok(()),
-                        value if value > 0 => break Err(None),
-                        value => match i32::try_from(value) {
-                            Ok(value) => break Err(Some(value)),
-                            Err(_) => break Err(None),
-                        },
-                    }
-
-                    if buffer[0] == 0 {
-                        trace1(b"draining channel-rx; fd=%d, breaking\n", fd);
-                        break Err(None);
-                    }
-
-                    let (ptr, len) = (buffer[0], buffer[1]);
-                    drop(TPayload::from(HeapRef::new(ptr, len)));
-                    trace2(b"draining channel-rx; addr=%x, len=%d, dropped\n", ptr, len);
-                };
-
-                if let Err(Some(errno)) = result {
-                    trace2(b"draining channel-rx; fd=%d, failed, res=%d\n", fd, errno);
-                    return Err(Some(errno));
-                }
-
-                if let Err(None) = result {
-                    trace1(b"draining channel-rx; fd=%d, failed\n", fd);
-                    return Err(None);
-                }
-
-                this.rx_drained = true;
-                trace1(b"draining channel-rx; fd=%d, completed\n", fd);
-            }
-
-            if this.rx_closed == false {
-                trace1(b"closing channel-rx; rx=%d\n", this.rx.as_fd());
-                if let Err(errno) = ops.close(this.rx).await {
+        async move {
+            if target.rx_drained == false {
+                if let Err(errno) = drain_descriptor::<TPayload>(target.rx) {
                     return Err(errno);
+                } else {
+                    target.rx_drained = true;
                 }
-
-                this.rx_closed = true;
-                trace1(b"closing channel-rx; rx=%d, completed\n", this.rx.as_fd());
             }
 
-            if this.tx_closed == false {
-                trace1(b"closing channel-rx; tx=%d\n", this.tx.as_fd());
-                if let Err(errno) = ops.close(this.tx).await {
-                    return Err(errno);
-                }
-
-                this.tx_closed = true;
-                trace1(b"closing channel-rx; tx=%d, completed\n", this.tx.as_fd());
-            }
-
-            Ok(())
+            Ok(RxChannel::transform(target))
         }
-
-        execute(self, rx)
     }
 
-    pub fn channel_write<'a, TPayload, TRx, TTx>(
+    pub fn channel_write<'a, TPayload, TRx, TTx, TSx>(
         &'a self,
-        tx: &'a mut TxChannel<TPayload, TRx, TTx>,
+        tx: &'a mut TxChannel<Open, TPayload, TRx, TTx, TSx>,
         data: TPayload,
     ) -> impl Future<Output = Result<(), Option<i32>>> + 'a
     where
         TPayload: Pinned,
         TRx: FileDescriptor + Readable + Copy,
         TTx: FileDescriptor + Writtable + Copy,
+        TSx: FileDescriptor + Readable + Copy,
     {
-        async fn execute<TPayload, TRx, TTx>(
+        async fn execute<TPayload, TRx, TTx, TSx>(
             ops: &IORuntimeOps,
-            this: &mut TxChannel<TPayload, TRx, TTx>,
+            this: &mut TxChannel<Open, TPayload, TRx, TTx, TSx>,
             data: TPayload,
         ) -> Result<(), Option<i32>>
         where
             TPayload: Pinned,
             TRx: FileDescriptor + Readable + Copy,
             TTx: FileDescriptor + Writtable + Copy,
+            TSx: FileDescriptor + Readable + Copy,
         {
             while this.cnt == 0 {
                 let buffer: [u8; 1] = [0; 1];
@@ -424,10 +625,18 @@ impl IORuntimeOps {
             let buffer: [usize; 2] = [heap.ptr(), heap.len()];
 
             trace1(b"writing channel message; cnt=%d\n", this.cnt);
-            match ops.write(this.tx, &buffer).await {
-                Ok(cnt) if cnt == 16 => (),
-                Ok(_) => return Err(None),
-                Err(errno) => return Err(errno),
+            let result = match ops.write(this.tx, &buffer).await {
+                Ok(cnt) if cnt == 16 => Ok(()),
+                Ok(_) => Err(None),
+                Err(errno) => Err(errno),
+            };
+
+            if let Err(errno) = result {
+                trace2(b"draining channel; addr=%x, len=%d, dropping\n", heap.ptr(), heap.len());
+                drop(TPayload::from(heap));
+
+                trace1(b"writing channel message; cnt=%d, failed\n", this.cnt);
+                return Err(errno);
             }
 
             this.cnt -= 1;
@@ -439,36 +648,44 @@ impl IORuntimeOps {
         execute(self, tx, data)
     }
 
-    pub fn channel_wait<'a, TPayload, TRx, TTx>(
+    pub fn channel_wait<'a, TPayload, TRx, TTx, TSx>(
         &'a self,
-        tx: &'a mut TxChannel<TPayload, TRx, TTx>,
+        tx: &'a mut TxChannel<Open, TPayload, TRx, TTx, TSx>,
     ) -> impl Future<Output = Result<(), Option<i32>>> + 'a
     where
         TPayload: Pinned,
         TRx: FileDescriptor + Readable + Copy,
         TTx: FileDescriptor,
+        TSx: FileDescriptor,
     {
-        async fn execute<TPayload, TRx, TTx>(
+        async fn execute<TPayload, TRx, TTx, TSx>(
             ops: &IORuntimeOps,
-            this: &mut TxChannel<TPayload, TRx, TTx>,
+            this: &mut TxChannel<Open, TPayload, TRx, TTx, TSx>,
         ) -> Result<(), Option<i32>>
         where
             TPayload: Pinned,
             TRx: FileDescriptor + Readable + Copy,
             TTx: FileDescriptor,
+            TSx: FileDescriptor,
         {
             while this.cnt < this.total {
                 let buffer: [u8; 1] = [0; 1];
 
                 trace1(b"awaiting channel message; cnt=%d\n", this.cnt);
-                match ops.read(this.rx, &buffer).await {
-                    Ok(cnt) if cnt == 1 => (),
-                    Ok(_) => return Err(None),
-                    Err(errno) => return Err(errno),
+                let result = match ops.read(this.rx, &buffer).await {
+                    Ok(cnt) if cnt == 1 => Ok(()), // one is expected payload
+                    Ok(cnt) if cnt == 0 => Ok(()), // zero represents closed pipe
+                    Ok(_) => Err(None),
+                    Err(errno) => Err(errno),
+                };
+
+                if let Err(errno) = result {
+                    trace1(b"awaiting channel message; cnt=%d, failed\n", this.cnt);
+                    return Err(errno);
                 }
 
                 if buffer[0] == 0 {
-                    trace1(b"awaiting channel message; cnt=%d, unexpected\n", this.cnt);
+                    trace1(b"awaiting channel message; cnt=%d, terminated\n", this.cnt);
                     break;
                 }
 
@@ -482,38 +699,14 @@ impl IORuntimeOps {
         execute(self, tx)
     }
 
-    pub fn channel_close<'a, TPayload, TRx, TTx>(
+    pub fn channel_close<'a, TChannel>(
         &'a self,
-        tx: TxChannel<TPayload, TRx, TTx>,
-    ) -> impl Future<Output = Result<(), Option<i32>>> + 'a
+        target: TChannel,
+    ) -> impl Future<Output = Result<Droplet<TChannel::Target>, Option<i32>>> + 'a
     where
-        TPayload: Pinned + 'a,
-        TRx: FileDescriptor + Closable + Copy + 'a,
-        TTx: FileDescriptor + Writtable + Closable + Copy + 'a,
+        TChannel: ChannelClosable + 'a,
     {
-        async fn execute<TPayload, TRx, TTx>(
-            ops: &IORuntimeOps,
-            this: TxChannel<TPayload, TRx, TTx>,
-        ) -> Result<(), Option<i32>>
-        where
-            TPayload: Pinned,
-            TRx: FileDescriptor + Closable + Copy,
-            TTx: FileDescriptor + Writtable + Closable + Copy,
-        {
-            trace2(b"closing tx channels; rx=%d, tx=%d\n", this.rx.as_fd(), this.tx.as_fd());
-            if let Err(errno) = ops.close(this.rx).await {
-                return Err(errno);
-            }
-
-            if let Err(errno) = ops.close(this.tx).await {
-                return Err(errno);
-            }
-
-            trace2(b"closing tx channels; rx=%d, tx=%d, completed\n", this.rx.as_fd(), this.tx.as_fd());
-            Ok(())
-        }
-
-        execute(self, tx)
+        TChannel::execute(self, target.source())
     }
 
     pub fn channel_ack<'a, TTx>(

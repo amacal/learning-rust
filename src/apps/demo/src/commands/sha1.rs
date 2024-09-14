@@ -1,11 +1,13 @@
+use ::core::ops::*;
+
 use super::errno::*;
 
-use adma_io::trace::*;
 use adma_io::core::*;
 use adma_io::heap::*;
 use adma_io::proc::*;
 use adma_io::runtime::*;
 use adma_io::sha1::*;
+use adma_io::trace::*;
 
 pub struct Sha1Command {
     pub args: &'static ProcessArguments,
@@ -120,34 +122,40 @@ impl Sha1Command {
     }
 
     pub async fn execute(self, ops: IORuntimeOps) -> Option<&'static [u8]> {
-        let (mut rx, mut tx) = match ops.channel_create::<ProcessArgument>(4) {
-            Ok((rx, tx)) => (rx.droplet(), tx),
+        let (mut rx, mut tx) = match ops.channel_create::<ProcessArgument>(10) {
+            Ok((rx, tx)) => (rx.droplet(), tx.droplet()),
             Err(_) => return Some(APP_CHANNEL_CREATING_FAILED),
         };
 
         // a task will be spawned to queue all files
         let write = |ops: IORuntimeOps| async move {
-            for arg in 2..self.args.len() {
-                // a path of the file to hash
-                let path: ProcessArgument = match self.args.get(arg) {
-                    None => return Some(APP_ARGS_FAILED),
-                    Some(value) => value,
-                };
+            let result = async {
+                for arg in 2..self.args.len() {
+                    // a path of the file to hash
+                    let path: ProcessArgument = match self.args.get(arg) {
+                        None => return Some(APP_ARGS_FAILED),
+                        Some(value) => value,
+                    };
 
-                if let Err(_) = ops.channel_write(&mut tx, path).await {
-                    return Some(APP_CHANNEL_WRITING_FAILED);
+                    if let Err(_) = ops.channel_write(&mut tx, path).await {
+                        return Some(APP_CHANNEL_WRITING_FAILED);
+                    }
                 }
+
+                None
             }
+            .await;
 
             if let Err(_) = ops.channel_wait(&mut tx).await {
                 return Some(APP_CHANNEL_FLUSHING_FAILED);
             }
 
-            if let Err(_) = ops.channel_close(tx).await {
-                return Some(APP_CHANNEL_CLOSING_FAILED);
-            }
+            let _ = match ops.channel_close(tx).await {
+                Ok(tx) => tx,
+                Err(_) => return Some(APP_CHANNEL_CLOSING_FAILED),
+            };
 
-            None
+            result
         };
 
         if let Err(_) = ops.spawn(write) {
@@ -157,7 +165,7 @@ impl Sha1Command {
         // a task will be spawned to process n files concurrently
         let read = |ops: IORuntimeOps| async move {
             let result = async {
-                while let Some(item) = ops.channel_read(&mut rx).await {
+                while let Some(item) = ops.channel_read(rx.deref_mut()).await {
                     let (data, receipt) = match item {
                         Ok((data, receipt)) => (data, receipt.droplet()),
                         Err(_) => return Some(APP_CHANNEL_READING_FAILED),
@@ -177,14 +185,23 @@ impl Sha1Command {
                     if let Err(_) = ops.spawn(process) {
                         break;
                     }
-                };
+
+                    // break;
+                }
 
                 None
-            }.await;
-
-            if let Err(_) = ops.channel_drain(rx).await {
-                return Some(APP_CHANNEL_DRAINING_FAILED);
             }
+            .await;
+
+            let rx = match ops.channel_drain(rx).await {
+                Ok(rx) => rx,
+                Err(_) => return Some(APP_CHANNEL_DRAINING_FAILED),
+            };
+
+            let _ = match ops.channel_close(rx).await {
+                Ok(rx) => rx,
+                Err(_) => return Some(APP_CHANNEL_CLOSING_FAILED),
+            };
 
             result
         };
