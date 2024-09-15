@@ -52,7 +52,7 @@ where
 {
     type Source = RxChannel<Open, TPayload, TRx, TTx>;
     type Target = RxChannel<Drained, TPayload, TRx, TTx>;
-    type Result = Option<Result<(TPayload, Self::Receipt), Option<i32>>>;
+    type Result = Option<Result<(TPayload, Droplet<Self::Receipt>), Option<i32>>>;
     type Receipt = RxReceipt<Open, TTx>;
 
     fn source(&mut self) -> &mut Droplet<Self::Source> {
@@ -74,16 +74,15 @@ where
 
             trace2(b"reading channel message; fd=%d, receipted, tx=%d\n", target.rx.as_fd(), tx.as_fd());
 
-            Some(Ok((
-                data,
-                RxReceipt {
-                    ops: ops.duplicate(),
-                    tx: tx,
-                    ack: false,
-                    closed: false,
-                    _state: PhantomData,
-                },
-            )))
+            let receipt = RxReceipt {
+                ops: ops.duplicate(),
+                tx: tx,
+                ack: false,
+                closed: false,
+                _state: PhantomData,
+            };
+
+            Some(Ok((data, receipt.droplet())))
         }
     }
 }

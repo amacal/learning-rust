@@ -30,9 +30,7 @@ fn create_channel_and_autodrop_it() {
     };
 
     async fn callback(ops: IORuntimeOps) -> Option<&'static [u8]> {
-        let (rx, tx) = ops.channel_create::<BoxedNumber>(1).unwrap();
-        let (_, _) = (rx.droplet(), tx.droplet());
-
+        let _ = ops.channel_create::<BoxedNumber>(1).unwrap();
         None
     }
 
@@ -54,12 +52,10 @@ fn synchronous_flow_with_one_item() {
     };
 
     async fn callback(ops: IORuntimeOps) -> Option<&'static [u8]> {
-        let (rx, tx) = ops.channel_create::<BoxedNumber>(1).unwrap();
-        let (mut rx, mut tx) = (rx.droplet(), tx.droplet());
+        let (mut rx, mut tx) = ops.channel_create::<BoxedNumber>(1).unwrap();
 
         ops.channel_write(&mut tx, BoxedNumber { x: 1, y: 2 }).await.unwrap();
         let (number, receipt) = ops.channel_read(&mut rx).await.unwrap().unwrap();
-        let receipt = receipt.droplet();
 
         assert_eq!(number.x, 1);
         assert_eq!(number.y, 2);
@@ -93,27 +89,23 @@ fn asynchronous_flow_with_ten_items() {
     };
 
     async fn callback(ops: IORuntimeOps) -> Option<&'static [u8]> {
-        let (rx, tx) = ops.channel_create::<BoxedNumber>(1).unwrap();
-        let (mut rx, mut tx) = (rx.droplet(), tx.droplet());
+        let (mut rx, mut tx) = ops.channel_create::<BoxedNumber>(1).unwrap();
 
-        ops.spawn(|ops: IORuntimeOps| async move {
+        ops.spawn_unwrap(|ops: IORuntimeOps| async move {
             for i in 1..11 {
-                ops.channel_write(&mut tx, BoxedNumber { x: i, y: 2 * i })
-                    .await
-                    .unwrap();
+                let data = BoxedNumber { x: i, y: 2 * i };
+                ops.channel_write(&mut tx, data).await.unwrap();
             }
 
             ops.channel_close(tx).await.unwrap();
             None
-        })
-        .unwrap();
+        });
 
-        ops.spawn(|ops: IORuntimeOps| async move {
+        ops.spawn_unwrap(|ops: IORuntimeOps| async move {
             let (mut x, mut y) = (0, 0);
 
             while let Some(item) = ops.channel_read(&mut rx).await {
                 let (number, receipt) = item.unwrap();
-                let receipt = receipt.droplet();
 
                 x += number.x;
                 y += number.y;
@@ -127,8 +119,7 @@ fn asynchronous_flow_with_ten_items() {
             assert_eq!(y, 110);
 
             None
-        })
-        .unwrap();
+        });
 
         None
     }
@@ -142,7 +133,7 @@ fn asynchronous_flow_with_ten_items() {
 }
 
 #[test]
-fn asynchronous_flow_interrupted() {
+fn asynchronous_flow_with_ten_items_where_receipt_isnt_acknowledged_explicitely() {
     let mut runtime = match IORingRuntime::allocate() {
         IORingRuntimeAllocate::Succeeded(runtime) => runtime,
         IORingRuntimeAllocate::RingAllocationFailed() => return assert!(false),
@@ -151,15 +142,63 @@ fn asynchronous_flow_interrupted() {
     };
 
     async fn callback(ops: IORuntimeOps) -> Option<&'static [u8]> {
-        let (rx, tx) = ops.channel_create::<BoxedNumber>(1).unwrap();
-        let (mut rx, mut tx) = (rx.droplet(), tx.droplet());
+        let (mut rx, mut tx) = ops.channel_create::<BoxedNumber>(1).unwrap();
 
-        ops.spawn(|ops: IORuntimeOps| async move {
+        ops.spawn_unwrap(|ops: IORuntimeOps| async move {
             for i in 1..11 {
-                let res = ops
-                    .channel_write(&mut tx, BoxedNumber { x: i, y: 2 * i })
-                    .await
-                    .unwrap();
+                let data = BoxedNumber { x: i, y: 2 * i };
+                ops.channel_write(&mut tx, data).await.unwrap();
+            }
+
+            ops.channel_close(tx).await.unwrap();
+            None
+        });
+
+        ops.spawn_unwrap(|ops: IORuntimeOps| async move {
+            let (mut x, mut y) = (0, 0);
+
+            while let Some(item) = ops.channel_read(&mut rx).await {
+                let (number, _) = item.unwrap();
+
+                x += number.x;
+                y += number.y;
+            }
+
+            ops.channel_close(ops.channel_drain(rx).await.unwrap()).await.unwrap();
+
+            assert_eq!(x, 55);
+            assert_eq!(y, 110);
+
+            None
+        });
+
+        None
+    }
+
+    match runtime.run(callback) {
+        IORingRuntimeRun::Completed(res) => assert!(res.is_none()),
+        IORingRuntimeRun::CompletionFailed(_) => assert!(false),
+        IORingRuntimeRun::AllocationFailed(_) => assert!(false),
+        IORingRuntimeRun::InternallyFailed() => assert!(false),
+    }
+}
+
+#[test]
+fn asynchronous_flow_with_ten_items_interrupted() {
+    let mut runtime = match IORingRuntime::allocate() {
+        IORingRuntimeAllocate::Succeeded(runtime) => runtime,
+        IORingRuntimeAllocate::RingAllocationFailed() => return assert!(false),
+        IORingRuntimeAllocate::PoolAllocationFailed() => return assert!(false),
+        IORingRuntimeAllocate::RegistryAllocationFailed() => return assert!(false),
+    };
+
+    async fn callback(ops: IORuntimeOps) -> Option<&'static [u8]> {
+        let (mut rx, mut tx) = ops.channel_create::<BoxedNumber>(1).unwrap();
+
+        ops.spawn_unwrap(|ops: IORuntimeOps| async move {
+            for i in 1..11 {
+                let data = BoxedNumber { x: i, y: 2 * i };
+                let res = ops.channel_write(&mut tx, data).await.unwrap();
 
                 if i <= 5 {
                     assert!(res.is_none());
@@ -172,15 +211,13 @@ fn asynchronous_flow_interrupted() {
 
             ops.channel_close(tx).await.unwrap();
             None
-        })
-        .unwrap();
+        });
 
-        ops.spawn(|ops: IORuntimeOps| async move {
+        ops.spawn_unwrap(|ops: IORuntimeOps| async move {
             let (mut x, mut y) = (0, 0);
 
             while let Some(item) = ops.channel_read(&mut rx).await {
                 let (number, receipt) = item.unwrap();
-                let receipt = receipt.droplet();
 
                 x += number.x;
                 y += number.y;
@@ -198,8 +235,40 @@ fn asynchronous_flow_interrupted() {
             assert_eq!(y, 30);
 
             None
-        })
-        .unwrap();
+        });
+
+        None
+    }
+
+    match runtime.run(callback) {
+        IORingRuntimeRun::Completed(res) => assert!(res.is_none()),
+        IORingRuntimeRun::CompletionFailed(_) => assert!(false),
+        IORingRuntimeRun::AllocationFailed(_) => assert!(false),
+        IORingRuntimeRun::InternallyFailed() => assert!(false),
+    }
+}
+
+#[test]
+fn never_produced_any_item() {
+    let mut runtime = match IORingRuntime::allocate() {
+        IORingRuntimeAllocate::Succeeded(runtime) => runtime,
+        IORingRuntimeAllocate::RingAllocationFailed() => return assert!(false),
+        IORingRuntimeAllocate::PoolAllocationFailed() => return assert!(false),
+        IORingRuntimeAllocate::RegistryAllocationFailed() => return assert!(false),
+    };
+
+    async fn callback(ops: IORuntimeOps) -> Option<&'static [u8]> {
+        let (mut rx, tx) = ops.channel_create::<BoxedNumber>(1).unwrap();
+
+        ops.channel_close(tx).await.unwrap();
+        ops.spawn_unwrap(|ops: IORuntimeOps| async move {
+            while let Some(_) = ops.channel_read(&mut rx).await {
+                assert!(false);
+            }
+
+            ops.channel_close(ops.channel_drain(rx).await.unwrap()).await.unwrap();
+            None
+        });
 
         None
     }

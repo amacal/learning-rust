@@ -3,17 +3,20 @@ use super::*;
 pub trait ChannelClosable {
     type Source;
     type Target;
-    type Result;
 
     fn source(self) -> Droplet<Self::Source>;
-    fn execute(ops: &IORuntimeOps, target: Droplet<Self::Source>) -> impl Future<Output = Self::Result>;
+
+    fn execute(
+        ops: &IORuntimeOps,
+        target: Droplet<Self::Source>,
+    ) -> impl Future<Output = Result<Droplet<Self::Target>, Option<i32>>>;
 }
 
 impl IORuntimeOps {
     pub fn channel_close<'a, TChannel: ChannelClosable + 'a>(
         &'a self,
         target: TChannel,
-    ) -> impl Future<Output = TChannel::Result> + 'a {
+    ) -> impl Future<Output = Result<Droplet<TChannel::Target>, Option<i32>>> + 'a {
         TChannel::execute(self, target.source())
     }
 }
@@ -47,7 +50,6 @@ where
 {
     type Source = RxChannel<Drained, TPayload, TRx, TTx>;
     type Target = RxChannel<Closed, TPayload, TRx, TTx>;
-    type Result = Result<Droplet<Self::Target>, Option<i32>>;
 
     fn source(self) -> Droplet<Self::Source> {
         self
@@ -86,7 +88,6 @@ where
 {
     type Source = TxChannel<Open, TPayload, TRx, TTx, TSx>;
     type Target = TxChannel<Closed, TPayload, TRx, TTx, TSx>;
-    type Result = Result<Droplet<Self::Target>, Option<i32>>;
 
     fn source(self) -> Droplet<Self::Source> {
         self

@@ -1,23 +1,27 @@
 use super::*;
 
 impl IORuntimeOps {
-    pub fn channel_create<TPayload: Pinned>(
+    pub fn channel_create<TPayload: Pinned + Send + Unpin>(
         &self,
         size: usize,
     ) -> Result<
         (
-            RxChannel<
-                Open,
-                TPayload,
-                impl FileDescriptor + Readable + Closable + Copy,
-                impl FileDescriptor + Writtable + Duplicable + Closable + Copy,
+            Droplet<
+                RxChannel<
+                    Open,
+                    TPayload,
+                    impl FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+                    impl FileDescriptor + Writtable + Duplicable + Closable + Copy + Send + Unpin,
+                >,
             >,
-            TxChannel<
-                Open,
-                TPayload,
-                impl FileDescriptor + Readable + Closable + Copy,
-                impl FileDescriptor + Writtable + Closable + Copy,
-                impl FileDescriptor + Readable + Closable + Copy,
+            Droplet<
+                TxChannel<
+                    Open,
+                    TPayload,
+                    impl FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+                    impl FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
+                    impl FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+                >,
             >,
         ),
         Option<i32>,
@@ -62,6 +66,6 @@ impl IORuntimeOps {
             _payload: PhantomData,
         };
 
-        Ok((rx, tx))
+        Ok((rx.droplet(), tx.droplet()))
     }
 }

@@ -123,7 +123,7 @@ impl Sha1Command {
 
     pub async fn execute(self, ops: IORuntimeOps) -> Option<&'static [u8]> {
         let (mut rx, mut tx) = match ops.channel_create::<ProcessArgument>(10) {
-            Ok((rx, tx)) => (rx.droplet(), tx.droplet()),
+            Ok((rx, tx)) => (rx, tx),
             Err(_) => return Some(APP_CHANNEL_CREATING_FAILED),
         };
 
@@ -167,7 +167,7 @@ impl Sha1Command {
             let result = async {
                 while let Some(item) = ops.channel_read(&mut rx).await {
                     let (data, receipt) = match item {
-                        Ok((data, receipt)) => (data, receipt.droplet()),
+                        Ok((data, receipt)) => (data, receipt),
                         Err(_) => return Some(APP_CHANNEL_READING_FAILED),
                     };
 
