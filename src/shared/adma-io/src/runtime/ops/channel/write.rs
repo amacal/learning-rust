@@ -3,7 +3,6 @@ use super::*;
 
 pub trait ChannelWritable {
     type Source;
-    type Target;
     type Result;
     type Payload;
 
@@ -60,8 +59,7 @@ where
     TSx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
 {
     type Source = TxChannel<Open, TPayload, TRx, TTx, TSx>;
-    type Target = TxChannel<Drained, TPayload, TRx, TTx, TSx>;
-    type Result = Result<(), Option<i32>>;
+    type Result = Result<Option<TPayload>, Option<i32>>;
     type Payload = TPayload;
 
     fn source(&mut self) -> &mut Droplet<Self::Source> {
@@ -76,12 +74,18 @@ where
         async move {
             while target.cnt == 0 {
                 let cnt = match wait_descriptor(ops, target.rx).await {
+                    Ok(0) => break,
                     Ok(cnt) => cnt,
                     Err(errno) => return Err(errno),
                 };
 
                 target.cnt += cnt;
                 trace2(b"awaiting channel message; rx=%d, cnt=%d, completed\n", target.rx.as_fd(), target.cnt);
+            }
+
+            if target.cnt == 0 {
+                trace2(b"writing channel message; rx=%d, cnt=%d, interrupted\n", target.rx.as_fd(), target.cnt);
+                return Ok(Some(data));
             }
 
             if let Err(errno) = write_descriptor(ops, target.tx, data).await {
@@ -91,7 +95,7 @@ where
             target.cnt -= 1;
             trace2(b"writing channel message; tx=%d, cnt=%d, completed\n", target.tx.as_fd(), target.cnt);
 
-            Ok(())
+            Ok(None)
         }
     }
 }

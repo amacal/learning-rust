@@ -12,10 +12,15 @@ impl IORuntimeOps {
             let buffer: [u8; 1] = [1; 1];
 
             trace1(b"ack channel message; fd=%d, started\n", receipt.tx.as_fd());
-            match self.write(receipt.tx, &buffer).await {
-                Ok(cnt) if cnt == 1 => (),
+            let closed = match self.write(receipt.tx, &buffer).await {
+                Ok(cnt) if cnt == 1 => false,
                 Ok(_) => return Err(None),
+                Err(Some(-32)) => true,
                 Err(errno) => return Err(errno),
+            };
+
+            if closed {
+                trace1(b"ack channel message; fd=%d, epipe\n", receipt.tx.as_fd());
             }
 
             receipt.ack = true;

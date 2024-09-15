@@ -1,11 +1,14 @@
 mod ack;
 mod close;
+mod create;
 mod drain;
 mod drop;
 mod read;
 mod wait;
 mod write;
-mod create;
+
+#[cfg(test)]
+mod tests;
 
 use super::*;
 use crate::kernel::*;

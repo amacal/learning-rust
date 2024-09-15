@@ -19,7 +19,7 @@ pub async fn read_descriptor<TPayload: Pinned>(
 
     trace1(b"reading channel message; fd=%d\n", fd);
     match ops.read(rx, &buffer).await {
-        Ok(cnt) if cnt == 16 => (),
+        Ok(0) | Ok(16) => (),
         Ok(_) => return Err(None),
         Err(errno) => return Err(errno),
     }
