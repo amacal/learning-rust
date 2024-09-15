@@ -36,7 +36,7 @@ pub async fn read_descriptor<TPayload: Pinned>(
 }
 
 impl IORuntimeOps {
-    pub fn channel_read<'a, TChannel: ChannelReadable + 'a>(
+    pub fn channel_read<'a, TChannel: ChannelReadable>(
         &'a self,
         target: &'a mut TChannel,
     ) -> impl Future<Output = TChannel::Result> + 'a {

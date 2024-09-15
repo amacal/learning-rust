@@ -43,7 +43,7 @@ async fn write_descriptor<TPayload: Pinned>(
 }
 
 impl IORuntimeOps {
-    pub fn channel_write<'a, TChannel: ChannelWritable + 'a>(
+    pub fn channel_write<'a, TChannel: ChannelWritable>(
         &'a self,
         target: &'a mut TChannel,
         data: TChannel::Payload,

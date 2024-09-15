@@ -37,25 +37,39 @@ pub async fn wait_descriptor(
 }
 
 impl IORuntimeOps {
-    pub fn channel_wait<'a, TPayload, TRx, TTx, TSx>(
+    pub fn channel_wait<'a, TChannel: ChannelWaitable>(
         &'a self,
-        channel: &'a mut TxChannel<Open, TPayload, TRx, TTx, TSx>,
-    ) -> impl Future<Output = Result<(), Option<i32>>> + 'a
-    where
-        TPayload: Pinned,
-        TRx: FileDescriptor + Readable + Copy,
-        TTx: FileDescriptor,
-        TSx: FileDescriptor,
-    {
+        target: &'a mut TChannel,
+    ) -> impl Future<Output = TChannel::Result> + 'a {
+        TChannel::execute(self, target.source())
+    }
+}
+
+impl<TPayload, TRx, TTx, TSx> ChannelWaitable for Droplet<TxChannel<Open, TPayload, TRx, TTx, TSx>>
+where
+    TPayload: Pinned + Send + Unpin,
+    TRx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+    TTx: FileDescriptor + Writtable + Closable + Copy + Send + Unpin,
+    TSx: FileDescriptor + Readable + Closable + Copy + Send + Unpin,
+{
+    type Source = TxChannel<Open, TPayload, TRx, TTx, TSx>;
+    type Target = TxChannel<Drained, TPayload, TRx, TTx, TSx>;
+    type Result = Result<(), Option<i32>>;
+
+    fn source(&mut self) -> &mut Droplet<Self::Source> {
+        self
+    }
+
+    fn execute(ops: &IORuntimeOps, target: &mut Droplet<Self::Source>) -> impl Future<Output = Self::Result> {
         async move {
-            while channel.cnt < channel.total {
-                let cnt = match wait_descriptor(self, channel.rx).await {
+            while target.cnt < target.total {
+                let cnt = match wait_descriptor(ops, target.rx).await {
                     Ok(cnt) => cnt,
                     Err(errno) => return Err(errno),
                 };
 
-                channel.cnt += cnt;
-                trace2(b"awaiting channel message; rx=%d, cnt=%d, completed\n", channel.rx.as_fd(), channel.cnt);
+                target.cnt += cnt;
+                trace2(b"awaiting channel message; rx=%d, cnt=%d, completed\n", target.rx.as_fd(), target.cnt);
             }
 
             Ok(())
