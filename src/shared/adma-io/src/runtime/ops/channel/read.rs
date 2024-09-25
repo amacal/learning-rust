@@ -5,6 +5,7 @@ pub trait ChannelReadable {
     type Target;
     type Result;
     type Receipt;
+    type Payload;
 
     fn source(&mut self) -> &mut Droplet<Self::Source>;
     fn execute(ops: &IORuntimeOps, target: &mut Droplet<Self::Source>) -> impl Future<Output = Self::Result>;
@@ -54,6 +55,7 @@ where
     type Target = RxChannel<Drained, TPayload, TRx, TTx>;
     type Result = Option<Result<(TPayload, Droplet<Self::Receipt>), Option<i32>>>;
     type Receipt = RxReceipt<Open, TTx>;
+    type Payload = TPayload;
 
     fn source(&mut self) -> &mut Droplet<Self::Source> {
         self

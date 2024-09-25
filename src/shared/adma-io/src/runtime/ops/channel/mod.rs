@@ -14,6 +14,9 @@ use super::*;
 use crate::kernel::*;
 use crate::syscall::*;
 
+pub use write::ChannelWritable;
+pub use read::ChannelReadable;
+
 pub struct Open {}
 pub struct Drained {}
 pub struct Closed {}

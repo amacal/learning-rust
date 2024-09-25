@@ -1,5 +1,3 @@
-use ::core::ops::*;
-
 use super::errno::*;
 
 use adma_io::core::*;

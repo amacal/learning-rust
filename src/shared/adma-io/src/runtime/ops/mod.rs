@@ -14,6 +14,7 @@ mod std;
 mod time;
 mod token;
 mod write;
+mod pipeline;
 
 use ::core::future::*;
 use ::core::marker::*;
