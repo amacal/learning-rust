@@ -11,7 +11,8 @@
 		"vscode": {
 			"extensions": [
                 "rust-lang.rust-analyzer",
-				"fill-labs.dependi"
+				"fill-labs.dependi",
+				"-serayuzgur.crates"
 			],
 			"settings": {
 				"files.trimTrailingWhitespace": true,

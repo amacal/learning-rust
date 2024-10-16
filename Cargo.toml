@@ -1,7 +1,4 @@
-[workspace]
-resolver = "2"
-members = [
-    "src/apps/demo",
-    "src/shared/adma-io",
-    "src/shared/adma-trace",
-]
+[package]
+name = "regex"
+version = "0.1.0"
+edition = "2021"
