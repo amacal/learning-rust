@@ -24,9 +24,9 @@ enum Regex<'a> {
     Or(&'a Regex<'a>, &'a Regex<'a>),
 }
 
-struct Heap<T, const TSize: usize>(*mut T);
+struct Heap<T, const SIZE: usize>(*mut T);
 
-impl<T, const TSize: usize> Heap<T, TSize> {
+impl<T, const SIZE: usize> Heap<T, SIZE> {
     fn alloc() -> Self {
         let ptr = unsafe {
             let ret: isize;
@@ -35,7 +35,7 @@ impl<T, const TSize: usize> Heap<T, TSize> {
                 "syscall",
                 in("rax") 9,
                 in("rdi") 0,
-                in("rsi") TSize,
+                in("rsi") SIZE,
                 in("rdx") 0x00000001 | 0x00000002,
                 in("r10") 0x00000002 | 0x00000020,
                 in("r8") 0,
@@ -51,16 +51,80 @@ impl<T, const TSize: usize> Heap<T, TSize> {
 
         Self(ptr as *mut T)
     }
+
+    fn mask(&self) -> usize {
+        SIZE / size_of::<T>() - 1
+    }
+
+    fn round0(&self, off: usize) -> usize {
+        (off & self.mask()) as usize
+    }
+
+    fn round1(&self, off: usize, inc: usize) -> usize {
+        (off.wrapping_add(inc) & self.mask()) as usize
+    }
+
+    fn round2(&self, off: usize, inc1: usize, inc2: usize) -> usize {
+        (off.wrapping_add(inc1).wrapping_add(inc2) & self.mask()) as usize
+    }
+
+    fn get0<U>(&self, off: U) -> T
+    where
+        T: Copy,
+        U: Into<usize>,
+    {
+        unsafe { *self.0.add(self.round0(off.into())) }
+    }
+
+    fn set0<U>(&self, val: T, off: U)
+    where
+        T: Copy,
+        U: Into<usize>,
+    {
+        unsafe { *self.0.add(self.round0(off.into())) = val }
+    }
+
+    fn get1<U>(&self, off: U, inc: U) -> T
+    where
+        T: Copy,
+        U: Into<usize>,
+    {
+        unsafe { *self.0.add(self.round1(off.into(), inc.into())) }
+    }
+
+    fn set1<U>(&self, val: T, off: U, inc: U)
+    where
+        T: Copy,
+        U: Into<usize>,
+    {
+        unsafe { *self.0.add(self.round1(off.into(), inc.into())) = val }
+    }
+
+    fn get2<U>(&self, off: U, inc1: U, inc2: U) -> T
+    where
+        T: Copy,
+        U: Into<usize>,
+    {
+        unsafe { *self.0.add(self.round2(off.into(), inc1.into(), inc2.into())) }
+    }
+
+    fn set2<U>(&self, val: T, off: U, inc1: U, inc2: U)
+    where
+        T: Copy,
+        U: Into<usize>,
+    {
+        unsafe { *self.0.add(self.round2(off.into(), inc1.into(), inc2.into())) = val }
+    }
 }
 
-impl<T, const TSize: usize> Drop for Heap<T, TSize> {
+impl<T, const SIZE: usize> Drop for Heap<T, SIZE> {
     fn drop(&mut self) {
         unsafe {
             asm!(
                 "syscall",
                 in("rax") 11,
                 in("rdi") self.0,
-                in("rsi") TSize,
+                in("rsi") SIZE,
                 lateout("rcx") _,
                 lateout("r11") _,
                 lateout("rax") _,
@@ -70,14 +134,14 @@ impl<T, const TSize: usize> Drop for Heap<T, TSize> {
     }
 }
 
-struct Collection<const TSize: usize> {
-    heap: Heap<u16, TSize>,
+struct Collection<const SIZE: usize> {
+    heap: Heap<u16, SIZE>,
     count: u16,
     head: u16,
     tail: u16,
 }
 
-impl<const TSize: usize> Collection<TSize> {
+impl<const SIZE: usize> Collection<SIZE> {
     fn new() -> Self {
         unsafe {
             let heap = Heap::alloc();
@@ -85,7 +149,7 @@ impl<const TSize: usize> Collection<TSize> {
 
             // simulate that current list has some elements
             // so that new list will start at index zero
-            *ptr = (TSize / 2) as u16 - 4;
+            *ptr = (SIZE / 2) as u16 - 4;
 
             Self {
                 heap: heap,
@@ -96,33 +160,15 @@ impl<const TSize: usize> Collection<TSize> {
         }
     }
 
-    fn mask(&self) -> u16 {
-        (TSize / 2 - 1) as u16
-    }
-
-    fn round0(&self, off: u16) -> usize {
-        (off & self.mask()) as usize
-    }
-
-    fn round1(&self, off: u16, inc: u16) -> usize {
-        (off.wrapping_add(inc) & self.mask()) as usize
-    }
-
-    fn round2(&self, off: u16, inc1: u16, inc2: u16) -> usize {
-        (off.wrapping_add(inc1).wrapping_add(inc2) & self.mask()) as usize
-    }
-
     fn usage(&self) -> u16 {
         let mut in_progress = true;
         let (mut idx, mut count) = (self.tail, 0u16);
 
-        unsafe {
-            while in_progress {
-                count = count.wrapping_add(4);
-                count = count.wrapping_add(*self.heap.0.add(self.round0(idx)));
-                idx = *self.heap.0.add(self.round1(idx, 2));
-                in_progress = idx != self.tail;
-            }
+        while in_progress {
+            count = count.wrapping_add(4);
+            count = count.wrapping_add(self.heap.get0(idx));
+            idx = self.heap.get1(idx, 2);
+            in_progress = idx != self.tail;
         }
 
         count
@@ -131,166 +177,152 @@ impl<const TSize: usize> Collection<TSize> {
     fn print(&self) {
         let mut idx = self.tail;
 
-        unsafe {
-            loop {
-                let cnt = *self.heap.0.add(self.round0(idx));
-                let prev = *self.heap.0.add(self.round1(idx, 1));
-                let next = *self.heap.0.add(self.round1(idx, 2));
-                let hash = *self.heap.0.add(self.round1(idx, 3));
+        loop {
+            let cnt = self.heap.get0(idx);
+            let prev = self.heap.get1(idx, 1);
+            let next = self.heap.get1(idx, 2);
+            let hash = self.heap.get1(idx, 3);
 
-                print!("{:04x} | {:04x} {:04x} {:04x} {:04x} | ", idx, cnt, prev, next, hash);
+            print!("{:04x} | {:04x} {:04x} {:04x} {:04x} | ", idx, cnt, prev, next, hash);
 
-                for off in 0..cnt {
-                    print!("{:04x} ", *self.heap.0.add(self.round1(idx, 4 + off)));
-                }
-
-                println!();
-
-                if next == self.tail {
-                    break;
-                }
-
-                idx = next;
+            for off in 0..cnt {
+                print!("{:04x} ", self.heap.get1(idx, 4 + off));
             }
+
+            println!();
+
+            if next == self.tail {
+                break;
+            }
+
+            idx = next;
         }
 
         println!();
     }
 }
 
-impl<const TSize: usize> Collection<TSize> {
+impl<const SIZE: usize> Collection<SIZE> {
     fn list_count(&self) -> u16 {
         self.count
     }
 
     fn list_push_head(&mut self) -> u16 {
-        unsafe {
-            // previous head
-            let head = self.head;
+        // previous head
+        let head = self.head;
 
-            // length of the current head list
-            let off = *self.heap.0.add(self.round0(self.head));
+        // length of the current head list
+        let off = self.heap.get0(self.head);
 
-            // increment number of available list
-            self.count = self.count.wrapping_add(1);
+        // increment number of available list
+        self.count = self.count.wrapping_add(1);
 
-            // new head is incremented by size of the added empty list
-            self.head = self.round2(self.head, off, 4) as u16;
+        // new head is incremented by size of the added empty list
+        self.head = self.heap.round2(self.head.into(), off.into(), 4) as u16;
 
-            // new list contains zero elements and no hash
-            *self.heap.0.add(self.round0(self.head)) = 0;
-            *self.heap.0.add(self.round1(self.head, 3)) = 0;
+        // new list contains zero elements and no hash
+        self.heap.set0(0, self.head);
+        self.heap.set1(0, self.head, 3);
 
-            // new list points back at previous list
-            *self.heap.0.add(self.round1(self.head, 1)) = head;
+        // new list points back at previous list
+        self.heap.set1(head, self.head, 1);
 
-            // new list points head at global tail
-            *self.heap.0.add(self.round1(self.head, 2)) = self.tail;
+        // new list points head at global tail
+        self.heap.set1(self.tail, self.head, 2);
 
-            // previous list points next at newly created list
-            *self.heap.0.add(self.round1(head, 2)) = self.head;
+        // previous list points next at newly created list
+        self.heap.set1(self.head, head, 2);
 
-            // global tail list points back at newly created list
-            *self.heap.0.add(self.round1(self.tail, 1)) = self.head;
+        // global tail list points back at newly created list
+        self.heap.set1(self.head, self.tail, 1);
 
-            // updated head pointing at newly created list
-            self.head
-        }
+        // updated head pointing at newly created list
+        self.head
     }
 
     fn list_pop_tail(&mut self) -> u16 {
-        unsafe {
-            // decrement number of available lists
-            self.count = self.count.wrapping_sub(1);
+        // decrement number of available lists
+        self.count = self.count.wrapping_sub(1);
 
-            // find prev and next list for the current tail
-            let prev = self.list_prev(self.tail);
-            let next = self.list_next(self.tail);
+        // find prev and next list for the current tail
+        let prev = self.list_prev(self.tail);
+        let next = self.list_next(self.tail);
 
-            // relink prev and next lists to point at each other
-            *self.heap.0.add(self.round1(next, 1)) = prev;
-            *self.heap.0.add(self.round1(prev, 2)) = next;
+        // relink prev and next lists to point at each other
+        self.heap.set1(prev, next, 1);
+        self.heap.set1(next, prev, 2);
 
-            // tail points where next was pointing at
-            self.tail = next;
-            self.tail
-        }
+        // tail points where next was pointing at
+        self.tail = next;
+        self.tail
     }
 
     fn list_pop_head(&mut self) -> u16 {
-        unsafe {
-            // decrement number of available lists
-            self.count = self.count.wrapping_sub(1);
+        // decrement number of available lists
+        self.count = self.count.wrapping_sub(1);
 
-            // find prev and next list for the current head
-            let prev = self.list_prev(self.head);
-            let next = self.list_next(self.head);
+        // find prev and next list for the current head
+        let prev = self.list_prev(self.head);
+        let next = self.list_next(self.head);
 
-            // relink prev and next lists to point at each other
-            *self.heap.0.add(self.round1(next, 1)) = prev;
-            *self.heap.0.add(self.round1(prev, 2)) = next;
+        // relink prev and next lists to point at each other
+        self.heap.set1(prev, next, 1);
+        self.heap.set1(next, prev, 2);
 
-            // head points where prev was pointing at
-            self.head = prev;
-            self.head
-        }
+        // head points where prev was pointing at
+        self.head = prev;
+        self.head
     }
 
     fn list_prev(&self, idx: u16) -> u16 {
         // simply find next list
-        unsafe { *self.heap.0.add(self.round1(idx, 1)) }
+        self.heap.get1(idx, 1)
     }
 
     fn list_next(&self, idx: u16) -> u16 {
         // simply find next list
-        unsafe { *self.heap.0.add(self.round1(idx, 2)) }
+        self.heap.get1(idx, 2)
     }
 
     fn list_hash(&self, idx: u16) -> u16 {
         // simply find hash of the list
-        unsafe { *self.heap.0.add(self.round1(idx, 3)) }
+        self.heap.get1(idx, 3)
     }
 
     fn list_items_count(&self, idx: u16) -> u16 {
         // count resides in the very first position
-        unsafe { *self.heap.0.add(self.round0(idx)) }
+        self.heap.get0(idx)
     }
 
     fn list_items_resize(&self, idx: u16, size: u16) {
         // count resides in the very first position
-        unsafe { *self.heap.0.add(self.round0(idx)) = size }
+        self.heap.set0(size, idx)
     }
 
     fn list_items_add(&mut self, idx: u16, item: u16) {
-        unsafe {
-            // number of elements in the list
-            let off = *self.heap.0.add(self.round0(idx));
+        // number of elements in the list
+        let off = self.heap.get0(idx);
 
-            // number of elements increased
-            *self.heap.0.add(self.round0(idx)) += 1;
+        // number of elements increased
+        self.heap.set0(off + 1, idx);
 
-            // new element is added where last ends plus metadata
-            *self.heap.0.add(self.round2(idx, off, 4)) = item;
-        }
+        // new element is added where last ends plus metadata
+        self.heap.set2(item, idx, off, 4);
     }
 
     fn list_items_set(&mut self, idx: u16, off: u16, item: u16) {
-        unsafe {
-            // new element is replaced in-place at offset plus metadata
-            *self.heap.0.add(self.round2(idx, off, 4)) = item;
-        }
+        // new element is replaced in-place at offset plus metadata
+        self.heap.set2(item, idx, off, 4);
     }
 
     fn list_items_get(&self, idx: u16, off: u16) -> u16 {
         // element is read where it points plus metadata
-        unsafe { *self.heap.0.add(self.round2(idx, off, 4)) }
+        self.heap.get2(idx, off, 4)
     }
 
-    fn list_items_put(&self, idx: u16, off: u16, val: u16) {
-        unsafe {
-            // element is written where it points plus metadata
-            *self.heap.0.add(self.round2(idx, off, 4)) = val;
-        }
+    fn list_items_put(&self, idx: u16, off: u16, item: u16) {
+        // element is written where it points plus metadata
+        self.heap.set2(item, idx, off, 4);
     }
 
     fn list_items_sort(&mut self, idx: u16) {
@@ -332,10 +364,8 @@ impl<const TSize: usize> Collection<TSize> {
                 }
             }
 
-            unsafe {
-                // the count needs to be updated
-                *self.heap.0.add(self.round0(idx)) = write + 1;
-            }
+            // the count needs to be updated
+            self.heap.set0(write + 1, idx);
         }
     }
 
@@ -349,9 +379,7 @@ impl<const TSize: usize> Collection<TSize> {
             hash ^= val.wrapping_mul(0xc6a4a793u32);
         }
 
-        unsafe {
-            *self.heap.0.add(self.round1(idx, 3)) = (hash & 0xffff) as u16;
-        }
+        self.heap.set1((hash & 0xffff) as u16, idx, 3);
     }
 
     fn list_items_contains(&self, idx: u16, item: u16) -> bool {
@@ -377,17 +405,15 @@ impl<const TSize: usize> Collection<TSize> {
     }
 }
 
-impl<const TSize: usize> Collection<TSize> {
+impl<const SIZE: usize> Collection<SIZE> {
     fn set_depth(&self) -> u16 {
         let (mut idx, mut count) = (0u16, 0u16);
         let mut in_progress = true;
 
-        unsafe {
-            while in_progress {
-                count = count.wrapping_add(1);
-                idx = *self.heap.0.add(self.round1(idx, 3));
-                in_progress = idx > 0;
-            }
+        while in_progress {
+            count = count.wrapping_add(1);
+            idx = self.heap.get1(idx, 3);
+            in_progress = idx > 0;
         }
 
         count
@@ -397,12 +423,10 @@ impl<const TSize: usize> Collection<TSize> {
         let (mut idx, mut count) = (0u16, 0u16);
         let mut in_progress = true;
 
-        unsafe {
-            while in_progress {
-                count = count.wrapping_add(*self.heap.0.add(self.round0(idx)));
-                idx = *self.heap.0.add(self.round1(idx, 3));
-                in_progress = idx > 0;
-            }
+        while in_progress {
+            count = count.wrapping_add(self.heap.get0(idx));
+            idx = self.heap.get1(idx, 3);
+            in_progress = idx > 0;
         }
 
         count
@@ -412,94 +436,89 @@ impl<const TSize: usize> Collection<TSize> {
         let (mut idx, mut count) = (0u16, 0u16);
         let mut in_progress = true;
 
-        unsafe {
-            while in_progress {
-                for i in 0..*self.heap.0.add(self.round0(idx)) {
-                    if *self.heap.0.add(self.round2(idx, i, 4)) != 0 {
-                        count = count.wrapping_add(1);
-                    }
+        while in_progress {
+            for i in 0..self.heap.get0(idx) {
+                if self.heap.get2(idx, i, 4) != 0 {
+                    count = count.wrapping_add(1);
                 }
-
-                idx = *self.heap.0.add(self.round1(idx, 3));
-                in_progress = idx > 0;
             }
+
+            idx = self.heap.get1(idx, 3);
+            in_progress = idx > 0;
         }
 
         count
     }
 
     fn set_push_head(&mut self, slots: u16) -> u16 {
-        unsafe {
-            // previous head
-            let head = self.head;
+        // previous head
+        let head = self.head;
 
-            // length of the current head list
-            let off = *self.heap.0.add(self.round0(self.head));
+        // length of the current head list
+        let off = self.heap.get0(self.head);
 
-            // increment number of available list
-            self.count = self.count.wrapping_add(1);
+        // increment number of available list
+        self.count = self.count.wrapping_add(1);
 
-            // new head is incremented by size of the added empty list
-            self.head = self.round2(self.head, off, 4) as u16;
+        // new head is incremented by size of the added empty list
+        self.head = self.heap.round2(self.head as usize, off as usize, 4) as u16;
 
-            // new list contains number of passed slots and no link
-            *self.heap.0.add(self.round0(self.head)) = slots;
-            *self.heap.0.add(self.round1(self.head, 3)) = 0;
+        // new list contains number of passed slots and no link
+        self.heap.set0(slots, self.head);
+        self.heap.set1(0, self.head, 3);
 
-            // all slots are zeroed
-            for i in 0..slots {
-                *self.heap.0.add(self.round2(self.head, i, 4)) = 0;
-            }
-
-            // new list points back at previous list
-            *self.heap.0.add(self.round1(self.head, 1)) = head;
-
-            // new list points head at global tail
-            *self.heap.0.add(self.round1(self.head, 2)) = self.tail;
-
-            // previous list points next at newly created list
-            *self.heap.0.add(self.round1(head, 2)) = self.head;
-
-            // global tail list points back at newly created list
-            *self.heap.0.add(self.round1(self.tail, 1)) = self.head;
-
-            self.head
+        // all slots are zeroed
+        for i in 0..slots {
+            self.heap.set2(0, self.head, i, 4);
         }
+
+        // new list points back at previous list
+        self.heap.set1(head, self.head, 1);
+
+        // new list points head at global tail
+        self.heap.set1(self.tail, self.head, 2);
+
+        // previous list points next at newly created list
+        self.heap.set1(self.head, head, 2);
+
+        // global tail list points back at newly created list
+        self.heap.set1(self.head, self.tail, 1);
+
+        self.head
     }
 
     fn set_items_add(&mut self, idx: u16, list: u16) {
         let mut idx = idx;
 
-        unsafe {
-            // hash behind the list
-            let hash = *self.heap.0.add(self.round1(list, 3));
+        // hash behind the list
+        let hash = self.heap.get1(list, 3);
 
-            loop {
-                // count behind the set
-                let count = *self.heap.0.add(self.round0(idx));
+        loop {
+            // count behind the set
+            let count = self.heap.get0(idx);
+            let off = self.heap.round1((hash & (count - 1)).into(), 4);
 
-                // ptr to slot for the list
-                let slot = self.heap.0.add(self.round2(idx, hash & (count - 1), 4));
+            // ptr to slot for the list
+            let slot = self.heap.get1(idx, off as u16);
 
-                // slot is found, just return
-                if *slot == 0 {
-                    *slot = list;
-                    return;
-                }
-
-                // let's try to find it in the next set
-                let next = *self.heap.0.add(self.round1(idx, 3));
-                if next != 0 {
-                    idx = next;
-                    continue;
-                }
-
-                // no set available, let's create new one
-                let next = self.set_push_head(2 * count);
-                *self.heap.0.add(self.round1(idx, 3)) = next;
-
-                idx = next;
+            // slot is found, just return
+            if slot == 0 {
+                self.heap.set1(list, idx, off as u16);
+                return;
             }
+
+            // let's try to find it in the next set
+            let next = self.heap.get1(idx, 3);
+            if next != 0 {
+                idx = next;
+                continue;
+            }
+
+            // no set available, let's create new one
+            let next = self.set_push_head(2 * count);
+            self.heap.set1(next, idx, 3);
+
+            idx = next;
         }
     }
 
@@ -507,102 +526,97 @@ impl<const TSize: usize> Collection<TSize> {
         let mut idx = idx;
         let mut in_progress = true;
 
-        unsafe {
-            // hash behind the list
-            let hash = *self.heap.0.add(self.round1(list, 3));
+        // hash behind the list
+        let hash = self.heap.get1(list, 3);
 
-            while in_progress {
-                // count behind the set
-                let count = *self.heap.0.add(self.round0(idx));
+        while in_progress {
+            // count behind the set
+            let count = self.heap.get0(idx);
 
-                // ptr to slot for the list
-                let slot = self.heap.0.add(self.round2(idx, hash & (count - 1), 4));
+            // slot for the list, aka list idx
+            let slot = self.heap.get2(idx, hash & (count - 1), 4);
 
-                // if slot if not taken list was surely not found
-                if *slot == 0 {
-                    break;
-                }
-
-                // if hash behind found slot doesn't match, list was not found in this round
-                if *self.heap.0.add(self.round1(*slot, 3)) != hash {
-                    idx = *self.heap.0.add(self.round1(idx, 3));
-                    in_progress = idx > 0;
-                    continue;
-                }
-
-                // if count behind found slot doesn't match, list was not found in this round
-                if *self.heap.0.add(self.round0(*slot)) != *self.heap.0.add(self.round0(list)) {
-                    idx = *self.heap.0.add(self.round1(idx, 3));
-                    in_progress = idx > 0;
-                    continue;
-                }
-
-                // count behind the list
-                let mut found = true;
-                for i in 0..*self.heap.0.add(self.round0(list)) {
-                    let left = *self.heap.0.add(self.round2(list, i, 4));
-                    let right = *self.heap.0.add(self.round2(*slot, i, 4));
-
-                    if left != right {
-                        found = false;
-                        continue;
-                    }
-                }
-
-                // values were not rejected
-                if found {
-                    return *slot;
-                }
-
-                // let's try to find it in the next round
-                idx = *self.heap.0.add(self.round1(idx, 3));
-                in_progress = idx > 0;
+            // if slot if not taken list was surely not found
+            if slot == 0 {
+                break;
             }
 
-            0
+            // if hash behind found slot doesn't match, list was not found in this round
+            if self.heap.get1(slot, 3) != hash {
+                idx = self.heap.get1(idx, 3);
+                in_progress = idx > 0;
+                continue;
+            }
+
+            // if count behind found slot doesn't match, list was not found in this round
+            if self.heap.get0(slot) != self.heap.get0(list) {
+                idx = self.heap.get1(idx, 3);
+                in_progress = idx > 0;
+                continue;
+            }
+
+            // check item by item
+            let mut found = true;
+            for i in 0..self.heap.get0(list) {
+                let left = self.heap.get2(list, i, 4);
+                let right = self.heap.get2(slot, i, 4);
+
+                if left != right {
+                    found = false;
+                    continue;
+                }
+            }
+
+            // values were not rejected
+            if found {
+                return slot;
+            }
+
+            // let's try to find it in the next round
+            idx = self.heap.get1(idx, 3);
+            in_progress = idx > 0;
         }
+
+        0
     }
 }
 
-impl<const TSize: usize> Collection<TSize> {
+impl<const SIZE: usize> Collection<SIZE> {
     fn graph_count(&self) -> u16 {
         self.head
     }
 
     fn graph_add(&mut self, src: u16, via: (u8, u8), dst: u16) {
-        unsafe {
-            // update the head
-            let idx = self.head;
-            self.head = self.head.wrapping_add(1);
+        // update the head
+        let idx = self.head;
+        self.head = self.head.wrapping_add(1);
 
-            // the first word stores the source node
-            *self.heap.0.add(self.round0(idx.rotate_left(3))) = src;
+        // the first word stores the source node
+        self.heap.set0(src, idx.rotate_left(3));
 
-            // the second word stores combined via pair
-            *self.heap.0.add(self.round1(idx.rotate_left(3), 1)) = ((via.0 as u16) << 8) + via.1 as u16;
+        // the second word stores combined via pair
+        self.heap
+            .set1(((via.0 as u16) << 8) + via.1 as u16, idx.rotate_left(3), 1);
 
-            // the third word stores the destination
-            *self.heap.0.add(self.round1(idx.rotate_left(3), 2)) = dst;
+        // the third word stores the destination
+        self.heap.set1(dst, idx.rotate_left(3), 2);
 
-            // the fourh word will store the distance in both direction within sorted array
-            *self.heap.0.add(self.round1(idx.rotate_left(3), 3)) = 0;
-        }
+        // the fourh word will store some metadata
+        self.heap.set1(0, idx.rotate_left(3), 3);
     }
 
     fn graph_at(&self, idx: u16) -> (u16, (u8, u8), u16) {
-        unsafe {
-            let src = *self.heap.0.add(self.round0(idx.rotate_left(3)));
-            let via = *self.heap.0.add(self.round1(idx.rotate_left(3), 1));
-            let dst = *self.heap.0.add(self.round1(idx.rotate_left(3), 2));
+        let src = self.heap.get0(idx.rotate_left(3));
+        let via = self.heap.get1(idx.rotate_left(3), 1);
+        let dst = self.heap.get1(idx.rotate_left(3), 2);
 
-            (src, (via.shr(8) as u8, (via & 0xff) as u8), dst)
-        }
+        (src, (via.shr(8) as u8, (via & 0xff) as u8), dst)
     }
 
     fn graph_swap(&mut self, left: u16, right: u16) {
         unsafe {
-            let src = self.round0(left.rotate_left(3)).shr(2);
-            let dst = self.round0(right.rotate_left(3)).shr(2);
+            let src = self.heap.round0(left.rotate_left(3).into()).shr(2);
+            let dst = self.heap.round0(right.rotate_left(3).into()).shr(2);
 
             let ptr = self.heap.0 as *mut u64;
             let tmp = *ptr.add(src);
@@ -836,9 +850,7 @@ struct Matrix {
 
 impl Matrix {
     fn new() -> Self {
-        Self {
-            heap: Heap::alloc(),
-        }
+        Self { heap: Heap::alloc() }
     }
 
     fn set(&mut self, src: u16, via: (u8, u8), dst: u16) {
@@ -1468,6 +1480,7 @@ mod tests {
         }
 
         for i in 0..lists.len() {
+            println!("{i}");
             assert_ne!(collection.set_items_find(idx, lists[i]), 0);
         }
 
