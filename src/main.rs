@@ -24,13 +24,10 @@ enum Regex<'a> {
     Or(&'a Regex<'a>, &'a Regex<'a>),
 }
 
-struct Heap {
-    ptr: *mut u8,
-    size: usize,
-}
+struct Heap<T, const TSize: usize>(*mut T);
 
-impl Heap {
-    fn alloc(size: usize) -> Self {
+impl<T, const TSize: usize> Heap<T, TSize> {
+    fn alloc() -> Self {
         let ptr = unsafe {
             let ret: isize;
 
@@ -38,7 +35,7 @@ impl Heap {
                 "syscall",
                 in("rax") 9,
                 in("rdi") 0,
-                in("rsi") size,
+                in("rsi") TSize,
                 in("rdx") 0x00000001 | 0x00000002,
                 in("r10") 0x00000002 | 0x00000020,
                 in("r8") 0,
@@ -52,21 +49,18 @@ impl Heap {
             ret
         };
 
-        Self {
-            ptr: ptr as *mut u8,
-            size: size,
-        }
+        Self(ptr as *mut T)
     }
 }
 
-impl Drop for Heap {
+impl<T, const TSize: usize> Drop for Heap<T, TSize> {
     fn drop(&mut self) {
         unsafe {
             asm!(
                 "syscall",
                 in("rax") 11,
-                in("rdi") self.ptr,
-                in("rsi") self.size,
+                in("rdi") self.0,
+                in("rsi") TSize,
                 lateout("rcx") _,
                 lateout("r11") _,
                 lateout("rax") _,
@@ -76,46 +70,46 @@ impl Drop for Heap {
     }
 }
 
-struct Collection {
+struct Collection<const TSize: usize> {
+    heap: Heap<u16, TSize>,
     count: u16,
     head: u16,
     tail: u16,
-    ptr: *mut u16,
-    mask: u16,
-    _mem: Heap,
 }
 
-impl Collection {
-    fn new(bits: u8) -> Self {
+impl<const TSize: usize> Collection<TSize> {
+    fn new() -> Self {
         unsafe {
-            let heap = Heap::alloc(1 << (bits + 1));
-            let ptr = heap.ptr as *mut u16;
+            let heap = Heap::alloc();
+            let ptr = heap.0 as *mut u16;
 
             // simulate that current list has some elements
             // so that new list will start at index zero
-            *ptr = (1 << bits) - 4;
+            *ptr = (TSize / 2) as u16 - 4;
 
             Self {
+                heap: heap,
                 count: 0,
                 head: 0,
                 tail: 0,
-                ptr: ptr,
-                mask: (1 << bits) - 1,
-                _mem: heap,
             }
         }
     }
 
+    fn mask(&self) -> u16 {
+        (TSize / 2 - 1) as u16
+    }
+
     fn round0(&self, off: u16) -> usize {
-        (off & self.mask) as usize
+        (off & self.mask()) as usize
     }
 
     fn round1(&self, off: u16, inc: u16) -> usize {
-        (off.wrapping_add(inc) & self.mask) as usize
+        (off.wrapping_add(inc) & self.mask()) as usize
     }
 
     fn round2(&self, off: u16, inc1: u16, inc2: u16) -> usize {
-        (off.wrapping_add(inc1).wrapping_add(inc2) & self.mask) as usize
+        (off.wrapping_add(inc1).wrapping_add(inc2) & self.mask()) as usize
     }
 
     fn usage(&self) -> u16 {
@@ -125,8 +119,8 @@ impl Collection {
         unsafe {
             while in_progress {
                 count = count.wrapping_add(4);
-                count = count.wrapping_add(*self.ptr.add(self.round0(idx)));
-                idx = *self.ptr.add(self.round1(idx, 2));
+                count = count.wrapping_add(*self.heap.0.add(self.round0(idx)));
+                idx = *self.heap.0.add(self.round1(idx, 2));
                 in_progress = idx != self.tail;
             }
         }
@@ -139,15 +133,15 @@ impl Collection {
 
         unsafe {
             loop {
-                let cnt = *self.ptr.add(self.round0(idx));
-                let prev = *self.ptr.add(self.round1(idx, 1));
-                let next = *self.ptr.add(self.round1(idx, 2));
-                let hash = *self.ptr.add(self.round1(idx, 3));
+                let cnt = *self.heap.0.add(self.round0(idx));
+                let prev = *self.heap.0.add(self.round1(idx, 1));
+                let next = *self.heap.0.add(self.round1(idx, 2));
+                let hash = *self.heap.0.add(self.round1(idx, 3));
 
                 print!("{:04x} | {:04x} {:04x} {:04x} {:04x} | ", idx, cnt, prev, next, hash);
 
                 for off in 0..cnt {
-                    print!("{:04x} ", *self.ptr.add(self.round1(idx, 4 + off)));
+                    print!("{:04x} ", *self.heap.0.add(self.round1(idx, 4 + off)));
                 }
 
                 println!();
@@ -164,7 +158,7 @@ impl Collection {
     }
 }
 
-impl Collection {
+impl<const TSize: usize> Collection<TSize> {
     fn list_count(&self) -> u16 {
         self.count
     }
@@ -175,7 +169,7 @@ impl Collection {
             let head = self.head;
 
             // length of the current head list
-            let off = *self.ptr.add(self.round0(self.head));
+            let off = *self.heap.0.add(self.round0(self.head));
 
             // increment number of available list
             self.count = self.count.wrapping_add(1);
@@ -184,21 +178,22 @@ impl Collection {
             self.head = self.round2(self.head, off, 4) as u16;
 
             // new list contains zero elements and no hash
-            *self.ptr.add(self.round0(self.head)) = 0;
-            *self.ptr.add(self.round1(self.head, 3)) = 0;
+            *self.heap.0.add(self.round0(self.head)) = 0;
+            *self.heap.0.add(self.round1(self.head, 3)) = 0;
 
             // new list points back at previous list
-            *self.ptr.add(self.round1(self.head, 1)) = head;
+            *self.heap.0.add(self.round1(self.head, 1)) = head;
 
             // new list points head at global tail
-            *self.ptr.add(self.round1(self.head, 2)) = self.tail;
+            *self.heap.0.add(self.round1(self.head, 2)) = self.tail;
 
             // previous list points next at newly created list
-            *self.ptr.add(self.round1(head, 2)) = self.head;
+            *self.heap.0.add(self.round1(head, 2)) = self.head;
 
             // global tail list points back at newly created list
-            *self.ptr.add(self.round1(self.tail, 1)) = self.head;
+            *self.heap.0.add(self.round1(self.tail, 1)) = self.head;
 
+            // updated head pointing at newly created list
             self.head
         }
     }
@@ -213,8 +208,8 @@ impl Collection {
             let next = self.list_next(self.tail);
 
             // relink prev and next lists to point at each other
-            *self.ptr.add(self.round1(next, 1)) = prev;
-            *self.ptr.add(self.round1(prev, 2)) = next;
+            *self.heap.0.add(self.round1(next, 1)) = prev;
+            *self.heap.0.add(self.round1(prev, 2)) = next;
 
             // tail points where next was pointing at
             self.tail = next;
@@ -232,8 +227,8 @@ impl Collection {
             let next = self.list_next(self.head);
 
             // relink prev and next lists to point at each other
-            *self.ptr.add(self.round1(next, 1)) = prev;
-            *self.ptr.add(self.round1(prev, 2)) = next;
+            *self.heap.0.add(self.round1(next, 1)) = prev;
+            *self.heap.0.add(self.round1(prev, 2)) = next;
 
             // head points where prev was pointing at
             self.head = prev;
@@ -243,58 +238,58 @@ impl Collection {
 
     fn list_prev(&self, idx: u16) -> u16 {
         // simply find next list
-        unsafe { *self.ptr.add(self.round1(idx, 1)) }
+        unsafe { *self.heap.0.add(self.round1(idx, 1)) }
     }
 
     fn list_next(&self, idx: u16) -> u16 {
         // simply find next list
-        unsafe { *self.ptr.add(self.round1(idx, 2)) }
+        unsafe { *self.heap.0.add(self.round1(idx, 2)) }
     }
 
     fn list_hash(&self, idx: u16) -> u16 {
         // simply find hash of the list
-        unsafe { *self.ptr.add(self.round1(idx, 3)) }
+        unsafe { *self.heap.0.add(self.round1(idx, 3)) }
     }
 
     fn list_items_count(&self, idx: u16) -> u16 {
         // count resides in the very first position
-        unsafe { *self.ptr.add(self.round0(idx)) }
+        unsafe { *self.heap.0.add(self.round0(idx)) }
     }
 
     fn list_items_resize(&self, idx: u16, size: u16) {
         // count resides in the very first position
-        unsafe { *self.ptr.add(self.round0(idx)) = size }
+        unsafe { *self.heap.0.add(self.round0(idx)) = size }
     }
 
     fn list_items_add(&mut self, idx: u16, item: u16) {
         unsafe {
             // number of elements in the list
-            let off = *self.ptr.add(self.round0(idx));
+            let off = *self.heap.0.add(self.round0(idx));
 
             // number of elements increased
-            *self.ptr.add(self.round0(idx)) += 1;
+            *self.heap.0.add(self.round0(idx)) += 1;
 
             // new element is added where last ends plus metadata
-            *self.ptr.add(self.round2(idx, off, 4)) = item;
+            *self.heap.0.add(self.round2(idx, off, 4)) = item;
         }
     }
 
     fn list_items_set(&mut self, idx: u16, off: u16, item: u16) {
         unsafe {
             // new element is replaced in-place at offset plus metadata
-            *self.ptr.add(self.round2(idx, off, 4)) = item;
+            *self.heap.0.add(self.round2(idx, off, 4)) = item;
         }
     }
 
     fn list_items_get(&self, idx: u16, off: u16) -> u16 {
         // element is read where it points plus metadata
-        unsafe { *self.ptr.add(self.round2(idx, off, 4)) }
+        unsafe { *self.heap.0.add(self.round2(idx, off, 4)) }
     }
 
     fn list_items_put(&self, idx: u16, off: u16, val: u16) {
         unsafe {
             // element is written where it points plus metadata
-            *self.ptr.add(self.round2(idx, off, 4)) = val;
+            *self.heap.0.add(self.round2(idx, off, 4)) = val;
         }
     }
 
@@ -339,7 +334,7 @@ impl Collection {
 
             unsafe {
                 // the count needs to be updated
-                *self.ptr.add(self.round0(idx)) = write + 1;
+                *self.heap.0.add(self.round0(idx)) = write + 1;
             }
         }
     }
@@ -355,7 +350,7 @@ impl Collection {
         }
 
         unsafe {
-            *self.ptr.add(self.round1(idx, 3)) = (hash & 0xffff) as u16;
+            *self.heap.0.add(self.round1(idx, 3)) = (hash & 0xffff) as u16;
         }
     }
 
@@ -382,7 +377,7 @@ impl Collection {
     }
 }
 
-impl Collection {
+impl<const TSize: usize> Collection<TSize> {
     fn set_depth(&self) -> u16 {
         let (mut idx, mut count) = (0u16, 0u16);
         let mut in_progress = true;
@@ -390,7 +385,7 @@ impl Collection {
         unsafe {
             while in_progress {
                 count = count.wrapping_add(1);
-                idx = *self.ptr.add(self.round1(idx, 3));
+                idx = *self.heap.0.add(self.round1(idx, 3));
                 in_progress = idx > 0;
             }
         }
@@ -404,8 +399,8 @@ impl Collection {
 
         unsafe {
             while in_progress {
-                count = count.wrapping_add(*self.ptr.add(self.round0(idx)));
-                idx = *self.ptr.add(self.round1(idx, 3));
+                count = count.wrapping_add(*self.heap.0.add(self.round0(idx)));
+                idx = *self.heap.0.add(self.round1(idx, 3));
                 in_progress = idx > 0;
             }
         }
@@ -419,13 +414,13 @@ impl Collection {
 
         unsafe {
             while in_progress {
-                for i in 0..*self.ptr.add(self.round0(idx)) {
-                    if *self.ptr.add(self.round2(idx, i, 4)) != 0 {
+                for i in 0..*self.heap.0.add(self.round0(idx)) {
+                    if *self.heap.0.add(self.round2(idx, i, 4)) != 0 {
                         count = count.wrapping_add(1);
                     }
                 }
 
-                idx = *self.ptr.add(self.round1(idx, 3));
+                idx = *self.heap.0.add(self.round1(idx, 3));
                 in_progress = idx > 0;
             }
         }
@@ -439,7 +434,7 @@ impl Collection {
             let head = self.head;
 
             // length of the current head list
-            let off = *self.ptr.add(self.round0(self.head));
+            let off = *self.heap.0.add(self.round0(self.head));
 
             // increment number of available list
             self.count = self.count.wrapping_add(1);
@@ -448,25 +443,25 @@ impl Collection {
             self.head = self.round2(self.head, off, 4) as u16;
 
             // new list contains number of passed slots and no link
-            *self.ptr.add(self.round0(self.head)) = slots;
-            *self.ptr.add(self.round1(self.head, 3)) = 0;
+            *self.heap.0.add(self.round0(self.head)) = slots;
+            *self.heap.0.add(self.round1(self.head, 3)) = 0;
 
             // all slots are zeroed
             for i in 0..slots {
-                *self.ptr.add(self.round2(self.head, i, 4)) = 0;
+                *self.heap.0.add(self.round2(self.head, i, 4)) = 0;
             }
 
             // new list points back at previous list
-            *self.ptr.add(self.round1(self.head, 1)) = head;
+            *self.heap.0.add(self.round1(self.head, 1)) = head;
 
             // new list points head at global tail
-            *self.ptr.add(self.round1(self.head, 2)) = self.tail;
+            *self.heap.0.add(self.round1(self.head, 2)) = self.tail;
 
             // previous list points next at newly created list
-            *self.ptr.add(self.round1(head, 2)) = self.head;
+            *self.heap.0.add(self.round1(head, 2)) = self.head;
 
             // global tail list points back at newly created list
-            *self.ptr.add(self.round1(self.tail, 1)) = self.head;
+            *self.heap.0.add(self.round1(self.tail, 1)) = self.head;
 
             self.head
         }
@@ -477,14 +472,14 @@ impl Collection {
 
         unsafe {
             // hash behind the list
-            let hash = *self.ptr.add(self.round1(list, 3));
+            let hash = *self.heap.0.add(self.round1(list, 3));
 
             loop {
                 // count behind the set
-                let count = *self.ptr.add(self.round0(idx));
+                let count = *self.heap.0.add(self.round0(idx));
 
                 // ptr to slot for the list
-                let slot = self.ptr.add(self.round2(idx, hash & (count - 1), 4));
+                let slot = self.heap.0.add(self.round2(idx, hash & (count - 1), 4));
 
                 // slot is found, just return
                 if *slot == 0 {
@@ -493,7 +488,7 @@ impl Collection {
                 }
 
                 // let's try to find it in the next set
-                let next = *self.ptr.add(self.round1(idx, 3));
+                let next = *self.heap.0.add(self.round1(idx, 3));
                 if next != 0 {
                     idx = next;
                     continue;
@@ -501,7 +496,7 @@ impl Collection {
 
                 // no set available, let's create new one
                 let next = self.set_push_head(2 * count);
-                *self.ptr.add(self.round1(idx, 3)) = next;
+                *self.heap.0.add(self.round1(idx, 3)) = next;
 
                 idx = next;
             }
@@ -514,14 +509,14 @@ impl Collection {
 
         unsafe {
             // hash behind the list
-            let hash = *self.ptr.add(self.round1(list, 3));
+            let hash = *self.heap.0.add(self.round1(list, 3));
 
             while in_progress {
                 // count behind the set
-                let count = *self.ptr.add(self.round0(idx));
+                let count = *self.heap.0.add(self.round0(idx));
 
                 // ptr to slot for the list
-                let slot = self.ptr.add(self.round2(idx, hash & (count - 1), 4));
+                let slot = self.heap.0.add(self.round2(idx, hash & (count - 1), 4));
 
                 // if slot if not taken list was surely not found
                 if *slot == 0 {
@@ -529,24 +524,24 @@ impl Collection {
                 }
 
                 // if hash behind found slot doesn't match, list was not found in this round
-                if *self.ptr.add(self.round1(*slot, 3)) != hash {
-                    idx = *self.ptr.add(self.round1(idx, 3));
+                if *self.heap.0.add(self.round1(*slot, 3)) != hash {
+                    idx = *self.heap.0.add(self.round1(idx, 3));
                     in_progress = idx > 0;
                     continue;
                 }
 
                 // if count behind found slot doesn't match, list was not found in this round
-                if *self.ptr.add(self.round0(*slot)) != *self.ptr.add(self.round0(list)) {
-                    idx = *self.ptr.add(self.round1(idx, 3));
+                if *self.heap.0.add(self.round0(*slot)) != *self.heap.0.add(self.round0(list)) {
+                    idx = *self.heap.0.add(self.round1(idx, 3));
                     in_progress = idx > 0;
                     continue;
                 }
 
                 // count behind the list
                 let mut found = true;
-                for i in 0..*self.ptr.add(self.round0(list)) {
-                    let left = *self.ptr.add(self.round2(list, i, 4));
-                    let right = *self.ptr.add(self.round2(*slot, i, 4));
+                for i in 0..*self.heap.0.add(self.round0(list)) {
+                    let left = *self.heap.0.add(self.round2(list, i, 4));
+                    let right = *self.heap.0.add(self.round2(*slot, i, 4));
 
                     if left != right {
                         found = false;
@@ -560,7 +555,7 @@ impl Collection {
                 }
 
                 // let's try to find it in the next round
-                idx = *self.ptr.add(self.round1(idx, 3));
+                idx = *self.heap.0.add(self.round1(idx, 3));
                 in_progress = idx > 0;
             }
 
@@ -569,7 +564,7 @@ impl Collection {
     }
 }
 
-impl Collection {
+impl<const TSize: usize> Collection<TSize> {
     fn graph_count(&self) -> u16 {
         self.head
     }
@@ -581,24 +576,24 @@ impl Collection {
             self.head = self.head.wrapping_add(1);
 
             // the first word stores the source node
-            *self.ptr.add(self.round0(idx.rotate_left(3))) = src;
+            *self.heap.0.add(self.round0(idx.rotate_left(3))) = src;
 
             // the second word stores combined via pair
-            *self.ptr.add(self.round1(idx.rotate_left(3), 1)) = ((via.0 as u16) << 8) + via.1 as u16;
+            *self.heap.0.add(self.round1(idx.rotate_left(3), 1)) = ((via.0 as u16) << 8) + via.1 as u16;
 
             // the third word stores the destination
-            *self.ptr.add(self.round1(idx.rotate_left(3), 2)) = dst;
+            *self.heap.0.add(self.round1(idx.rotate_left(3), 2)) = dst;
 
             // the fourh word will store the distance in both direction within sorted array
-            *self.ptr.add(self.round1(idx.rotate_left(3), 3)) = 0;
+            *self.heap.0.add(self.round1(idx.rotate_left(3), 3)) = 0;
         }
     }
 
     fn graph_at(&self, idx: u16) -> (u16, (u8, u8), u16) {
         unsafe {
-            let src = *self.ptr.add(self.round0(idx.rotate_left(3)));
-            let via = *self.ptr.add(self.round1(idx.rotate_left(3), 1));
-            let dst = *self.ptr.add(self.round1(idx.rotate_left(3), 2));
+            let src = *self.heap.0.add(self.round0(idx.rotate_left(3)));
+            let via = *self.heap.0.add(self.round1(idx.rotate_left(3), 1));
+            let dst = *self.heap.0.add(self.round1(idx.rotate_left(3), 2));
 
             (src, (via.shr(8) as u8, (via & 0xff) as u8), dst)
         }
@@ -609,7 +604,7 @@ impl Collection {
             let src = self.round0(left.rotate_left(3)).shr(2);
             let dst = self.round0(right.rotate_left(3)).shr(2);
 
-            let ptr = self.ptr as *mut u64;
+            let ptr = self.heap.0 as *mut u64;
             let tmp = *ptr.add(src);
 
             *ptr.add(src) = *ptr.add(dst);
@@ -702,16 +697,16 @@ impl Collection {
 
 struct NFA {
     counter: u16,
-    transitions: Collection,
-    epsilons: Collection,
+    transitions: Collection<4096>,
+    epsilons: Collection<4096>,
 }
 
 impl NFA {
     fn new() -> Self {
         Self {
             counter: 0,
-            transitions: Collection::new(10),
-            epsilons: Collection::new(10),
+            transitions: Collection::new(),
+            epsilons: Collection::new(),
         }
     }
 
@@ -779,9 +774,9 @@ impl NFA {
     fn print(&self) {
         for idx in 0..self.transition_count() {
             let transition = self.transition_at(idx);
-            print!("{:04x} | {:02x} - {:02x} | ", transition.0, transition.1.0, transition.1.1);
+            print!("{:04x} | {:02x} - {:02x} | ", transition.0, transition.1 .0, transition.1 .1);
 
-            if transition.1.0 > 0 {
+            if transition.1 .0 > 0 {
                 println!("{:04x}", transition.2);
             } else {
                 for off in 0..self.epsilon_items_count(transition.2) {
@@ -798,14 +793,14 @@ impl NFA {
 
 struct DFA {
     counter: u16,
-    transitions: Collection,
+    transitions: Collection<4096>,
 }
 
 impl DFA {
     fn new() -> Self {
         Self {
             counter: 0,
-            transitions: Collection::new(10),
+            transitions: Collection::new(),
         }
     }
 
@@ -816,6 +811,10 @@ impl DFA {
 
     fn next_revert(&mut self) {
         self.counter = self.counter.wrapping_sub(1);
+    }
+
+    fn transition_at(&self, idx: u16) -> (u16, (u8, u8), u16) {
+        return self.transitions.graph_at(idx);
     }
 
     fn transition_add(&mut self, src: u16, via: (u8, u8), dst: u16) {
@@ -832,42 +831,59 @@ impl DFA {
 }
 
 struct Matrix {
-    heap: Heap,
+    heap: Heap<u16, 4096>,
 }
 
 impl Matrix {
-    fn new(size: usize) -> Self {
-        Self { heap: Heap::alloc(size) }
+    fn new() -> Self {
+        Self {
+            heap: Heap::alloc(),
+        }
     }
 
-    fn transition_set(&mut self, src: u16, via: (u8, u8), dst: u16) {
+    fn set(&mut self, src: u16, via: (u8, u8), dst: u16) {
         unsafe {
-            let ptr = self.heap.ptr as *mut u16;
+            let ptr = self.heap.0;
             let base = src.wrapping_shl(8);
 
-            for i in via.0..via.1 {
+            for i in via.0..=via.1 {
+                println!("{} {} {}", src, i, dst);
                 *ptr.add(base.wrapping_add(i as u16) as usize) = dst;
             }
         }
     }
 
-    // fn traverse(&self, data: &[u8], start: u16) -> (u16, usize) {
-    //     unsafe {
+    fn traverse(&self, data: &[u8]) -> (u16, usize) {
+        unsafe {
+            let mut state = 0u16;
+            let ptr = self.heap.0;
 
-    //     }
-    // }
+            for (idx, &val) in data.iter().enumerate() {
+                let base = state.wrapping_shl(8);
+                let base = base.wrapping_add(val as u16);
+
+                state = match *ptr.add(base as usize) {
+                    0 => return (state, idx),
+                    1 => return (1, idx + 1),
+                    state => state,
+                };
+            }
+
+            return (state, data.len());
+        }
+    }
 }
 
 struct Workbench {
-    worklist: Collection,
-    closures: Collection,
+    worklist: Collection<4096>,
+    closures: Collection<4096>,
 }
 
 impl Workbench {
     fn new() -> Self {
         Self {
-            worklist: Collection::new(10),
-            closures: Collection::new(10),
+            worklist: Collection::new(),
+            closures: Collection::new(),
         }
     }
 
@@ -1006,6 +1022,8 @@ impl Workbench {
 
     fn nfa_to_dfa(&mut self, nfa: &NFA, dfa: &mut DFA) {
         let next = dfa.next();
+        let accepting = dfa.next();
+
         let states = self.states_new();
         let worklist = self.worklist_new();
 
@@ -1037,6 +1055,15 @@ impl Workbench {
                 // if working list contains any state
                 if self.worklist.list_items_count(worklist) > 1 {
                     self.nfa_record_state(nfa, states, worklist);
+
+                    let dst = if self.worklist.list_items_get(worklist, 1) == 1 {
+                        dfa.next_revert();
+                        accepting
+                    } else {
+                        dst
+                    };
+
+                    println!("set {src} {via} {dst}");
                     dfa.transition_add(src, (via, via), dst);
                 } else {
                     dfa.next_revert();
@@ -1049,25 +1076,28 @@ impl Workbench {
         }
     }
 
-    fn dfa_to_matrix(&self, dfa: DFA, matrix: Matrix) {
-
+    fn dfa_to_matrix(&self, dfa: &DFA, matrix: &mut Matrix) {
+        for idx in 0..dfa.transition_count() {
+            let val = dfa.transition_at(idx);
+            matrix.set(val.0, val.1, val.2);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Collection, Regex, Workbench, NFA, DFA};
+    use crate::{Collection, Matrix, Regex, Workbench, DFA, NFA};
 
     #[test]
     fn handles_empty_data_structure() {
-        let collection = Collection::new(10);
+        let collection = Collection::<4096>::new();
 
         assert_eq!(collection.list_count(), 0);
     }
 
     #[test]
     fn handles_adding_new_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         let idx = collection.list_push_head();
         assert_eq!(idx, 0);
@@ -1081,7 +1111,7 @@ mod tests {
 
     #[test]
     fn handles_list_traversal() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx1 = collection.list_push_head();
         let idx2 = collection.list_push_head();
         let idx3 = collection.list_push_head();
@@ -1097,7 +1127,7 @@ mod tests {
 
     #[test]
     fn handles_adding_item_to_the_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1110,7 +1140,7 @@ mod tests {
 
     #[test]
     fn handles_resizing_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_resize(idx, 2);
@@ -1119,7 +1149,7 @@ mod tests {
 
     #[test]
     fn handles_setting_item_in_the_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_resize(idx, 2);
@@ -1132,7 +1162,7 @@ mod tests {
 
     #[test]
     fn handles_removing_existing_list_from_the_head() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -1154,7 +1184,7 @@ mod tests {
 
     #[test]
     fn handles_removing_existing_list_from_the_tail() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -1175,7 +1205,7 @@ mod tests {
 
     #[test]
     fn handles_sorting_of_an_empty_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_sort(idx);
@@ -1184,7 +1214,7 @@ mod tests {
 
     #[test]
     fn handles_sorting_of_single_item_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1196,7 +1226,7 @@ mod tests {
 
     #[test]
     fn handles_sorting_of_four_item_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1215,7 +1245,7 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_an_empty_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_distinct(idx);
@@ -1224,7 +1254,7 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_single_item_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1236,7 +1266,7 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_six_item_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1260,7 +1290,7 @@ mod tests {
 
     #[test]
     fn handles_finding_item_in_an_empty_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         assert_eq!(collection.list_items_contains(idx, 13), false);
@@ -1268,7 +1298,7 @@ mod tests {
 
     #[test]
     fn handles_finding_existing_item_in_the_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1284,7 +1314,7 @@ mod tests {
 
     #[test]
     fn handles_finding_non_existing_item_in_the_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1300,7 +1330,7 @@ mod tests {
 
     #[test]
     fn handles_hashing_of_an_empty_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_hash(idx);
@@ -1309,7 +1339,7 @@ mod tests {
 
     #[test]
     fn handles_hashing_of_four_item_list() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -1335,7 +1365,7 @@ mod tests {
 
     #[test]
     fn handles_adding_new_set() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.set_push_head(8);
 
         assert_eq!(idx, 0);
@@ -1346,7 +1376,7 @@ mod tests {
 
     #[test]
     fn handles_adding_a_list_to_an_empty_set() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         let idx1 = collection.set_push_head(8);
         let idx2 = collection.list_push_head();
@@ -1366,7 +1396,7 @@ mod tests {
 
     #[test]
     fn handles_finding_existing_element_in_the_set() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         let idx1 = collection.set_push_head(8);
         let idx2 = collection.list_push_head();
@@ -1394,7 +1424,7 @@ mod tests {
 
     #[test]
     fn handles_finding_non_existing_element_in_the_set() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         let idx1 = collection.set_push_head(8);
         let idx2 = collection.list_push_head();
@@ -1422,7 +1452,7 @@ mod tests {
 
     #[test]
     fn handles_finding_bunch_of_items_in_the_set() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
         let idx = collection.set_push_head(8);
         let mut lists = [0; 16];
 
@@ -1448,13 +1478,13 @@ mod tests {
 
     #[test]
     fn handles_working_with_empty_graph() {
-        let collection = Collection::new(10);
+        let collection = Collection::<4096>::new();
         assert_eq!(collection.graph_count(), 0);
     }
 
     #[test]
     fn handles_adding_nodes_to_a_graph() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         collection.graph_add(13, (65, 66), 17);
         collection.graph_add(29, (32, 32), 31);
@@ -1466,7 +1496,7 @@ mod tests {
 
     #[test]
     fn handles_swapping_nodes_to_a_graph() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         collection.graph_add(13, (65, 66), 17);
         collection.graph_add(29, (32, 32), 31);
@@ -1479,7 +1509,7 @@ mod tests {
 
     #[test]
     fn handles_comparing_nodes_to_a_graph_negative() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         collection.graph_add(13, (65, 66), 17);
         collection.graph_add(29, (32, 32), 31);
@@ -1489,7 +1519,7 @@ mod tests {
 
     #[test]
     fn handles_comparing_nodes_to_a_graph_positive() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         collection.graph_add(13, (65, 66), 17);
         collection.graph_add(29, (32, 32), 31);
@@ -1499,7 +1529,7 @@ mod tests {
 
     #[test]
     fn handles_sorting_nodes_in_a_graph() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         collection.graph_add(29, (32, 32), 17);
         collection.graph_add(13, (65, 66), 31);
@@ -1514,7 +1544,7 @@ mod tests {
 
     #[test]
     fn handles_sorting_nodes_in_a_graph_with_more_data() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         for i in 0..64 {
             collection.graph_add(13u16.wrapping_shl((7 * i) % 16), (0, 0), 0);
@@ -1533,7 +1563,7 @@ mod tests {
 
     #[test]
     fn handles_finding_existing_node_in_a_graph() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         collection.graph_add(13, (65, 66), 17);
         collection.graph_add(17, (0, 0), 29);
@@ -1547,7 +1577,7 @@ mod tests {
 
     #[test]
     fn handles_finding_non_existing_node_in_a_graph() {
-        let mut collection = Collection::new(10);
+        let mut collection = Collection::<4096>::new();
 
         collection.graph_add(13, (65, 66), 17);
         collection.graph_add(17, (0, 0), 29);
@@ -1733,12 +1763,54 @@ mod tests {
 
         assert_eq!(dfa.transition_count(), 7);
 
-        assert_eq!(dfa.transition_find(0, b's'), Some(1));
-        assert_eq!(dfa.transition_find(1, b't'), Some(2));
-        assert_eq!(dfa.transition_find(2, b'a'), Some(3));
-        assert_eq!(dfa.transition_find(2, b'o'), Some(4));
-        assert_eq!(dfa.transition_find(3, b'r'), Some(5));
-        assert_eq!(dfa.transition_find(4, b'p'), Some(6));
-        assert_eq!(dfa.transition_find(5, b't'), Some(7));
+        assert_eq!(dfa.transition_find(0, b's'), Some(2));
+        assert_eq!(dfa.transition_find(2, b't'), Some(3));
+        assert_eq!(dfa.transition_find(3, b'a'), Some(4));
+        assert_eq!(dfa.transition_find(3, b'o'), Some(5));
+        assert_eq!(dfa.transition_find(4, b'r'), Some(6));
+        assert_eq!(dfa.transition_find(5, b'p'), Some(1));
+        assert_eq!(dfa.transition_find(6, b't'), Some(1));
+    }
+
+    #[test]
+    fn handles_traversing_dfa_positive() {
+        let start = Regex::Lit(b"start");
+        let stop = Regex::Lit(b"stop");
+        let regex = Regex::Or(&start, &stop);
+
+        let mut workbench = Workbench::new();
+        let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
+        let mut matrix = Matrix::new();
+
+        workbench.regex_to_nfa(&regex, &mut nfa);
+        workbench.nfa_to_dfa(&nfa, &mut dfa);
+        workbench.dfa_to_matrix(&dfa, &mut matrix);
+
+        // expect final state 1 at 5th character
+        assert_eq!(matrix.traverse(b"start"), (1, 5));
+
+        // expect final state 1 at 4th character
+        assert_eq!(matrix.traverse(b"stop"), (1, 4));
+    }
+
+    #[test]
+    fn handles_traversing_dfa_negative() {
+        let start = Regex::Lit(b"start");
+        let stop = Regex::Lit(b"stop");
+        let regex = Regex::Or(&start, &stop);
+
+        let mut workbench = Workbench::new();
+        let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
+        let mut matrix = Matrix::new();
+
+        workbench.regex_to_nfa(&regex, &mut nfa);
+        workbench.nfa_to_dfa(&nfa, &mut dfa);
+        workbench.dfa_to_matrix(&dfa, &mut matrix);
+
+        // expect failed state 5 at 3th character, because of 'r'
+        assert_eq!(matrix.traverse(b"stort"), (5, 3));
+
+        // expect failed state 4 at 3th character, because of 'p'
+        assert_eq!(matrix.traverse(b"stap"), (4, 3));
     }
 }
