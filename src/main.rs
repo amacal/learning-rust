@@ -1,4 +1,4 @@
-use std::{arch::*, ops::Shr};
+use std::{arch::*, marker::PhantomData, ops::Shr};
 
 fn main() {
     let start = Regex::Lit(b"start");
@@ -24,9 +24,35 @@ enum Regex<'a> {
     Or(&'a Regex<'a>, &'a Regex<'a>),
 }
 
-struct Heap<T, const SIZE: usize>(*mut T);
+trait Guard<T, const SIZE: usize> {
+    fn apply(off: usize) -> usize;
+}
 
-impl<T, const SIZE: usize> Heap<T, SIZE> {
+struct GuardWrapping;
+struct GuardDisabled;
+struct GuardSegfault;
+
+impl<T, const SIZE: usize> Guard<T, SIZE> for GuardWrapping {
+    fn apply(off: usize) -> usize {
+        off & (SIZE / size_of::<T>() - 1)
+    }
+}
+
+impl<T, const SIZE: usize> Guard<T, SIZE> for GuardDisabled {
+    fn apply(off: usize) -> usize {
+        off
+    }
+}
+
+impl<T, const SIZE: usize> Guard<T, SIZE> for GuardSegfault {
+    fn apply(off: usize) -> usize {
+        std::cmp::min(off, SIZE / size_of::<T>())
+    }
+}
+
+struct Heap<T, const SIZE: usize, GUARD: Guard<T, SIZE>>(*mut T, PhantomData<GUARD>);
+
+impl<T, const SIZE: usize, GUARD: Guard<T, SIZE>> Heap<T, SIZE, GUARD> {
     fn alloc() -> Self {
         let ptr = unsafe {
             let ret: isize;
@@ -49,23 +75,19 @@ impl<T, const SIZE: usize> Heap<T, SIZE> {
             ret
         };
 
-        Self(ptr as *mut T)
+        Self(ptr as *mut T, PhantomData)
     }
 
-    fn mask(&self) -> usize {
-        SIZE / size_of::<T>() - 1
+    fn guard0(&self, off: usize) -> usize {
+        GUARD::apply(off)
     }
 
-    fn round0(&self, off: usize) -> usize {
-        (off & self.mask()) as usize
+    fn guard1(&self, off: usize, inc: usize) -> usize {
+        GUARD::apply(off.wrapping_add(inc))
     }
 
-    fn round1(&self, off: usize, inc: usize) -> usize {
-        (off.wrapping_add(inc) & self.mask()) as usize
-    }
-
-    fn round2(&self, off: usize, inc1: usize, inc2: usize) -> usize {
-        (off.wrapping_add(inc1).wrapping_add(inc2) & self.mask()) as usize
+    fn guard2(&self, off: usize, inc1: usize, inc2: usize) -> usize {
+        GUARD::apply(off.wrapping_add(inc1).wrapping_add(inc2))
     }
 
     fn get0<U>(&self, off: U) -> T
@@ -73,7 +95,7 @@ impl<T, const SIZE: usize> Heap<T, SIZE> {
         T: Copy,
         U: Into<usize>,
     {
-        unsafe { *self.0.add(self.round0(off.into())) }
+        unsafe { *self.0.add(self.guard0(off.into())) }
     }
 
     fn set0<U>(&self, val: T, off: U)
@@ -81,7 +103,7 @@ impl<T, const SIZE: usize> Heap<T, SIZE> {
         T: Copy,
         U: Into<usize>,
     {
-        unsafe { *self.0.add(self.round0(off.into())) = val }
+        unsafe { *self.0.add(self.guard0(off.into())) = val }
     }
 
     fn get1<U>(&self, off: U, inc: U) -> T
@@ -89,7 +111,7 @@ impl<T, const SIZE: usize> Heap<T, SIZE> {
         T: Copy,
         U: Into<usize>,
     {
-        unsafe { *self.0.add(self.round1(off.into(), inc.into())) }
+        unsafe { *self.0.add(self.guard1(off.into(), inc.into())) }
     }
 
     fn set1<U>(&self, val: T, off: U, inc: U)
@@ -97,7 +119,7 @@ impl<T, const SIZE: usize> Heap<T, SIZE> {
         T: Copy,
         U: Into<usize>,
     {
-        unsafe { *self.0.add(self.round1(off.into(), inc.into())) = val }
+        unsafe { *self.0.add(self.guard1(off.into(), inc.into())) = val }
     }
 
     fn get2<U>(&self, off: U, inc1: U, inc2: U) -> T
@@ -105,7 +127,7 @@ impl<T, const SIZE: usize> Heap<T, SIZE> {
         T: Copy,
         U: Into<usize>,
     {
-        unsafe { *self.0.add(self.round2(off.into(), inc1.into(), inc2.into())) }
+        unsafe { *self.0.add(self.guard2(off.into(), inc1.into(), inc2.into())) }
     }
 
     fn set2<U>(&self, val: T, off: U, inc1: U, inc2: U)
@@ -113,11 +135,11 @@ impl<T, const SIZE: usize> Heap<T, SIZE> {
         T: Copy,
         U: Into<usize>,
     {
-        unsafe { *self.0.add(self.round2(off.into(), inc1.into(), inc2.into())) = val }
+        unsafe { *self.0.add(self.guard2(off.into(), inc1.into(), inc2.into())) = val }
     }
 }
 
-impl<T, const SIZE: usize> Drop for Heap<T, SIZE> {
+impl<T, const SIZE: usize, GUARD: Guard<T, SIZE>> Drop for Heap<T, SIZE, GUARD> {
     fn drop(&mut self) {
         unsafe {
             asm!(
@@ -134,29 +156,26 @@ impl<T, const SIZE: usize> Drop for Heap<T, SIZE> {
     }
 }
 
-struct Collection<const SIZE: usize> {
-    heap: Heap<u16, SIZE>,
+struct Collection<const SIZE: usize, GUARD: Guard<u16, SIZE>> {
+    heap: Heap<u16, SIZE, GUARD>,
     count: u16,
     head: u16,
     tail: u16,
 }
 
-impl<const SIZE: usize> Collection<SIZE> {
+impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
     fn new() -> Self {
-        unsafe {
-            let heap = Heap::alloc();
-            let ptr = heap.0 as *mut u16;
+        let heap = Heap::alloc();
 
-            // simulate that current list has some elements
-            // so that new list will start at index zero
-            *ptr = (SIZE / 2) as u16 - 4;
+        // simulate that current list has some elements
+        // so that new list will start at index zero
+        heap.set0((SIZE / 2) as u16 - 4, 0u16);
 
-            Self {
-                heap: heap,
-                count: 0,
-                head: 0,
-                tail: 0,
-            }
+        Self {
+            heap: heap,
+            count: 0,
+            head: 0,
+            tail: 0,
         }
     }
 
@@ -202,7 +221,7 @@ impl<const SIZE: usize> Collection<SIZE> {
     }
 }
 
-impl<const SIZE: usize> Collection<SIZE> {
+impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
     fn list_count(&self) -> u16 {
         self.count
     }
@@ -218,7 +237,7 @@ impl<const SIZE: usize> Collection<SIZE> {
         self.count = self.count.wrapping_add(1);
 
         // new head is incremented by size of the added empty list
-        self.head = self.heap.round2(self.head.into(), off.into(), 4) as u16;
+        self.head = <GuardWrapping as Guard<u16, SIZE>>::apply(self.head.wrapping_add(off).wrapping_add(4).into()) as u16;
 
         // new list contains zero elements and no hash
         self.heap.set0(0, self.head);
@@ -370,21 +389,24 @@ impl<const SIZE: usize> Collection<SIZE> {
     }
 
     fn list_items_hash(&mut self, idx: u16) {
+        // a value taken from murmur hash
         let mut hash = 0xc6a4a793u32;
 
         for off in 0..self.list_items_count(idx) {
-            let val = self.list_items_get(idx, off) as u32;
+            let val: u32 = self.list_items_get(idx, off).into();
 
+            // a murmur like hashing
             hash = hash.wrapping_shr(16);
             hash ^= val.wrapping_mul(0xc6a4a793u32);
         }
 
+        // update to metadata
         self.heap.set1((hash & 0xffff) as u16, idx, 3);
     }
 
     fn list_items_contains(&self, idx: u16, item: u16) -> bool {
-        let mut low = 0i32;
-        let mut high = self.list_items_count(idx) as i32;
+        let mut low: i32 = 0i32;
+        let mut high: i32 = self.list_items_count(idx).into();
 
         while low <= high {
             let off = low + (high - low) / 2;
@@ -405,7 +427,7 @@ impl<const SIZE: usize> Collection<SIZE> {
     }
 }
 
-impl<const SIZE: usize> Collection<SIZE> {
+impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
     fn set_depth(&self) -> u16 {
         let (mut idx, mut count) = (0u16, 0u16);
         let mut in_progress = true;
@@ -461,7 +483,7 @@ impl<const SIZE: usize> Collection<SIZE> {
         self.count = self.count.wrapping_add(1);
 
         // new head is incremented by size of the added empty list
-        self.head = self.heap.round2(self.head as usize, off as usize, 4) as u16;
+        self.head = <GuardWrapping as Guard<u16, SIZE>>::apply(self.head.wrapping_add(off).wrapping_add(4).into()) as u16;
 
         // new list contains number of passed slots and no link
         self.heap.set0(slots, self.head);
@@ -496,7 +518,7 @@ impl<const SIZE: usize> Collection<SIZE> {
         loop {
             // count behind the set
             let count = self.heap.get0(idx);
-            let off = self.heap.round1((hash & (count - 1)).into(), 4);
+            let off = self.heap.guard1((hash & (count - 1)).into(), 4);
 
             // ptr to slot for the list
             let slot = self.heap.get1(idx, off as u16);
@@ -581,7 +603,21 @@ impl<const SIZE: usize> Collection<SIZE> {
     }
 }
 
-impl<const SIZE: usize> Collection<SIZE> {
+struct Graph<const SIZE: usize, GUARD: Guard<u16, SIZE>> {
+    heap: Heap<u16, SIZE, GUARD>,
+    head: u16,
+}
+
+impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Graph<SIZE, GUARD> {
+    fn new() -> Self {
+        Self {
+            heap: Heap::alloc(),
+            head: 0,
+        }
+    }
+}
+
+impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Graph<SIZE, GUARD> {
     fn graph_count(&self) -> u16 {
         self.head
     }
@@ -615,8 +651,8 @@ impl<const SIZE: usize> Collection<SIZE> {
 
     fn graph_swap(&mut self, left: u16, right: u16) {
         unsafe {
-            let src = self.heap.round0(left.rotate_left(3).into()).shr(2);
-            let dst = self.heap.round0(right.rotate_left(3).into()).shr(2);
+            let src = self.heap.guard0(left.rotate_left(3).into()).shr(2);
+            let dst = self.heap.guard0(right.rotate_left(3).into()).shr(2);
 
             let ptr = self.heap.0 as *mut u64;
             let tmp = *ptr.add(src);
@@ -711,15 +747,15 @@ impl<const SIZE: usize> Collection<SIZE> {
 
 struct NFA {
     counter: u16,
-    transitions: Collection<4096>,
-    epsilons: Collection<4096>,
+    transitions: Graph<4096, GuardDisabled>,
+    epsilons: Collection<4096, GuardDisabled>,
 }
 
 impl NFA {
     fn new() -> Self {
         Self {
             counter: 0,
-            transitions: Collection::new(),
+            transitions: Graph::new(),
             epsilons: Collection::new(),
         }
     }
@@ -807,14 +843,14 @@ impl NFA {
 
 struct DFA {
     counter: u16,
-    transitions: Collection<4096>,
+    transitions: Graph<4096, GuardDisabled>,
 }
 
 impl DFA {
     fn new() -> Self {
         Self {
             counter: 0,
-            transitions: Collection::new(),
+            transitions: Graph::new(),
         }
     }
 
@@ -845,7 +881,7 @@ impl DFA {
 }
 
 struct Matrix {
-    heap: Heap<u16, 4096>,
+    heap: Heap<u16, 4096, GuardWrapping>,
 }
 
 impl Matrix {
@@ -887,8 +923,8 @@ impl Matrix {
 }
 
 struct Workbench {
-    worklist: Collection<4096>,
-    closures: Collection<4096>,
+    worklist: Collection<4096, GuardWrapping>,
+    closures: Collection<4096, GuardDisabled>,
 }
 
 impl Workbench {
@@ -1098,18 +1134,18 @@ impl Workbench {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Collection, Matrix, Regex, Workbench, DFA, NFA};
+    use crate::*;
 
     #[test]
     fn handles_empty_data_structure() {
-        let collection = Collection::<4096>::new();
+        let collection = Collection::<4096, GuardDisabled>::new();
 
         assert_eq!(collection.list_count(), 0);
     }
 
     #[test]
     fn handles_adding_new_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
 
         let idx = collection.list_push_head();
         assert_eq!(idx, 0);
@@ -1123,7 +1159,7 @@ mod tests {
 
     #[test]
     fn handles_list_traversal() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx1 = collection.list_push_head();
         let idx2 = collection.list_push_head();
         let idx3 = collection.list_push_head();
@@ -1139,7 +1175,7 @@ mod tests {
 
     #[test]
     fn handles_adding_item_to_the_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1152,7 +1188,7 @@ mod tests {
 
     #[test]
     fn handles_resizing_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_resize(idx, 2);
@@ -1161,7 +1197,7 @@ mod tests {
 
     #[test]
     fn handles_setting_item_in_the_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_resize(idx, 2);
@@ -1174,7 +1210,7 @@ mod tests {
 
     #[test]
     fn handles_removing_existing_list_from_the_head() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -1196,7 +1232,7 @@ mod tests {
 
     #[test]
     fn handles_removing_existing_list_from_the_tail() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -1217,7 +1253,7 @@ mod tests {
 
     #[test]
     fn handles_sorting_of_an_empty_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_sort(idx);
@@ -1226,7 +1262,7 @@ mod tests {
 
     #[test]
     fn handles_sorting_of_single_item_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1238,7 +1274,7 @@ mod tests {
 
     #[test]
     fn handles_sorting_of_four_item_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1257,7 +1293,7 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_an_empty_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_distinct(idx);
@@ -1266,7 +1302,7 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_single_item_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1278,7 +1314,7 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_six_item_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1302,7 +1338,7 @@ mod tests {
 
     #[test]
     fn handles_finding_item_in_an_empty_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         assert_eq!(collection.list_items_contains(idx, 13), false);
@@ -1310,7 +1346,7 @@ mod tests {
 
     #[test]
     fn handles_finding_existing_item_in_the_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1326,7 +1362,7 @@ mod tests {
 
     #[test]
     fn handles_finding_non_existing_item_in_the_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -1342,7 +1378,7 @@ mod tests {
 
     #[test]
     fn handles_hashing_of_an_empty_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
         collection.list_items_hash(idx);
@@ -1351,7 +1387,7 @@ mod tests {
 
     #[test]
     fn handles_hashing_of_four_item_list() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -1377,7 +1413,7 @@ mod tests {
 
     #[test]
     fn handles_adding_new_set() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.set_push_head(8);
 
         assert_eq!(idx, 0);
@@ -1388,7 +1424,7 @@ mod tests {
 
     #[test]
     fn handles_adding_a_list_to_an_empty_set() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
 
         let idx1 = collection.set_push_head(8);
         let idx2 = collection.list_push_head();
@@ -1408,7 +1444,7 @@ mod tests {
 
     #[test]
     fn handles_finding_existing_element_in_the_set() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
 
         let idx1 = collection.set_push_head(8);
         let idx2 = collection.list_push_head();
@@ -1436,7 +1472,7 @@ mod tests {
 
     #[test]
     fn handles_finding_non_existing_element_in_the_set() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
 
         let idx1 = collection.set_push_head(8);
         let idx2 = collection.list_push_head();
@@ -1464,7 +1500,7 @@ mod tests {
 
     #[test]
     fn handles_finding_bunch_of_items_in_the_set() {
-        let mut collection = Collection::<4096>::new();
+        let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.set_push_head(8);
         let mut lists = [0; 16];
 
@@ -1491,84 +1527,84 @@ mod tests {
 
     #[test]
     fn handles_working_with_empty_graph() {
-        let collection = Collection::<4096>::new();
-        assert_eq!(collection.graph_count(), 0);
+        let graph = Graph::<4096, GuardDisabled>::new();
+        assert_eq!(graph.graph_count(), 0);
     }
 
     #[test]
     fn handles_adding_nodes_to_a_graph() {
-        let mut collection = Collection::<4096>::new();
+        let mut graph = Graph::<4096, GuardDisabled>::new();
 
-        collection.graph_add(13, (65, 66), 17);
-        collection.graph_add(29, (32, 32), 31);
+        graph.graph_add(13, (65, 66), 17);
+        graph.graph_add(29, (32, 32), 31);
 
-        assert_eq!(collection.graph_count(), 2);
-        assert_eq!(collection.graph_at(0), (13, (65, 66), 17));
-        assert_eq!(collection.graph_at(1), (29, (32, 32), 31));
+        assert_eq!(graph.graph_count(), 2);
+        assert_eq!(graph.graph_at(0), (13, (65, 66), 17));
+        assert_eq!(graph.graph_at(1), (29, (32, 32), 31));
     }
 
     #[test]
     fn handles_swapping_nodes_to_a_graph() {
-        let mut collection = Collection::<4096>::new();
+        let mut graph = Graph::<4096, GuardDisabled>::new();
 
-        collection.graph_add(13, (65, 66), 17);
-        collection.graph_add(29, (32, 32), 31);
-        collection.graph_swap(0, 1);
+        graph.graph_add(13, (65, 66), 17);
+        graph.graph_add(29, (32, 32), 31);
+        graph.graph_swap(0, 1);
 
-        assert_eq!(collection.graph_count(), 2);
-        assert_eq!(collection.graph_at(0), (29, (32, 32), 31));
-        assert_eq!(collection.graph_at(1), (13, (65, 66), 17));
+        assert_eq!(graph.graph_count(), 2);
+        assert_eq!(graph.graph_at(0), (29, (32, 32), 31));
+        assert_eq!(graph.graph_at(1), (13, (65, 66), 17));
     }
 
     #[test]
     fn handles_comparing_nodes_to_a_graph_negative() {
-        let mut collection = Collection::<4096>::new();
+        let mut graph = Graph::<4096, GuardDisabled>::new();
 
-        collection.graph_add(13, (65, 66), 17);
-        collection.graph_add(29, (32, 32), 31);
+        graph.graph_add(13, (65, 66), 17);
+        graph.graph_add(29, (32, 32), 31);
 
-        assert_eq!(collection.graph_greater(0, 1), false);
+        assert_eq!(graph.graph_greater(0, 1), false);
     }
 
     #[test]
     fn handles_comparing_nodes_to_a_graph_positive() {
-        let mut collection = Collection::<4096>::new();
+        let mut graph = Graph::<4096, GuardDisabled>::new();
 
-        collection.graph_add(13, (65, 66), 17);
-        collection.graph_add(29, (32, 32), 31);
+        graph.graph_add(13, (65, 66), 17);
+        graph.graph_add(29, (32, 32), 31);
 
-        assert_eq!(collection.graph_greater(1, 0), true);
+        assert_eq!(graph.graph_greater(1, 0), true);
     }
 
     #[test]
     fn handles_sorting_nodes_in_a_graph() {
-        let mut collection = Collection::<4096>::new();
+        let mut graph = Graph::<4096, GuardDisabled>::new();
 
-        collection.graph_add(29, (32, 32), 17);
-        collection.graph_add(13, (65, 66), 31);
-        collection.graph_add(17, (0, 0), 29);
-        collection.graph_sort();
+        graph.graph_add(29, (32, 32), 17);
+        graph.graph_add(13, (65, 66), 31);
+        graph.graph_add(17, (0, 0), 29);
+        graph.graph_sort();
 
-        assert_eq!(collection.graph_count(), 3);
-        assert_eq!(collection.graph_at(0), (13, (65, 66), 31));
-        assert_eq!(collection.graph_at(1), (17, (0, 0), 29));
-        assert_eq!(collection.graph_at(2), (29, (32, 32), 17));
+        assert_eq!(graph.graph_count(), 3);
+        assert_eq!(graph.graph_at(0), (13, (65, 66), 31));
+        assert_eq!(graph.graph_at(1), (17, (0, 0), 29));
+        assert_eq!(graph.graph_at(2), (29, (32, 32), 17));
     }
 
     #[test]
     fn handles_sorting_nodes_in_a_graph_with_more_data() {
-        let mut collection = Collection::<4096>::new();
+        let mut graph = Graph::<4096, GuardDisabled>::new();
 
         for i in 0..64 {
-            collection.graph_add(13u16.wrapping_shl((7 * i) % 16), (0, 0), 0);
+            graph.graph_add(13u16.wrapping_shl((7 * i) % 16), (0, 0), 0);
         }
 
-        collection.graph_sort();
-        assert_eq!(collection.graph_count(), 64);
+        graph.graph_sort();
+        assert_eq!(graph.graph_count(), 64);
 
         for i in 1..64 {
-            let left = collection.graph_at(i - 1);
-            let right = collection.graph_at(i);
+            let left = graph.graph_at(i - 1);
+            let right = graph.graph_at(i);
 
             assert!(left.0 <= right.0);
         }
@@ -1576,33 +1612,33 @@ mod tests {
 
     #[test]
     fn handles_finding_existing_node_in_a_graph() {
-        let mut collection = Collection::<4096>::new();
+        let mut graph = Graph::<4096, GuardDisabled>::new();
 
-        collection.graph_add(13, (65, 66), 17);
-        collection.graph_add(17, (0, 0), 29);
-        collection.graph_add(29, (32, 32), 31);
+        graph.graph_add(13, (65, 66), 17);
+        graph.graph_add(17, (0, 0), 29);
+        graph.graph_add(29, (32, 32), 31);
 
-        assert_eq!(collection.graph_find(13, 65), Some(17));
-        assert_eq!(collection.graph_find(13, 66), Some(17));
-        assert_eq!(collection.graph_find(17, 0), Some(29));
-        assert_eq!(collection.graph_find(29, 32), Some(31));
+        assert_eq!(graph.graph_find(13, 65), Some(17));
+        assert_eq!(graph.graph_find(13, 66), Some(17));
+        assert_eq!(graph.graph_find(17, 0), Some(29));
+        assert_eq!(graph.graph_find(29, 32), Some(31));
     }
 
     #[test]
     fn handles_finding_non_existing_node_in_a_graph() {
-        let mut collection = Collection::<4096>::new();
+        let mut graph = Graph::<4096, GuardDisabled>::new();
 
-        collection.graph_add(13, (65, 66), 17);
-        collection.graph_add(17, (0, 0), 29);
-        collection.graph_add(29, (32, 32), 31);
+        graph.graph_add(13, (65, 66), 17);
+        graph.graph_add(17, (0, 0), 29);
+        graph.graph_add(29, (32, 32), 31);
 
-        assert_eq!(collection.graph_find(12, 65), None);
-        assert_eq!(collection.graph_find(13, 64), None);
-        assert_eq!(collection.graph_find(13, 67), None);
-        assert_eq!(collection.graph_find(17, 1), None);
-        assert_eq!(collection.graph_find(29, 31), None);
-        assert_eq!(collection.graph_find(29, 33), None);
-        assert_eq!(collection.graph_find(30, 32), None);
+        assert_eq!(graph.graph_find(12, 65), None);
+        assert_eq!(graph.graph_find(13, 64), None);
+        assert_eq!(graph.graph_find(13, 67), None);
+        assert_eq!(graph.graph_find(17, 1), None);
+        assert_eq!(graph.graph_find(29, 31), None);
+        assert_eq!(graph.graph_find(29, 33), None);
+        assert_eq!(graph.graph_find(30, 32), None);
     }
 
     #[test]
