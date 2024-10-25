@@ -1,12 +1,15 @@
 use std::{arch::*, marker::PhantomData, ops::Shr, ptr};
 
 fn main() {
-    let start = Regex::Lit(b"start");
-    let stop = Regex::Lit(b"stop");
-    let stopper = Regex::Lit(b"stopper");
-    let regex = Regex::Or(&start, &stop);
-    let regex = Regex::Or(&regex, &stopper);
-    let regex = Regex::Rep(&regex);
+    let start = Regex::Literal(b"start");
+    let stop = Regex::Literal(b"stop");
+    let stopper = Regex::Literal(b"stopper");
+    let regex = Regex::Either(&start, &stop);
+    let regex = Regex::Either(&regex, &stopper);
+    let regex = Regex::Repeat(&regex);
+    let regex  = Regex::Optional(&regex);
+    let pipe= Regex::Literal(b"|");
+    let regex = Regex::Concat(&regex, &pipe);
 
     let mut workbench = Workbench::new();
     let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
@@ -23,9 +26,11 @@ fn main() {
 }
 
 enum Regex<'a> {
-    Lit(&'a [u8]),
-    Or(&'a Regex<'a>, &'a Regex<'a>),
-    Rep(&'a Regex<'a>),
+    Literal(&'a [u8]),
+    Either(&'a Regex<'a>, &'a Regex<'a>),
+    Concat(&'a Regex<'a>, &'a Regex<'a>),
+    Repeat(&'a Regex<'a>),
+    Optional(&'a Regex<'a>),
 }
 
 trait Guard<T, const SIZE: usize> {
@@ -1009,7 +1014,7 @@ impl DFA {
         println!();
     }
 
-    fn traverse(&self, data: &[u8], start: u16) -> (u16, usize) {
+    fn traverse(&self, data: &[u8], start: u16) -> Option<(u16, usize)> {
         let mut current = (start, 0);
         let mut best = None;
 
@@ -1018,7 +1023,7 @@ impl DFA {
                 None => break,
                 Some((state, meta)) => {
                     if meta & 0x01 == 0x01 {
-                        best = Some((state, idx + 1));
+                        best = Some((state, idx));
                     }
 
                     (state, idx)
@@ -1026,7 +1031,7 @@ impl DFA {
             };
         }
 
-        best.unwrap_or(current)
+        best
     }
 }
 
@@ -1078,7 +1083,7 @@ impl Workbench {
     fn regex_to_nfa(&mut self, regex: &Regex, nfa: &mut NFA) -> (u16, u16) {
         fn into_nfa(node: &Regex, nfa: &mut NFA, accepting: bool) -> (u16, u16) {
             match node {
-                Regex::Lit(value) => {
+                Regex::Literal(value) => {
                     let zero = nfa.next();
                     let first = nfa.next();
 
@@ -1101,10 +1106,9 @@ impl Workbench {
 
                     (zero, last)
                 }
-                Regex::Or(left, right) => {
+                Regex::Either(left, right) => {
                     let first = nfa.next();
 
-                    // transitions should be only added in an increasing order
                     let ep1 = nfa.epsilon_new();
                     nfa.transition_add(first, (0, 0), ep1, 0);
                     nfa.epsilon_items_resize(ep1, 2);
@@ -1128,12 +1132,31 @@ impl Workbench {
                     nfa.epsilon_items_set(ep3, 0, last);
 
                     (first, last)
-                }
-                Regex::Rep(target) => {
+                },
+                Regex::Concat(left, right) => {
                     let first = nfa.next();
                     let ep1 = nfa.epsilon_new();
 
                     nfa.transition_add(first, (0, 0), ep1, 0);
+                    nfa.epsilon_items_resize(ep1, 1);
+
+                    let left = into_nfa(left, nfa, false);
+                    nfa.epsilon_items_set(ep1, 0, left.0);
+
+                    let ep2 = nfa.epsilon_new();
+                    nfa.transition_add(left.1, (0, 0), ep2, 0);
+                    nfa.epsilon_items_resize(ep2, 1);
+
+                    let right = into_nfa(right, nfa, accepting);
+                    nfa.epsilon_items_set(ep2, 0, right.0);
+
+                    (first, right.1)
+                }
+                Regex::Repeat(target) => {
+                    let first = nfa.next();
+                    let ep1 = nfa.epsilon_new();
+
+                    nfa.transition_add(first, (0, 0), ep1, 0x00);
                     nfa.epsilon_items_resize(ep1, 1);
 
                     let ep2 = nfa.epsilon_new();
@@ -1148,7 +1171,25 @@ impl Workbench {
                     nfa.epsilon_items_set(ep2, 1, first);
 
                     (first, last)
-                }
+                },
+                Regex::Optional(target) => {
+                    let first = nfa.next();
+                    let ep1 = nfa.epsilon_new();
+
+                    nfa.transition_add(first, (0, 0), ep1, 0x00);
+                    nfa.epsilon_items_resize(ep1, 2);
+
+                    let target = into_nfa(target, nfa, accepting);
+                    let last = nfa.next();
+
+                    nfa.epsilon_items_set(ep1, 0, target.0);
+                    nfa.transition_add(target.1, (0, 0), ep1, 0);
+
+                    nfa.epsilon_items_set(ep1, 0, target.0);
+                    nfa.epsilon_items_set(ep1, 1, last);
+
+                    (first, last)
+                },
             }
         }
 
@@ -1878,7 +1919,7 @@ mod tests {
     #[test]
     fn handles_converting_literal_regex_to_nfa() {
         let mut workbench = Workbench::new();
-        let regex = Regex::Lit(b"start");
+        let regex = Regex::Literal(b"start");
         let mut nfa = NFA::new();
 
         let refs = workbench.regex_to_nfa(&regex, &mut nfa);
@@ -1909,10 +1950,10 @@ mod tests {
     }
 
     #[test]
-    fn handles_converting_or_regex_to_nfa() {
-        let start = Regex::Lit(b"start");
-        let stop = Regex::Lit(b"stop");
-        let regex = Regex::Or(&start, &stop);
+    fn handles_converting_either_regex_to_nfa() {
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Either(&start, &stop);
 
         let mut workbench = Workbench::new();
         let mut nfa = NFA::new();
@@ -1978,10 +2019,183 @@ mod tests {
     }
 
     #[test]
+    fn handles_converting_concat_regex_to_nfa() {
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Concat(&start, &stop);
+
+        let mut workbench = Workbench::new();
+        let mut nfa = NFA::new();
+
+        let refs = workbench.regex_to_nfa(&regex, &mut nfa);
+
+        // starting at 0 and ending at 1
+        assert_eq!(refs, (0, 1));
+
+        // 16 simple and 5 epsilon transitions are expected
+        assert_eq!(nfa.transition_count(), 15);
+        assert_eq!(nfa.epsilon_count(), 6);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(0, 0), Some((20, 0)));
+        assert_eq!(nfa.epsilon_items_count(20), 1);
+        assert_eq!(nfa.epsilon_items_get(20, 0), 2);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(2, 0), Some((0, 0)));
+        assert_eq!(nfa.epsilon_items_count(0), 1);
+        assert_eq!(nfa.epsilon_items_get(0, 0), 3);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(3, 0), Some((5, 0x02)));
+        assert_eq!(nfa.epsilon_items_count(5), 1);
+        assert_eq!(nfa.epsilon_items_get(5, 0), 4);
+
+        // connects 'start' literal
+        assert_eq!(nfa.transition_find(4, b's'), Some((5, 0x02)));
+        assert_eq!(nfa.transition_find(5, b't'), Some((6, 0x02)));
+        assert_eq!(nfa.transition_find(6, b'a'), Some((7, 0x02)));
+        assert_eq!(nfa.transition_find(7, b'r'), Some((8, 0x02)));
+        assert_eq!(nfa.transition_find(8, b't'), Some((9, 0x00)));
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(9, 0), Some((10, 0)));
+        assert_eq!(nfa.epsilon_items_count(10), 1);
+        assert_eq!(nfa.epsilon_items_get(10, 0), 10);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(10, 0), Some((15, 0x02)));
+        assert_eq!(nfa.epsilon_items_count(15), 1);
+        assert_eq!(nfa.epsilon_items_get(15, 0), 11);
+
+        // connects 'stop' literal
+        assert_eq!(nfa.transition_find(11, b's'), Some((12, 0x02)));
+        assert_eq!(nfa.transition_find(12, b't'), Some((13, 0x02)));
+        assert_eq!(nfa.transition_find(13, b'o'), Some((14, 0x02)));
+        assert_eq!(nfa.transition_find(14, b'p'), Some((15, 0x01)));
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(15, 0), Some((25, 0)));
+        assert_eq!(nfa.epsilon_items_count(25), 1);
+        assert_eq!(nfa.epsilon_items_get(25, 0), 1);
+    }
+
+    #[test]
+    fn handles_converting_repeat_regex_to_nfa() {
+        let mut workbench = Workbench::new();
+        let regex = Regex::Literal(b"stop");
+        let regex = Regex::Repeat(&regex);
+        let mut nfa = NFA::new();
+
+        let refs = workbench.regex_to_nfa(&regex, &mut nfa);
+
+        // starting at 0 and ending at 1
+        assert_eq!(refs, (0, 1));
+
+        // 5 simple transitions are expected with 3 epsilons
+        assert_eq!(nfa.transition_count(), 9);
+        assert_eq!(nfa.epsilon_count(), 5);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(0, 0), Some((16, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(16), 1);
+        assert_eq!(nfa.epsilon_items_get(16, 0), 2);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(2, 0), Some((0, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0), 1);
+        assert_eq!(nfa.epsilon_items_get(0, 0), 3);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(3, 0), Some((11, 0x02)));
+        assert_eq!(nfa.epsilon_items_count(11), 1);
+        assert_eq!(nfa.epsilon_items_get(11, 0), 4);
+
+        // connects 'start' literal
+        assert_eq!(nfa.transition_find(4, b's'), Some((5, 0x02)));
+        assert_eq!(nfa.transition_find(5, b't'), Some((6, 0x02)));
+        assert_eq!(nfa.transition_find(6, b'o'), Some((7, 0x02)));
+        assert_eq!(nfa.transition_find(7, b'p'), Some((8, 0x01)));
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(8, 0), Some((5, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(5), 2);
+        assert_eq!(nfa.epsilon_items_get(5, 0), 9);
+        assert_eq!(nfa.epsilon_items_get(5, 1), 2);
+    }
+
+    #[test]
+    fn handles_converting_optional_regex_to_nfa() {
+        let mut workbench = Workbench::new();
+        let st = Regex::Literal(b"st");
+        let op = Regex::Literal(b"op");
+        let regex = Regex::Optional(&st);
+        let regex = Regex::Concat(&regex, &op);
+        let mut nfa = NFA::new();
+
+        let refs = workbench.regex_to_nfa(&regex, &mut nfa);
+
+        // starting at 0 and ending at 1
+        assert_eq!(refs, (0, 1));
+
+        assert_eq!(nfa.transition_count(), 12);
+        assert_eq!(nfa.epsilon_count(), 7);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(0, 0), Some((26, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(26), 1);
+        assert_eq!(nfa.epsilon_items_get(26, 0), 2);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(2, 0), Some((0, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0), 1);
+        assert_eq!(nfa.epsilon_items_get(0, 0), 3);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(3, 0), Some((5, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(5), 2);
+        assert_eq!(nfa.epsilon_items_get(5, 0), 4);
+        assert_eq!(nfa.epsilon_items_get(5, 1), 8);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(4, 0), Some((11, 0x02)));
+        assert_eq!(nfa.epsilon_items_count(11), 1);
+        assert_eq!(nfa.epsilon_items_get(11, 0), 5);
+
+        // connects 'start' literal
+        assert_eq!(nfa.transition_find(5, b's'), Some((6, 0x02)));
+        assert_eq!(nfa.transition_find(6, b't'), Some((7, 0x00)));
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(7, 0), Some((5, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(5), 2);
+        assert_eq!(nfa.epsilon_items_get(5, 0), 4);
+        assert_eq!(nfa.epsilon_items_get(5, 1), 8);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(8, 0), Some((16, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(16), 1);
+        assert_eq!(nfa.epsilon_items_get(16, 0), 9);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(9, 0), Some((21, 0x02)));
+        assert_eq!(nfa.epsilon_items_count(21), 1);
+        assert_eq!(nfa.epsilon_items_get(21, 0), 10);
+
+        assert_eq!(nfa.transition_find(10, b'o'), Some((11, 0x02)));
+        assert_eq!(nfa.transition_find(11, b'p'), Some((12, 0x01)));
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(12, 0), Some((31, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(31), 1);
+        assert_eq!(nfa.epsilon_items_get(31, 0), 1);
+    }
+
+    #[test]
     fn handles_closing_nfa_from_epsilon_state() {
-        let start = Regex::Lit(b"start");
-        let stop = Regex::Lit(b"stop");
-        let regex = Regex::Or(&start, &stop);
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Either(&start, &stop);
 
         let mut nfa = NFA::new();
         let mut workbench = Workbench::new();
@@ -2006,9 +2220,9 @@ mod tests {
 
     #[test]
     fn handles_closing_nfa_from_non_epsilon_state() {
-        let start = Regex::Lit(b"start");
-        let stop = Regex::Lit(b"stop");
-        let regex = Regex::Or(&start, &stop);
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Either(&start, &stop);
 
         let mut nfa = NFA::new();
         let mut workbench = Workbench::new();
@@ -2032,9 +2246,9 @@ mod tests {
 
     #[test]
     fn handles_recording_nfa_state_not_repeated() {
-        let start = Regex::Lit(b"start");
-        let stop = Regex::Lit(b"stop");
-        let regex = Regex::Or(&start, &stop);
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Either(&start, &stop);
 
         let mut workbench = Workbench::new();
         let mut nfa = NFA::new();
@@ -2053,9 +2267,9 @@ mod tests {
 
     #[test]
     fn handles_recording_nfa_state_repeated() {
-        let start = Regex::Lit(b"start");
-        let stop = Regex::Lit(b"stop");
-        let regex = Regex::Or(&start, &stop);
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Either(&start, &stop);
 
         let mut workbench = Workbench::new();
         let mut nfa = NFA::new();
@@ -2078,19 +2292,16 @@ mod tests {
     }
 
     #[test]
-    fn handles_converting_nfa_to_dfa_or() {
-        let start = Regex::Lit(b"start");
-        let stop = Regex::Lit(b"stop");
-        let regex = Regex::Or(&start, &stop);
+    fn handles_converting_nfa_to_dfa_either() {
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Either(&start, &stop);
 
         let mut workbench = Workbench::new();
         let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
 
         workbench.regex_to_nfa(&regex, &mut nfa);
         workbench.nfa_to_dfa(&nfa, &mut dfa);
-
-        nfa.print();
-        dfa.print();
 
         assert_eq!(dfa.transition_count(), 7);
 
@@ -2104,17 +2315,40 @@ mod tests {
     }
 
     #[test]
-    fn handles_converting_nfa_to_dfa_rep() {
-        let stop = Regex::Lit(b"stop");
-        let regex = Regex::Rep(&stop);
+    fn handles_converting_nfa_to_dfa_concat() {
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Concat(&start, &stop);
 
         let mut workbench = Workbench::new();
         let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
 
         workbench.regex_to_nfa(&regex, &mut nfa);
         workbench.nfa_to_dfa(&nfa, &mut dfa);
-        dfa.print();
-        nfa.print();
+
+        assert_eq!(dfa.transition_count(), 9);
+
+        assert_eq!(dfa.transition_find(0, b's'), Some((1, 0x00)));
+        assert_eq!(dfa.transition_find(1, b't'), Some((2, 0x00)));
+        assert_eq!(dfa.transition_find(2, b'a'), Some((3, 0x00)));
+        assert_eq!(dfa.transition_find(3, b'r'), Some((4, 0x00)));
+        assert_eq!(dfa.transition_find(4, b't'), Some((5, 0x00)));
+        assert_eq!(dfa.transition_find(5, b's'), Some((6, 0x00)));
+        assert_eq!(dfa.transition_find(6, b't'), Some((7, 0x00)));
+        assert_eq!(dfa.transition_find(7, b'o'), Some((8, 0x00)));
+        assert_eq!(dfa.transition_find(8, b'p'), Some((9, 0x01)));
+    }
+
+    #[test]
+    fn handles_converting_nfa_to_dfa_repeat() {
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Repeat(&stop);
+
+        let mut workbench = Workbench::new();
+        let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
+
+        workbench.regex_to_nfa(&regex, &mut nfa);
+        workbench.nfa_to_dfa(&nfa, &mut dfa);
 
         assert_eq!(dfa.transition_count(), 4);
 
@@ -2125,10 +2359,11 @@ mod tests {
     }
 
     #[test]
-    fn handles_traversing_dfa_or_positive() {
-        let start = Regex::Lit(b"start");
-        let stop = Regex::Lit(b"stop");
-        let regex = Regex::Or(&start, &stop);
+    fn handles_converting_nfa_to_dfa_optional() {
+        let st = Regex::Literal(b"st");
+        let op = Regex::Literal(b"op");
+        let regex = Regex::Optional(&st);
+        let regex = Regex::Concat(&regex, &op);
 
         let mut workbench = Workbench::new();
         let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
@@ -2136,18 +2371,19 @@ mod tests {
         workbench.regex_to_nfa(&regex, &mut nfa);
         workbench.nfa_to_dfa(&nfa, &mut dfa);
 
-        // expect final state 7 at 5th character
-        assert_eq!(dfa.traverse(b"start", 0), (7, 5));
+        assert_eq!(dfa.transition_count(), 4);
 
-        // expect final state 6 at 4th character
-        assert_eq!(dfa.traverse(b"stop", 0), (6, 4));
+        assert_eq!(dfa.transition_find(0, b'o'), Some((1, 0x00)));
+        assert_eq!(dfa.transition_find(0, b's'), Some((2, 0x00)));
+        assert_eq!(dfa.transition_find(1, b'p'), Some((3, 0x01)));
+        assert_eq!(dfa.transition_find(2, b't'), Some((0, 0x00)));
     }
 
     #[test]
-    fn handles_traversing_dfa_or_negative() {
-        let start = Regex::Lit(b"start");
-        let stop = Regex::Lit(b"stop");
-        let regex = Regex::Or(&start, &stop);
+    fn handles_traversing_dfa_or() {
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Either(&start, &stop);
 
         let mut workbench = Workbench::new();
         let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
@@ -2155,19 +2391,40 @@ mod tests {
         workbench.regex_to_nfa(&regex, &mut nfa);
         workbench.nfa_to_dfa(&nfa, &mut dfa);
 
-        // expect failed state 4 at 2nd character, because of 'r'
-        assert_eq!(dfa.traverse(b"stort", 0), (4, 2));
+        assert_eq!(dfa.traverse(b"start", 0), Some((7, 4)));
+        assert_eq!(dfa.traverse(b"stop", 0), Some((6, 3)));
 
-        // expect failed state 3 at 2nd character, because of 'p'
-        assert_eq!(dfa.traverse(b"stap", 0), (3, 2));
+        assert_eq!(dfa.traverse(b"stort", 0), None);
+        assert_eq!(dfa.traverse(b"stap", 0), None);
     }
 
     #[test]
-    fn handles_traversing_dfa_rep_positive() {
-        let start = Regex::Lit(b"start");
-        let stop = Regex::Lit(b"stop");
-        let regex = Regex::Or(&start, &stop);
-        let regex = Regex::Rep(&regex);
+    fn handles_traversing_dfa_repeat() {
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Either(&start, &stop);
+        let regex = Regex::Repeat(&regex);
+
+        let mut workbench = Workbench::new();
+        let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
+
+        workbench.regex_to_nfa(&regex, &mut nfa);
+        workbench.nfa_to_dfa(&nfa, &mut dfa);
+
+        assert_eq!(dfa.traverse(b"start", 0), Some((0, 4)));
+        assert_eq!(dfa.traverse(b"stop", 0), Some((0, 3)));
+        assert_eq!(dfa.traverse(b"startsta", 0), Some((0, 4)));
+        assert_eq!(dfa.traverse(b"stopsto", 0), Some((0, 3)));
+        assert_eq!(dfa.traverse(b"startstop", 0), Some((0, 8)));
+        assert_eq!(dfa.traverse(b"stopstart", 0), Some((0, 8)));
+    }
+
+    #[test]
+    fn handles_traversing_dfa_optional() {
+        let start = Regex::Literal(b"start");
+        let start = Regex::Optional(&start);
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Concat(&start, &stop);
 
         let mut workbench = Workbench::new();
         let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
@@ -2178,22 +2435,30 @@ mod tests {
         nfa.print();
         dfa.print();
 
-        // expect final state 7 at 5th character
-        assert_eq!(dfa.traverse(b"start", 0), (0, 5));
-
-        // expect final state 6 at 4th character
-        assert_eq!(dfa.traverse(b"stop", 0), (0, 4));
-
-        // expect final state 7 at 5th character
-        assert_eq!(dfa.traverse(b"startsta", 0), (0, 5));
-
-        // expect final state 6 at 4th character
-        assert_eq!(dfa.traverse(b"stopsto", 0), (0, 4));
-
-        // expect final state 19 at 9th character
-        assert_eq!(dfa.traverse(b"startstop", 0), (0, 9));
-
-        // expect final state 20 at 9th character
-        assert_eq!(dfa.traverse(b"stopstart", 0), (0, 9));
+        assert_eq!(dfa.traverse(b"start", 0), None);
+        assert_eq!(dfa.traverse(b"stop", 0), Some((6, 3)));
+        assert_eq!(dfa.traverse(b"startsta", 0), None);
+        assert_eq!(dfa.traverse(b"stopsto", 0), Some((6, 3)));
+        assert_eq!(dfa.traverse(b"startstop", 0), Some((6, 8)));
+        assert_eq!(dfa.traverse(b"stopstart", 0), Some((6, 3)));
     }
+
+    #[test]
+    fn handles_traversing_dfa_concat() {
+        let start = Regex::Literal(b"start");
+        let stop = Regex::Literal(b"stop");
+        let regex = Regex::Concat(&start, &stop);
+
+        let mut workbench = Workbench::new();
+        let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
+
+        workbench.regex_to_nfa(&regex, &mut nfa);
+        workbench.nfa_to_dfa(&nfa, &mut dfa);
+
+        assert_eq!(dfa.traverse(b"start", 0), None);
+        assert_eq!(dfa.traverse(b"stop", 0), None);
+        assert_eq!(dfa.traverse(b"startsta", 0), None);
+        assert_eq!(dfa.traverse(b"startstop", 0), Some((9, 8)));
+    }
+
 }
