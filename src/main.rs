@@ -1088,7 +1088,7 @@ impl DFA {
 struct Workbench {
     worklist: Collection<4096, GuardWrapping>,
     closures: Collection<4096, GuardSegfault>,
-    intervals: Collection<4096, GuardDisabled>,
+    intervals: Collection<4096, GuardWrapping>,
 }
 
 impl Workbench {
@@ -1409,7 +1409,7 @@ impl Workbench {
     }
 
     fn merge_intervals(&mut self, worklist: u16, nfa: &NFA) -> u16 {
-        let intervals =self.intervals.list_push_head();
+        let deltas = self.intervals.list_push_head();
 
         for off in 1..self.worklist.list_items_count(worklist) {
             let idx = self.worklist.list_items_get(worklist, off);
@@ -1420,15 +1420,42 @@ impl Workbench {
                     let val = nfa.transition_at(idx);
                     let (from, to) = (val.1.0 as u16, val.1.1 as u16);
 
-                    let encoded = from.rotate_left(8).wrapping_add(to);
-                    self.intervals.list_items_add(intervals, encoded);
+                    if from > 0 {
+                        self.intervals.list_items_add(deltas, from.rotate_left(8).wrapping_add(0x00));
+                        self.intervals.list_items_add(deltas, to.rotate_left(8).wrapping_add(0x01));
+                    }
                 }
             }
         }
 
-        self.intervals.list_items_sort(intervals);
-        self.intervals.list_items_distinct(intervals);
+        self.intervals.list_items_sort(deltas);
 
+        let intervals = self.intervals.list_push_head();
+        let count = self.intervals.list_items_count(deltas);
+        let (mut depth, mut current) = (0u16, 0u16);
+
+        for off in 0..count {
+            let val = self.intervals.list_items_get(deltas, off);
+
+            if depth == 0 {
+                current = val & 0xff00;
+            }
+
+            if val & 0x01 == 0x00 {
+                depth = depth.wrapping_add(1);
+            } else {
+                depth = depth.wrapping_sub(1);
+            }
+
+            if depth == 0 {
+                self.intervals.list_items_add(intervals, current.wrapping_add(val.shr(8)));
+            }
+        }
+
+        println!("intervals");
+        self.intervals.print();
+
+        self.intervals.list_pop_tail();
         intervals
     }
 
@@ -1466,7 +1493,7 @@ impl Workbench {
                 self.nfa_iteration(current, nfa, (from, to), dfa);
             }
 
-            self.intervals.list_pop_head();
+            self.intervals.list_pop_tail();
 
             println!("closures, used={}", self.closures.usage());
             self.closures.print();
