@@ -878,14 +878,14 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Graph<SIZE, GUARD> {
             while low > 0 {
                 low = match self.graph_at(low.wrapping_sub(1)) {
                     (val, _, _, _) if val == src && low > 0 => low.wrapping_sub(1),
-                    _ => break
+                    _ => break,
                 };
             }
 
             while high < self.head {
                 high = match self.graph_at(high.wrapping_add(1)) {
                     (val, _, _, _) if val == src && high < self.head => high.wrapping_add(1),
-                    _ => break
+                    _ => break,
                 };
             }
 
@@ -1418,11 +1418,13 @@ impl Workbench {
             if let Some(range) = range {
                 for idx in range.0..=range.1 {
                     let val = nfa.transition_at(idx);
-                    let (from, to) = (val.1.0 as u16, val.1.1 as u16);
+                    let (from, to) = (val.1 .0 as u16, val.1 .1 as u16);
 
                     if from > 0 {
-                        self.intervals.list_items_add(deltas, from.rotate_left(8).wrapping_add(0x00));
-                        self.intervals.list_items_add(deltas, to.rotate_left(8).wrapping_add(0x01));
+                        self.intervals
+                            .list_items_add(deltas, from.rotate_left(8).wrapping_add(0x00));
+                        self.intervals
+                            .list_items_add(deltas, to.rotate_left(8).wrapping_add(0x01));
                     }
                 }
             }
@@ -1448,7 +1450,8 @@ impl Workbench {
             }
 
             if depth == 0 {
-                self.intervals.list_items_add(intervals, current.wrapping_add(val.shr(8)));
+                self.intervals
+                    .list_items_add(intervals, current.wrapping_add(val.shr(8)));
             }
         }
 
@@ -2704,5 +2707,52 @@ mod tests {
         assert_eq!(dfa.traverse(b"stop", 0), None);
         assert_eq!(dfa.traverse(b"startsta", 0), None);
         assert_eq!(dfa.traverse(b"startstop", 0), Some((9, 8)));
+    }
+
+    #[test]
+    fn handles_dividing_by_three() {
+        let zero = Regex::Literal(b"0");
+        let one = Regex::Literal(b"1");
+
+        let one_plus = Regex::Repeat(&one);
+        let one_plus = Regex::Optional(&one_plus);
+
+        let double = Regex::Literal(b"00");
+        let double = Regex::Repeat(&double);
+        let double = Regex::Optional(&double);
+
+        let concat = Regex::Concat(&zero, &one_plus);
+        let concat = Regex::Concat(&concat, &double);
+        let concat = Regex::Concat(&concat, &zero);
+        let concat = Regex::Repeat(&concat);
+        let concat = Regex::Optional(&concat);
+
+        let concat = Regex::Concat(&one, &concat);
+        let concat = Regex::Concat(&concat, &one);
+        let concat = Regex::Repeat(&concat);
+        let concat = Regex::Optional(&concat);
+
+        let either = Regex::Either(&zero, &concat);
+        let either = Regex::Repeat(&either);
+        let either = Regex::Optional(&either);
+
+        let mut workbench = Workbench::new();
+        let mut nfa = NFA::new();
+        let mut dfa = DFA::new();
+
+        workbench.regex_to_nfa(&either, &mut nfa);
+        workbench.nfa_to_dfa(&nfa, &mut dfa);
+
+        for num in 0..1000000 {
+            let binary = format!("{:b}", num);
+            let bytes = binary.as_bytes();
+
+            let result = match dfa.traverse(bytes, 0) {
+                Some((_, idx)) => idx,
+                _ => return assert!(num % 3 != 0),
+            };
+
+            assert_eq!(result, bytes.len() - 1);
+        }
     }
 }
