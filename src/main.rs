@@ -1,14 +1,14 @@
 use std::{arch::*, marker::PhantomData, ops::Shr, ptr};
 
 fn main() {
-    let start = Regex::Literal(b"start");
-    let stop = Regex::Literal(b"stop");
-    let stopper = Regex::Literal(b"stopper");
+    let start = Regex::Literal(b"ab");
+    let stop = Regex::Literal(b"ac");
+    let stopper = Regex::Literal(b"acd");
     let regex = Regex::Either(&start, &stop);
     let regex = Regex::Either(&regex, &stopper);
     let regex = Regex::Repeat(&regex);
-    let regex  = Regex::Optional(&regex);
-    let pipe= Regex::Literal(b"|");
+    let regex = Regex::Optional(&regex);
+    let pipe = Regex::Class(b'0', b'9');
     let regex = Regex::Concat(&regex, &pipe);
 
     let mut workbench = Workbench::new();
@@ -27,6 +27,7 @@ fn main() {
 
 enum Regex<'a> {
     Literal(&'a [u8]),
+    Class(u8, u8),
     Either(&'a Regex<'a>, &'a Regex<'a>),
     Concat(&'a Regex<'a>, &'a Regex<'a>),
     Repeat(&'a Regex<'a>),
@@ -849,6 +850,51 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Graph<SIZE, GUARD> {
         None
     }
 
+    fn graph_find_all(&self, src: u16) -> Option<(u16, u16)> {
+        let mut low = 0i32;
+        let mut high = self.head as i32;
+        let mut found = None;
+
+        while low <= high {
+            let idx = low + (high - low) / 2;
+            let val = self.graph_at(idx as u16);
+
+            if src == val.0 {
+                found = Some(idx as u16);
+                break;
+            } else {
+                if src > val.0 {
+                    low = idx.wrapping_add(1);
+                } else {
+                    high = idx.wrapping_sub(1);
+                }
+            }
+        }
+
+        if let Some(idx) = found {
+            let (mut low, mut high) = (idx, idx);
+            let (src, _, _, _) = self.graph_at(idx as u16);
+
+            while low > 0 {
+                low = match self.graph_at(low.wrapping_sub(1)) {
+                    (val, _, _, _) if val == src && low > 0 => low.wrapping_sub(1),
+                    _ => break
+                };
+            }
+
+            while high < self.head {
+                high = match self.graph_at(high.wrapping_add(1)) {
+                    (val, _, _, _) if val == src && high < self.head => high.wrapping_add(1),
+                    _ => break
+                };
+            }
+
+            return Some((low, high));
+        }
+
+        None
+    }
+
     fn graph_print(&self) {
         for idx in 0..self.head {
             let at = self.graph_at(idx);
@@ -887,6 +933,10 @@ impl NFA {
 
     fn transition_find(&self, src: u16, via: u8) -> Option<(u16, u16)> {
         self.transitions.graph_find(src, via)
+    }
+
+    fn transition_find_all(&self, src: u16) -> Option<(u16, u16)> {
+        self.transitions.graph_find_all(src)
     }
 
     fn transition_inc(&mut self) -> u16 {
@@ -1037,7 +1087,8 @@ impl DFA {
 
 struct Workbench {
     worklist: Collection<4096, GuardWrapping>,
-    closures: Collection<4096, GuardDisabled>,
+    closures: Collection<4096, GuardSegfault>,
+    intervals: Collection<4096, GuardDisabled>,
 }
 
 impl Workbench {
@@ -1045,6 +1096,7 @@ impl Workbench {
         Self {
             worklist: Collection::new(),
             closures: Collection::new(),
+            intervals: Collection::new(),
         }
     }
 
@@ -1106,6 +1158,21 @@ impl Workbench {
 
                     (zero, last)
                 }
+                Regex::Class(from, to) => {
+                    let zero = nfa.next();
+                    let first = nfa.next();
+
+                    let last = nfa.next();
+                    let eps = nfa.epsilon_new();
+
+                    nfa.epsilon_items_add(eps, first);
+                    nfa.transition_add(zero, (0, 0), eps, 0x02);
+
+                    let meta = if accepting { 0x01 } else { 0x00 };
+                    nfa.transition_add(first, (*from, *to), last, meta);
+
+                    (zero, last)
+                }
                 Regex::Either(left, right) => {
                     let first = nfa.next();
 
@@ -1132,7 +1199,7 @@ impl Workbench {
                     nfa.epsilon_items_set(ep3, 0, last);
 
                     (first, last)
-                },
+                }
                 Regex::Concat(left, right) => {
                     let first = nfa.next();
                     let ep1 = nfa.epsilon_new();
@@ -1171,7 +1238,7 @@ impl Workbench {
                     nfa.epsilon_items_set(ep2, 1, first);
 
                     (first, last)
-                },
+                }
                 Regex::Optional(target) => {
                     let first = nfa.next();
                     let ep1 = nfa.epsilon_new();
@@ -1189,7 +1256,7 @@ impl Workbench {
                     nfa.epsilon_items_set(ep1, 1, last);
 
                     (first, last)
-                },
+                }
             }
         }
 
@@ -1306,6 +1373,65 @@ impl Workbench {
         self.closures_items_get(closure, length)
     }
 
+    fn nfa_iteration(&mut self, current: u16, nfa: &NFA, via: (u8, u8), dfa: &mut DFA) {
+        let dst = dfa.next();
+        let mut accepting = 0x00;
+        let worklist = self.worklist.list_push_head();
+
+        let size = self.worklist.list_items_count(current);
+        let src = self.worklist.list_items_get(current, 0);
+
+        // add NFA's dst state
+        self.worklist.list_items_add(worklist, dst);
+
+        // let's try to add a valid transition
+        for idx in 1..size {
+            let src = self.worklist.list_items_get(current, idx);
+            if let Some((dst, meta)) = nfa.transition_find(src, via.0) {
+                let dst = if meta & 0x02 == 0x02 { dst } else { dst | 0x8000 };
+                self.worklist.list_items_add(worklist, dst);
+                accepting = accepting | (meta & 0x01);
+            }
+        }
+
+        // if working list contains any state
+        if self.worklist.list_items_count(worklist) > 1 {
+            let target = self.nfa_record_state(nfa, 0, worklist);
+            dfa.transition_add(src, (via.0, via.1), target, accepting);
+
+            if target != dst {
+                dfa.next_revert();
+            }
+        } else {
+            dfa.next_revert();
+            self.worklist.list_pop_head();
+        }
+    }
+
+    fn merge_intervals(&mut self, worklist: u16, nfa: &NFA) -> u16 {
+        let intervals =self.intervals.list_push_head();
+
+        for off in 1..self.worklist.list_items_count(worklist) {
+            let idx = self.worklist.list_items_get(worklist, off);
+            let range = nfa.transition_find_all(idx);
+
+            if let Some(range) = range {
+                for idx in range.0..=range.1 {
+                    let val = nfa.transition_at(idx);
+                    let (from, to) = (val.1.0 as u16, val.1.1 as u16);
+
+                    let encoded = from.rotate_left(8).wrapping_add(to);
+                    self.intervals.list_items_add(intervals, encoded);
+                }
+            }
+        }
+
+        self.intervals.list_items_sort(intervals);
+        self.intervals.list_items_distinct(intervals);
+
+        intervals
+    }
+
     fn nfa_to_dfa(&mut self, nfa: &NFA, dfa: &mut DFA) {
         let starting = dfa.next();
         let states = self.states_new();
@@ -1331,40 +1457,16 @@ impl Workbench {
             // pop a list from the worklist, each worklist contains at 0 the source state id
             // the remaining items are reachable from the state id via epsilon
             let current = self.worklist.list_pop_tail();
-            let src = self.worklist.list_items_get(current, 0);
+            let intervals = self.merge_intervals(current, nfa);
 
-            for via in 1..=255 {
-                // next DFA transition and new working list
-                let dst = dfa.next();
-                let mut accepting = 0x00;
-                let worklist = self.worklist.list_push_head();
+            for off in 0..self.intervals.list_items_count(intervals) {
+                let encoded = self.intervals.list_items_get(intervals, off);
+                let (from, to) = (encoded.shr(8) as u8, (encoded & 0xff) as u8);
 
-                // add NFA's dst state
-                self.worklist.list_items_add(worklist, dst);
-
-                // let's try to add a valid transition
-                for idx in 1..self.worklist.list_items_count(current) {
-                    let src = self.worklist.list_items_get(current, idx);
-                    if let Some((dst, meta)) = nfa.transition_find(src, via) {
-                        let dst = if meta & 0x02 == 0x02 { dst } else { dst | 0x8000 };
-                        self.worklist.list_items_add(worklist, dst);
-                        accepting = accepting | (meta & 0x01);
-                    }
-                }
-
-                // if working list contains any state
-                if self.worklist.list_items_count(worklist) > 1 {
-                    let target = self.nfa_record_state(nfa, states, worklist);
-                    dfa.transition_add(src, (via, via), target, accepting);
-
-                    if target != dst {
-                        dfa.next_revert();
-                    }
-                } else {
-                    dfa.next_revert();
-                    self.worklist.list_pop_head();
-                }
+                self.nfa_iteration(current, nfa, (from, to), dfa);
             }
+
+            self.intervals.list_pop_head();
 
             println!("closures, used={}", self.closures.usage());
             self.closures.print();
@@ -1917,6 +2019,52 @@ mod tests {
     }
 
     #[test]
+    fn handles_finding_all_existing_nodes_in_a_graph() {
+        let mut graph = Graph::<4096, GuardDisabled>::new();
+
+        graph.graph_add(13, (65, 66), 17, 97);
+        graph.graph_add(17, (0, 0), 29, 98);
+        graph.graph_add(29, (32, 32), 31, 99);
+
+        assert_eq!(graph.graph_find_all(13), Some((0, 0)));
+        assert_eq!(graph.graph_find_all(17), Some((1, 1)));
+        assert_eq!(graph.graph_find_all(29), Some((2, 2)));
+    }
+
+    #[test]
+    fn handles_finding_all_non_existing_nodes_in_a_graph() {
+        let mut graph = Graph::<4096, GuardDisabled>::new();
+
+        graph.graph_add(13, (65, 66), 17, 0);
+        graph.graph_add(17, (0, 0), 29, 0);
+        graph.graph_add(29, (32, 32), 31, 0);
+
+        assert_eq!(graph.graph_find_all(12), None);
+        assert_eq!(graph.graph_find_all(14), None);
+        assert_eq!(graph.graph_find_all(15), None);
+        assert_eq!(graph.graph_find_all(18), None);
+        assert_eq!(graph.graph_find_all(28), None);
+        assert_eq!(graph.graph_find_all(30), None);
+    }
+
+    #[test]
+    fn handles_finding_all_existing_nodes_in_a_graph_seen_multiple_times() {
+        let mut graph = Graph::<4096, GuardDisabled>::new();
+
+        graph.graph_add(13, (65, 66), 17, 97);
+        graph.graph_add(13, (90, 99), 17, 97);
+        graph.graph_add(17, (0, 0), 29, 98);
+        graph.graph_add(17, (99, 99), 29, 98);
+        graph.graph_add(29, (32, 32), 31, 99);
+        graph.graph_add(29, (34, 33), 31, 99);
+        graph.graph_add(29, (36, 36), 31, 99);
+
+        assert_eq!(graph.graph_find_all(13), Some((0, 1)));
+        assert_eq!(graph.graph_find_all(17), Some((2, 3)));
+        assert_eq!(graph.graph_find_all(29), Some((4, 6)));
+    }
+
+    #[test]
     fn handles_converting_literal_regex_to_nfa() {
         let mut workbench = Workbench::new();
         let regex = Regex::Literal(b"start");
@@ -1924,10 +2072,7 @@ mod tests {
 
         let refs = workbench.regex_to_nfa(&regex, &mut nfa);
 
-        // starting at 0 and ending at 1
         assert_eq!(refs, (0, 1));
-
-        // 5 simple transitions are expected with 3 epsilons
         assert_eq!(nfa.transition_count(), 8);
         assert_eq!(nfa.epsilon_count(), 3);
 
@@ -1947,6 +2092,51 @@ mod tests {
         assert_eq!(nfa.transition_find(5, b'a'), Some((6, 0x02)));
         assert_eq!(nfa.transition_find(6, b'r'), Some((7, 0x02)));
         assert_eq!(nfa.transition_find(7, b't'), Some((8, 0x01)));
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(8, 0), Some((10, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(10), 1);
+        assert_eq!(nfa.epsilon_items_get(10, 0), 1);
+    }
+
+    #[test]
+    fn handles_converting_class_regex_to_nfa() {
+        let mut workbench = Workbench::new();
+        let regex = Regex::Class(b'0', b'9');
+        let mut nfa = NFA::new();
+
+        let refs = workbench.regex_to_nfa(&regex, &mut nfa);
+
+        assert_eq!(refs, (0, 1));
+        assert_eq!(nfa.transition_count(), 4);
+        assert_eq!(nfa.epsilon_count(), 3);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(0, 0), Some((5, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(5), 1);
+        assert_eq!(nfa.epsilon_items_get(5, 0), 2);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(2, 0), Some((0, 0x02)));
+        assert_eq!(nfa.epsilon_items_count(0), 1);
+        assert_eq!(nfa.epsilon_items_get(0, 0), 3);
+
+        // connects 'start' literal
+        assert_eq!(nfa.transition_find(3, b'0'), Some((4, 0x01)));
+        assert_eq!(nfa.transition_find(3, b'1'), Some((4, 0x01)));
+        assert_eq!(nfa.transition_find(3, b'2'), Some((4, 0x01)));
+        assert_eq!(nfa.transition_find(3, b'3'), Some((4, 0x01)));
+        assert_eq!(nfa.transition_find(3, b'4'), Some((4, 0x01)));
+        assert_eq!(nfa.transition_find(3, b'5'), Some((4, 0x01)));
+        assert_eq!(nfa.transition_find(3, b'6'), Some((4, 0x01)));
+        assert_eq!(nfa.transition_find(3, b'7'), Some((4, 0x01)));
+        assert_eq!(nfa.transition_find(3, b'8'), Some((4, 0x01)));
+        assert_eq!(nfa.transition_find(3, b'9'), Some((4, 0x01)));
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(4, 0), Some((10, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(10), 1);
+        assert_eq!(nfa.epsilon_items_get(10, 0), 1);
     }
 
     #[test]
@@ -2380,7 +2570,35 @@ mod tests {
     }
 
     #[test]
-    fn handles_traversing_dfa_or() {
+    fn handles_converting_nfa_to_dfa_class() {
+        let digits = Regex::Class(b'0', b'9');
+        let regex = Regex::Repeat(&digits);
+
+        let mut workbench = Workbench::new();
+        let (mut nfa, mut dfa) = (NFA::new(), DFA::new());
+
+        workbench.regex_to_nfa(&regex, &mut nfa);
+        workbench.nfa_to_dfa(&nfa, &mut dfa);
+
+        nfa.print();
+        dfa.print();
+
+        assert_eq!(dfa.transition_count(), 1);
+
+        assert_eq!(dfa.transition_find(0, b'0'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(0, b'1'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(0, b'2'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(0, b'3'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(0, b'4'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(0, b'5'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(0, b'6'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(0, b'7'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(0, b'8'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(0, b'9'), Some((0, 0x01)));
+    }
+
+    #[test]
+    fn handles_traversing_dfa_either() {
         let start = Regex::Literal(b"start");
         let stop = Regex::Literal(b"stop");
         let regex = Regex::Either(&start, &stop);
@@ -2460,5 +2678,4 @@ mod tests {
         assert_eq!(dfa.traverse(b"startsta", 0), None);
         assert_eq!(dfa.traverse(b"startstop", 0), Some((9, 8)));
     }
-
 }
