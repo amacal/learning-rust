@@ -7,7 +7,7 @@ pub trait StackLike {}
 pub struct Array<LIKE, T, const SIZE: usize, GUARD: Guard<T, SIZE>> {
     heap: Heap<T, SIZE, GUARD>,
     like: PhantomData<LIKE>,
-    head: usize,
+    head: u16,
 }
 
 impl<LIKE, T, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<LIKE, T, SIZE, GUARD> {
@@ -31,7 +31,7 @@ impl<LIKE: StackLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<L
         self.heap.get0(self.head)
     }
 
-    pub fn stack_size(&self) -> usize {
+    pub fn stack_size(&self) -> u16 {
         self.head
     }
 
@@ -41,16 +41,16 @@ impl<LIKE: StackLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<L
 
     #[cfg(test)]
     pub fn as_bytes(&self) -> &[T] {
-        self.heap.as_bytes(self.stack_size())
+        self.heap.as_bytes(self.stack_size().into())
     }
 }
 
 impl<LIKE: ArrayLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<LIKE, T, SIZE, GUARD> {
-    pub fn array_get(&self, off: usize) -> T {
+    pub fn array_get(&self, off: u16) -> T {
         self.heap.get0(off)
     }
 
-    pub fn array_set(&mut self, off: usize, val: T) {
+    pub fn array_set(&mut self, off: u16, val: T) {
         self.heap.set0(val, off);
     }
 }

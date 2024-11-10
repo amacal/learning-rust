@@ -5,15 +5,35 @@ use super::lexer::*;
 struct ElementsMarker;
 struct OperatorsMarker;
 
+impl ArrayLike for ElementsMarker {}
 impl StackLike for ElementsMarker {}
 impl StackLike for OperatorsMarker {}
 
-struct RegexRpn<const SIZE: usize>(Array<ElementsMarker, u8, SIZE, GuardSegfault>);
+pub struct RPN<const SIZE: usize>(Array<ElementsMarker, u8, SIZE, GuardSegfault>);
 
-impl<const SIZE: usize> RegexRpn<SIZE> {
+impl<const SIZE: usize> RPN<SIZE> {
+    #[cfg(test)]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let mut elements = Array::new();
+
+        for &val in bytes.iter() {
+            elements.stack_push(val);
+        }
+
+        Self(elements)
+    }
+
     #[cfg(test)]
     fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
+    }
+
+    pub fn size(&self) -> u16 {
+        self.0.stack_size()
+    }
+
+    pub fn at(&self, off: u16) -> u8 {
+        self.0.array_get(off)
     }
 }
 
@@ -30,15 +50,15 @@ impl<const SIZE: usize> Builder<SIZE> {
         }
     }
 
-    fn build(mut self, input: *const u8) -> Option<RegexRpn<SIZE>> {
-        let mut tokenizer = Tokenizer::new(input);
+    fn build(mut self, input: *const u8) -> Option<RPN<SIZE>> {
+        let mut lexer = Lexer::new(input);
         let mut in_character = false;
         let mut in_classes = false;
         let mut classes_depth = 0;
 
         loop {
             if in_classes {
-                let token = tokenizer.next_in_class();
+                let token = lexer.next_in_class();
 
                 match token {
                     (0, _) => break,
@@ -74,7 +94,7 @@ impl<const SIZE: usize> Builder<SIZE> {
                     }
                 }
             } else {
-                let token = if let Some(token) = tokenizer.next_in_group() {
+                let token = if let Some(token) = lexer.next_in_group() {
                     unsafe { (*token.0, token.0, token.1) }
                 } else {
                     break;
@@ -153,7 +173,7 @@ impl<const SIZE: usize> Builder<SIZE> {
             self.elements.stack_push(val);
         }
 
-        Some(RegexRpn(self.elements))
+        Some(RPN(self.elements))
     }
 }
 
@@ -162,7 +182,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn handles_rpn_from_seq_one_character() {
+    fn handles_rpn_from_seq_of_one_character() {
         let regex = b"a\0".as_ptr();
         let builder = Builder::<4096>::new();
 
@@ -175,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn handles_rpn_from_seq_two_characters() {
+    fn handles_rpn_from_seq_of_two_characters() {
         let regex = b"ab\0".as_ptr();
         let builder = Builder::<4096>::new();
 
@@ -188,7 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn handles_rpn_from_seq_alphabet() {
+    fn handles_rpn_from_seq_of_alphabet() {
         let regex = b"abcdefghijklmnopqrstuvwxyz\0".as_ptr();
         let builder = Builder::<4096>::new();
 
