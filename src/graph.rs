@@ -38,6 +38,14 @@ impl<const SIZE: usize, GUARD: Guard<u64, SIZE>> Graph<SIZE, GUARD> {
         self.heap.set0(encoded, idx);
     }
 
+    pub fn graph_set_meta(&mut self, idx: u16, metadata: u16) {
+        let value = self.heap.get0(idx);
+        let value = value & 0xffffffff0000ffff;
+        let value = value | (metadata as u64).shl(16);
+
+        self.heap.set0(value, idx);
+    }
+
     pub fn graph_at(&self, idx: u16) -> (u16, (u8, u8), u16, u16) {
         let val = self.heap.get0(idx);
         let src = val.shr(48) as u16;

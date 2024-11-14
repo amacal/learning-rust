@@ -17,7 +17,7 @@ impl<const SIZE: usize> RPN<SIZE> {
         let mut elements = Array::new();
 
         for &val in bytes.iter() {
-            elements.stack_push(val);
+            elements.stack_push_front(val);
         }
 
         Self(elements)
@@ -25,11 +25,11 @@ impl<const SIZE: usize> RPN<SIZE> {
 
     #[cfg(test)]
     fn as_bytes(&self) -> &[u8] {
-        self.0.as_bytes()
+        self.0.as_bytes_front()
     }
 
     pub fn size(&self) -> u16 {
-        self.0.stack_size()
+        self.0.stack_size_front()
     }
 
     pub fn at(&self, off: u16) -> u8 {
@@ -54,6 +54,7 @@ impl<const SIZE: usize> Builder<SIZE> {
         let mut lexer = Lexer::new(input);
         let mut in_character = false;
         let mut in_classes = false;
+        let mut in_negation = false;
         let mut classes_depth = 0;
 
         loop {
@@ -63,33 +64,30 @@ impl<const SIZE: usize> Builder<SIZE> {
                 match token {
                     (0, _) => break,
                     (b'^', _) => {
-                        self.operators.stack_push(b'^');
+                        in_negation = true;
                     }
                     (b']', _) => {
-                        while self.operators.stack_size() > 0 {
-                            match self.operators.stack_peek() {
-                                b'^' => {
-                                    self.operators.stack_pop();
-                                    self.elements.stack_push(b'^');
-                                }
+                        while self.operators.stack_size_front() > 0 {
+                            match self.operators.stack_peek_front() {
                                 b'[' => {
-                                    self.operators.stack_pop();
+                                    self.operators.stack_pop_front();
                                     break;
                                 }
                                 _ => break,
                             }
                         }
 
+                        in_negation = false;
                         in_classes = false;
                     }
                     (from, to) => {
-                        self.elements.stack_push(from);
-                        self.elements.stack_push(to);
-                        self.elements.stack_push(b'-');
+                        self.elements.stack_push_front(if in_negation { b'!' } else { b'-' });
+                        self.elements.stack_push_front(from);
+                        self.elements.stack_push_front(to);
                         classes_depth += 1;
 
                         if classes_depth > 1 {
-                            self.elements.stack_push(b'@');
+                            self.elements.stack_push_front(b'|');
                         }
                     }
                 }
@@ -101,40 +99,46 @@ impl<const SIZE: usize> Builder<SIZE> {
                 };
 
                 match token.0 {
-                    b'(' | b'*' | b'+' | b'?' => {
-                        self.operators.stack_push(token.0);
+                    b'(' | b'+' | b'?' => {
+                        self.operators.stack_push_front(token.0);
                         in_character = false;
                     }
+                    b'*' => {
+                        self.operators.stack_push_front(b'?');
+                        self.operators.stack_push_front(b'+');
+                        in_character = false;
+
+                    }
                     b'[' => {
-                        self.operators.stack_push(token.0);
+                        self.operators.stack_push_front(token.0);
                         in_character = false;
                         in_classes = true;
                         classes_depth = 0;
                     }
                     b'|' => {
-                        while self.operators.stack_size() > 0 {
-                            match self.operators.stack_peek() {
+                        while self.operators.stack_size_front() > 0 {
+                            match self.operators.stack_peek_front() {
                                 b'*' | b'+' | b'?' | b'&' => {
-                                    let token = self.operators.stack_pop();
-                                    self.elements.stack_push(token);
+                                    let token = self.operators.stack_pop_front();
+                                    self.elements.stack_push_front(token);
                                 }
                                 b'(' => break,
                                 _ => {}
                             }
                         }
 
-                        self.operators.stack_push(b'|');
+                        self.operators.stack_push_front(b'|');
                         in_character = false;
                     }
                     b')' => {
-                        while self.operators.stack_size() > 0 {
-                            match self.operators.stack_peek() {
+                        while self.operators.stack_size_front() > 0 {
+                            match self.operators.stack_peek_front() {
                                 b'*' | b'+' | b'?' | b'&' => {
-                                    let token = self.operators.stack_pop();
-                                    self.elements.stack_push(token);
+                                    let token = self.operators.stack_pop_front();
+                                    self.elements.stack_push_front(token);
                                 }
                                 b'(' => {
-                                    self.operators.stack_pop();
+                                    self.operators.stack_pop_front();
                                     break;
                                 }
                                 _ => break,
@@ -144,33 +148,36 @@ impl<const SIZE: usize> Builder<SIZE> {
                         in_character = false;
                     }
                     _ if in_character => {
+                        self.elements.stack_push_front(b'l');
+                        self.elements.stack_push_front(b'0' + token.2);
+
                         for off in 0..token.2 {
                             unsafe {
-                                self.elements.stack_push(*token.1.add(off.into()));
+                                self.elements.stack_push_front(*token.1.add(off.into()));
                             }
                         }
 
-                        self.operators.stack_push(b'&');
-                        self.elements.stack_push(b'0' + token.2);
-                        self.elements.stack_push(b'l');
+                        self.operators.stack_push_front(b'&');
                     }
                     _ => {
+                        self.elements.stack_push_front(b'l');
+                        self.elements.stack_push_front(b'0' + token.2);
+
                         for off in 0..token.2 {
                             unsafe {
-                                self.elements.stack_push(*token.1.add(off.into()));
+                                self.elements.stack_push_front(*token.1.add(off.into()));
                             }
                         }
+
                         in_character = true;
-                        self.elements.stack_push(b'0' + token.2);
-                        self.elements.stack_push(b'l');
                     }
                 }
             }
         }
 
-        while self.operators.stack_size() > 0 {
-            let val = self.operators.stack_pop();
-            self.elements.stack_push(val);
+        while self.operators.stack_size_front() > 0 {
+            let val = self.operators.stack_pop_front();
+            self.elements.stack_push_front(val);
         }
 
         Some(RPN(self.elements))
@@ -191,7 +198,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"a1l");
+        assert_eq!(regex.as_bytes(), b"l1a");
     }
 
     #[test]
@@ -204,7 +211,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"ab2l");
+        assert_eq!(regex.as_bytes(), b"l2ab");
     }
 
     #[test]
@@ -217,7 +224,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"abcdefghi9ljklmnopqr9lstuvwxyz8l&&");
+        assert_eq!(regex.as_bytes(), b"l9abcdefghil9jklmnopqrl8stuvwxyz&&");
     }
 
     #[test]
@@ -230,7 +237,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"a1lb1l|");
+        assert_eq!(regex.as_bytes(), b"l1al1b|");
     }
 
     #[test]
@@ -243,7 +250,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"a1lb1l*&");
+        assert_eq!(regex.as_bytes(), b"l1al1b+?&");
     }
 
     #[test]
@@ -256,7 +263,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"a1lb1l+&");
+        assert_eq!(regex.as_bytes(), b"l1al1b+&");
     }
 
     #[test]
@@ -269,7 +276,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"a1lb1l?&");
+        assert_eq!(regex.as_bytes(), b"l1al1b?&");
     }
 
     #[test]
@@ -282,7 +289,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"abcdefghi9ljkl3l&mnopqrstu9lvwx3l&|");
+        assert_eq!(regex.as_bytes(), b"l9abcdefghil3jkl&l9mnopqrstul3vwx&|");
     }
 
     #[test]
@@ -295,7 +302,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"ab2l*cd2l+|");
+        assert_eq!(regex.as_bytes(), b"l2ab+?l2cd+|");
     }
 
     #[test]
@@ -308,7 +315,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"ab2l*az-+|");
+        assert_eq!(regex.as_bytes(), b"l2ab+?-az+|");
     }
 
     #[test]
@@ -321,7 +328,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"ab2l*az-09-@+|");
+        assert_eq!(regex.as_bytes(), b"l2ab+?-az-09|+|");
     }
 
     #[test]
@@ -334,6 +341,6 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"ab2l*az-09-@^+|");
+        assert_eq!(regex.as_bytes(), b"l2ab+?!az!09|+|");
     }
 }
