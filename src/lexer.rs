@@ -72,48 +72,48 @@ mod tests {
     #[test]
     fn handles_regex_tokenization() {
         let input = b"(ab)*|[a-z_]+|[^abc0-9]+|ab+\0".as_ptr();
-        let mut Lexer = Lexer::new(input);
+        let mut lexer = Lexer::new(input);
 
         unsafe {
-            assert_eq!(Lexer.next_in_group(), Some((input.add(0), 1)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(1), 2)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(3), 1)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(4), 1)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(5), 1)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(6), 1)));
-            assert_eq!(Lexer.next_in_class(), (b'a', b'z'));
-            assert_eq!(Lexer.next_in_class(), (b'_', b'_'));
-            assert_eq!(Lexer.next_in_class(), (b']', 0));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(12), 1)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(13), 1)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(14), 1)));
-            assert_eq!(Lexer.next_in_class(), (b'^', 0));
-            assert_eq!(Lexer.next_in_class(), (b'a', b'a'));
-            assert_eq!(Lexer.next_in_class(), (b'b', b'b'));
-            assert_eq!(Lexer.next_in_class(), (b'c', b'c'));
-            assert_eq!(Lexer.next_in_class(), (b'0', b'9'));
-            assert_eq!(Lexer.next_in_class(), (b']', 0));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(23), 1)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(24), 1)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(25), 1)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(26), 1)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(27), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(0), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(1), 2)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(3), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(4), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(5), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(6), 1)));
+            assert_eq!(lexer.next_in_class(), (b'a', b'z'));
+            assert_eq!(lexer.next_in_class(), (b'_', b'_'));
+            assert_eq!(lexer.next_in_class(), (b']', 0));
+            assert_eq!(lexer.next_in_group(), Some((input.add(12), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(13), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(14), 1)));
+            assert_eq!(lexer.next_in_class(), (b'^', 0));
+            assert_eq!(lexer.next_in_class(), (b'a', b'a'));
+            assert_eq!(lexer.next_in_class(), (b'b', b'b'));
+            assert_eq!(lexer.next_in_class(), (b'c', b'c'));
+            assert_eq!(lexer.next_in_class(), (b'0', b'9'));
+            assert_eq!(lexer.next_in_class(), (b']', 0));
+            assert_eq!(lexer.next_in_group(), Some((input.add(23), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(24), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(25), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(26), 1)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(27), 1)));
 
-            assert_eq!(Lexer.next_in_group(), None);
-            assert_eq!(Lexer.next_in_group(), None);
-            assert_eq!(Lexer.next_in_group(), None);
+            assert_eq!(lexer.next_in_group(), None);
+            assert_eq!(lexer.next_in_group(), None);
+            assert_eq!(lexer.next_in_group(), None);
         }
     }
 
     #[test]
     fn handles_regex_tokenization_long() {
         let input = b"abcdefghijklmnopqrstuvwxyz\0".as_ptr();
-        let mut Lexer = Lexer::new(input);
+        let mut lexer = Lexer::new(input);
 
         unsafe {
-            assert_eq!(Lexer.next_in_group(), Some((input.add(0), 9)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(9), 9)));
-            assert_eq!(Lexer.next_in_group(), Some((input.add(18), 8)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(0), 9)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(9), 9)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(18), 8)));
         }
     }
 }

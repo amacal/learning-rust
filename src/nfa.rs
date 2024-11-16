@@ -7,7 +7,6 @@ use super::list::*;
 use super::rpn::*;
 
 pub struct NFA {
-    counter: u16,
     transitions: Graph<4096, GuardSegfault>,
     epsilons: Collection<4096, GuardSegfault>,
 }
@@ -15,7 +14,6 @@ pub struct NFA {
 impl NFA {
     pub fn new() -> Self {
         Self {
-            counter: 0,
             transitions: Graph::new(),
             epsilons: Collection::new(),
         }
@@ -23,15 +21,13 @@ impl NFA {
 
     fn from(transitions: Graph<4096, GuardSegfault>, epsilons: Collection<4096, GuardSegfault>) -> Self {
         Self {
-            counter: 0,
             transitions: transitions,
             epsilons: epsilons,
         }
     }
 
-    pub fn next(&mut self) -> u16 {
-        self.counter = self.counter.wrapping_add(1);
-        self.counter.wrapping_sub(1)
+    pub fn build<const SIZE: usize>(rpn: RPN<SIZE>) -> Option<Self> {
+        Builder::new().build(rpn)
     }
 
     pub fn transition_count(&self) -> u16 {
@@ -50,52 +46,12 @@ impl NFA {
         self.transitions.graph_find_all(src)
     }
 
-    pub fn transition_inc(&mut self) -> u16 {
-        self.transitions.graph_inc()
-    }
-
-    pub fn transition_add(&mut self, src: u16, via: (u8, u8), dst: u16, metadata: u16) {
-        self.transitions.graph_add(src, via, dst, metadata);
-    }
-
-    pub fn transition_set(&mut self, idx: u16, src: u16, via: (u8, u8), dst: u16, metadata: u16) {
-        self.transitions.graph_set(idx, src, via, dst, metadata);
-    }
-
-    fn transition_sort(&mut self) {
-        self.transitions.graph_sort();
-    }
-
-    pub fn epsilon_new(&mut self) -> u16 {
-        self.epsilons.list_push_head()
-    }
-
-    pub fn epsilon_count(&self) -> u16 {
+    fn epsilon_count(&self) -> u16 {
         self.epsilons.list_count()
-    }
-
-    pub fn epsilon_items_resize(&mut self, idx: u16, size: u16) {
-        self.epsilons.list_items_resize(idx, size)
-    }
-
-    pub fn epsilon_items_add(&mut self, idx: u16, item: u16) {
-        self.epsilons.list_items_add(idx, item)
-    }
-
-    pub fn epsilon_items_set(&mut self, idx: u16, off: u16, item: u16) {
-        self.epsilons.list_items_set(idx, off, item)
     }
 
     pub fn epsilon_items_get(&self, idx: u16, off: u16) -> u16 {
         self.epsilons.list_items_get(idx, off)
-    }
-
-    fn epsilon_items_sort(&mut self, idx: u16) {
-        self.epsilons.list_items_sort(idx)
-    }
-
-    fn epsilon_items_distinct(&mut self, idx: u16) {
-        self.epsilons.list_items_distinct(idx)
     }
 
     pub fn epsilon_items_count(&self, idx: u16) -> u16 {
@@ -949,8 +905,6 @@ mod tests {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
-
-        nfa.print();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 0008
         // 0001 | 00 - 00 | 0000 | 0005 ->

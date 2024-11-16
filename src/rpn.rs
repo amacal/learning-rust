@@ -12,6 +12,10 @@ impl StackLike for OperatorsMarker {}
 pub struct RPN<const SIZE: usize>(Array<ElementsMarker, u8, SIZE, GuardSegfault>);
 
 impl<const SIZE: usize> RPN<SIZE> {
+    pub fn build(input: *const u8) -> Option<Self> {
+        Builder::new().build(input)
+    }
+
     #[cfg(test)]
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let mut elements = Array::new();
@@ -52,7 +56,7 @@ impl<const SIZE: usize> Builder<SIZE> {
 
     fn build(mut self, input: *const u8) -> Option<RPN<SIZE>> {
         let mut lexer = Lexer::new(input);
-        let mut in_character = false;
+        let mut in_concatenation = false;
         let mut in_classes = false;
         let mut in_negation = false;
         let mut classes_depth = 0;
@@ -71,6 +75,14 @@ impl<const SIZE: usize> Builder<SIZE> {
                             match self.operators.stack_peek_front() {
                                 b'[' => {
                                     self.operators.stack_pop_front();
+                                    in_concatenation = self.operators.stack_pop_front() == 1;
+
+                                    if in_concatenation {
+                                        self.operators.stack_push_front(b'&');
+                                    }
+
+                                    in_concatenation = true;
+
                                     break;
                                 }
                                 _ => break,
@@ -99,19 +111,24 @@ impl<const SIZE: usize> Builder<SIZE> {
                 };
 
                 match token.0 {
-                    b'(' | b'+' | b'?' => {
-                        self.operators.stack_push_front(token.0);
-                        in_character = false;
+                    b'(' => {
+                        self.operators.stack_push_front(if in_concatenation { 1 } else { 0 });
+                        self.operators.stack_push_front(b'(');
+
+                        in_concatenation = false;
+                    }
+                    b'+' | b'?' => {
+                        self.elements.stack_push_front(token.0);
                     }
                     b'*' => {
-                        self.operators.stack_push_front(b'?');
-                        self.operators.stack_push_front(b'+');
-                        in_character = false;
-
+                        self.elements.stack_push_front(b'+');
+                        self.elements.stack_push_front(b'?');
                     }
                     b'[' => {
+                        self.operators.stack_push_front(if in_concatenation { 1 } else { 0 });
                         self.operators.stack_push_front(token.0);
-                        in_character = false;
+
+                        in_concatenation = false;
                         in_classes = true;
                         classes_depth = 0;
                     }
@@ -122,43 +139,32 @@ impl<const SIZE: usize> Builder<SIZE> {
                                     let token = self.operators.stack_pop_front();
                                     self.elements.stack_push_front(token);
                                 }
-                                b'(' => break,
-                                _ => {}
-                            }
-                        }
-
-                        self.operators.stack_push_front(b'|');
-                        in_character = false;
-                    }
-                    b')' => {
-                        while self.operators.stack_size_front() > 0 {
-                            match self.operators.stack_peek_front() {
-                                b'*' | b'+' | b'?' | b'&' => {
-                                    let token = self.operators.stack_pop_front();
-                                    self.elements.stack_push_front(token);
-                                }
-                                b'(' => {
-                                    self.operators.stack_pop_front();
-                                    break;
-                                }
                                 _ => break,
                             }
                         }
 
-                        in_character = false;
+                        self.operators.stack_push_front(b'|');
+                        in_concatenation = false;
                     }
-                    _ if in_character => {
-                        self.elements.stack_push_front(b'l');
-                        self.elements.stack_push_front(b'0' + token.2);
-
-                        for off in 0..token.2 {
-                            unsafe {
-                                self.elements.stack_push_front(*token.1.add(off.into()));
+                    b')' => {
+                        while self.operators.stack_size_front() > 0 {
+                            match self.operators.stack_pop_front() {
+                                b'(' => {
+                                    in_concatenation = self.operators.stack_pop_front() == 1;
+                                    break;
+                                }
+                                value => {
+                                    self.elements.stack_push_front(value);
+                                }
                             }
                         }
 
-                        self.operators.stack_push_front(b'&');
-                    }
+                        if in_concatenation {
+                            self.operators.stack_push_front(b'&');
+                        }
+
+                        in_concatenation = true;
+        }
                     _ => {
                         self.elements.stack_push_front(b'l');
                         self.elements.stack_push_front(b'0' + token.2);
@@ -169,7 +175,11 @@ impl<const SIZE: usize> Builder<SIZE> {
                             }
                         }
 
-                        in_character = true;
+                        if in_concatenation {
+                            self.operators.stack_push_front(b'&');
+                        }
+
+                        in_concatenation = true;
                     }
                 }
             }
@@ -280,6 +290,19 @@ mod tests {
     }
 
     #[test]
+    fn handles_rpn_from_optional_concatenated() {
+        let regex = b"(st)?op\0".as_ptr();
+        let builder = Builder::<4096>::new();
+
+        let regex = match builder.build(regex) {
+            Some(regex) => regex,
+            None => return assert!(false),
+        };
+
+        assert_eq!(regex.as_bytes(), b"l2st?l2op&");
+    }
+
+    #[test]
     fn handles_rpn_from_either_and() {
         let regex = b"abcdefghijkl|mnopqrstuvwx\0".as_ptr();
         let builder = Builder::<4096>::new();
@@ -342,5 +365,31 @@ mod tests {
         };
 
         assert_eq!(regex.as_bytes(), b"l2ab+?!az!09|+|");
+    }
+
+    #[test]
+    fn handles_rpn_from_nested_groups() {
+        let regex = b"(0|(0+1+)+)+\0".as_ptr();
+        let builder = Builder::<4096>::new();
+
+        let regex = match builder.build(regex) {
+            Some(regex) => regex,
+            None => return assert!(false),
+        };
+
+        assert_eq!(regex.as_bytes(), b"l10l10+l11+&+|+");
+    }
+
+    #[test]
+    fn handles_rpn_from_dividing_by_three_regex() {
+        let regex = b"(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
+        let builder = Builder::<4096>::new();
+
+        let regex = match builder.build(regex) {
+            Some(regex) => regex,
+            None => return assert!(false),
+        };
+
+        assert_eq!(regex.as_bytes(), b"l10l11l10l11+?l200+?l10&&&+?l11&&+?|+?");
     }
 }
