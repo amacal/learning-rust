@@ -12,13 +12,6 @@ pub struct NFA {
 }
 
 impl NFA {
-    pub fn new() -> Self {
-        Self {
-            transitions: Graph::new(),
-            epsilons: Collection::new(),
-        }
-    }
-
     fn from(transitions: Graph<4096, GuardSegfault>, epsilons: Collection<4096, GuardSegfault>) -> Self {
         Self {
             transitions: transitions,
@@ -44,10 +37,6 @@ impl NFA {
 
     pub fn transition_find_all(&self, src: u16) -> Option<(u16, u16)> {
         self.transitions.graph_find_all(src)
-    }
-
-    fn epsilon_count(&self) -> u16 {
-        self.epsilons.list_count()
     }
 
     pub fn epsilon_items_get(&self, idx: u16, off: u16) -> u16 {
@@ -110,7 +99,237 @@ impl Builder {
         self.counter.wrapping_sub(1)
     }
 
-    fn build<const SIZE: usize>(mut self, rpn: RPN<SIZE>) -> Option<NFA> {
+    fn handle_literal<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>, idx: u16) -> u16 {
+        let index = idx.wrapping_add(1);
+        let count = rpn.at(index).wrapping_sub(b'0') as u16;
+
+        let zero_state = self.next();
+        let first_state = self.next();
+        let mut last = first_state;
+
+        let upper_limit = index.wrapping_add(count);
+        let zero_epsilons = self.epsilons.list_push_head();
+
+        self.epsilons.list_items_add(zero_epsilons, first_state);
+        self.transitions.graph_add(zero_state, (0, 0), zero_epsilons, 0x02);
+
+        for idx in index.wrapping_add(1)..=upper_limit {
+            let inside = idx < upper_limit;
+            let val = rpn.at(idx as u16);
+
+            let next = self.next();
+            let meta = if inside { 0x02 } else { 0x00 };
+
+            if !inside {
+                self.accepting.stack_push_front(last);
+                self.accepting.stack_push_front(0);
+            }
+
+            self.transitions.graph_add(last, (val, val), next, meta);
+            last = next;
+        }
+
+        let complete_epsilons = self.epsilons.list_push_head();
+        self.epsilons.list_items_resize(complete_epsilons, 1);
+
+        self.transitions.graph_add(last, (0, 0), complete_epsilons, 0x00);
+
+        self.collapsed.stack_push_front(zero_state);
+        self.collapsed.stack_push_front(complete_epsilons);
+
+        index.wrapping_add(count).wrapping_add(1)
+    }
+
+    fn handle_positive_class<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>, idx: u16) -> u16 {
+        let low = rpn.at(idx.wrapping_add(1));
+        let high = rpn.at(idx.wrapping_add(2));
+
+        let zero_state = self.next();
+        let first_state = self.next();
+
+        let last_state = self.next();
+        let zero_epsilons = self.epsilons.list_push_head();
+
+        self.epsilons.list_items_add(zero_epsilons, first_state);
+        self.transitions.graph_add(zero_state, (0, 0), zero_epsilons, 0x02);
+
+        let complete_epsilons = self.epsilons.list_push_head();
+        self.epsilons.list_items_resize(complete_epsilons, 1);
+
+        self.transitions.graph_add(first_state, (low, high), last_state, 0x01);
+        self.transitions.graph_add(last_state, (0, 0), complete_epsilons, 0x00);
+
+        self.accepting.stack_push_front(first_state);
+        self.accepting.stack_push_front(0);
+
+        self.collapsed.stack_push_front(zero_state);
+        self.collapsed.stack_push_front(complete_epsilons);
+
+        idx.wrapping_add(3)
+    }
+
+    fn handle_negative_class<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>, idx: u16) -> u16 {
+        let mut low = rpn.at(idx.wrapping_add(1));
+        let mut high = rpn.at(idx.wrapping_add(2));
+
+        let zero_state = self.next();
+        let first_state = self.next();
+
+        let last_state = self.next();
+        let zero_epsilons = self.epsilons.list_push_head();
+
+        self.epsilons.list_items_add(zero_epsilons, first_state);
+        self.transitions.graph_add(zero_state, (0, 0), zero_epsilons, 0x02);
+
+        let complete_epsilons = self.epsilons.list_push_head();
+        self.epsilons.list_items_resize(complete_epsilons, 1);
+
+        if low > 1 {
+            low = low.wrapping_sub(1);
+            self.transitions.graph_add(first_state, (1, low), last_state, 0x01);
+        }
+
+        if high < 255 {
+            high = high.wrapping_add(1);
+            self.transitions.graph_add(first_state, (high, 255), last_state, 0x01);
+        }
+
+        self.transitions.graph_add(last_state, (0, 0), complete_epsilons, 0x00);
+
+        self.accepting.stack_push_front(first_state);
+        self.accepting.stack_push_front(0);
+
+        self.collapsed.stack_push_front(zero_state);
+        self.collapsed.stack_push_front(complete_epsilons);
+
+        idx.wrapping_add(3)
+    }
+
+    fn handle_alternation(&mut self, idx: u16) -> u16 {
+        let right_last_epsilons = self.collapsed.stack_pop_front();
+        let right_first_state = self.collapsed.stack_pop_front();
+
+        let left_last_epsilons = self.collapsed.stack_pop_front();
+        let left_first_state = self.collapsed.stack_pop_front();
+
+        let start_state = self.next();
+        let end_state = self.next();
+
+        let start_epsilons = self.epsilons.list_push_head();
+        self.epsilons.list_items_add(start_epsilons, left_first_state);
+        self.epsilons.list_items_add(start_epsilons, right_first_state);
+
+        self.epsilons.list_items_set(left_last_epsilons, 0, end_state);
+        self.epsilons.list_items_set(right_last_epsilons, 0, end_state);
+
+        self.transitions.graph_add(start_state, (0, 0), start_epsilons, 0x00);
+
+        let end_epsilons = self.epsilons.list_push_head();
+        self.transitions.graph_add(end_state, (0, 0), end_epsilons, 0x00);
+        self.epsilons.list_items_resize(end_epsilons, 1);
+
+        self.collapsed.stack_push_front(start_state);
+        self.collapsed.stack_push_front(end_epsilons);
+        self.accepting.stack_push_front(b'|' as u16);
+
+        idx.wrapping_add(1)
+    }
+
+    fn handle_concatenation(&mut self, idx: u16) -> u16 {
+        let right_last_epsilons = self.collapsed.stack_pop_front();
+        let right_first_state = self.collapsed.stack_pop_front();
+
+        let left_last_epsilons = self.collapsed.stack_pop_front();
+        let left_first_state = self.collapsed.stack_pop_front();
+
+        let start_state = self.next();
+        let continue_state = self.next();
+        let end_state = self.next();
+
+        let start_epsilons = self.epsilons.list_push_head();
+        self.epsilons.list_items_add(start_epsilons, left_first_state);
+
+        let continue_epsilons = self.epsilons.list_push_head();
+        self.epsilons.list_items_add(continue_epsilons, right_first_state);
+
+        self.epsilons.list_items_set(left_last_epsilons, 0, continue_state);
+        self.epsilons.list_items_set(right_last_epsilons, 0, end_state);
+
+        self.transitions.graph_add(start_state, (0, 0), start_epsilons, 0x00);
+        self.transitions.graph_add(continue_state, (0, 0), continue_epsilons, 0x00);
+
+        let end_epsilons = self.epsilons.list_push_head();
+        self.transitions.graph_add(end_state, (0, 0), end_epsilons, 0x00);
+        self.epsilons.list_items_resize(end_epsilons, 1);
+
+        self.collapsed.stack_push_front(start_state);
+        self.collapsed.stack_push_front(end_epsilons);
+
+        if self.accepting.stack_peek_front() == b'?' as u16 {
+            self.accepting.stack_pop_front();
+            self.accepting.stack_push_front(b'|' as u16);
+        } else {
+            self.accepting.stack_push_front(b'&' as u16);
+        }
+
+        idx.wrapping_add(1)
+    }
+
+    fn handle_repetition(&mut self, idx: u16) -> u16 {
+        let op_last_epsilons = self.collapsed.stack_pop_front();
+        let op_first_state = self.collapsed.stack_pop_front();
+
+        let start_state = self.next();
+        let repeat_state = self.next();
+        let end_state = self.next();
+
+        let start_epsilons = self.epsilons.list_push_head();
+        self.epsilons.list_items_add(start_epsilons, op_first_state);
+
+        let repeat_epsilons = self.epsilons.list_push_head();
+        self.epsilons.list_items_add(repeat_epsilons, start_state);
+        self.epsilons.list_items_add(repeat_epsilons, end_state);
+
+        self.epsilons.list_items_set(op_last_epsilons, 0, repeat_state);
+        self.transitions.graph_add(start_state, (0, 0), start_epsilons, 0x00);
+        self.transitions.graph_add(repeat_state, (0, 0), repeat_epsilons, 0x00);
+
+        let end_epsilons = self.epsilons.list_push_head();
+        self.transitions.graph_add(end_state, (0, 0), end_epsilons, 0x00);
+        self.epsilons.list_items_resize(end_epsilons, 1);
+
+        self.collapsed.stack_push_front(start_state);
+        self.collapsed.stack_push_front(end_epsilons);
+
+        idx.wrapping_add(1)
+    }
+
+    fn handle_optionality(&mut self, idx: u16) -> u16 {
+        let op_last_epsilons = self.collapsed.stack_pop_front();
+        let op_first_state = self.collapsed.stack_pop_front();
+
+        let start_state = self.next();
+        let end_state = self.next();
+
+        let start_epsilons = self.epsilons.list_push_head();
+        self.epsilons.list_items_add(start_epsilons, op_first_state);
+        self.epsilons.list_items_add(start_epsilons, end_state);
+
+        self.epsilons.list_items_set(op_last_epsilons, 0, end_state);
+        self.transitions.graph_add(start_state, (0, 0), start_epsilons, 0x00);
+
+        let end_epsilons = self.epsilons.list_push_head();
+        self.transitions.graph_add(end_state, (0, 0), end_epsilons, 0x00);
+        self.epsilons.list_items_resize(end_epsilons, 1);
+
+        self.collapsed.stack_push_front(start_state);
+        self.collapsed.stack_push_front(end_epsilons);
+        self.accepting.stack_push_front(b'?' as u16);
+
+        idx.wrapping_add(1)
+    }
+
+    fn build_transitions<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>) {
         let mut idx = 0u16;
 
         let start_state = self.next();
@@ -128,228 +347,14 @@ impl Builder {
 
         while idx < rpn.size() {
             match rpn.at(idx) {
-                b'l' => {
-                    let index = idx.wrapping_add(1);
-                    let count = rpn.at(index).wrapping_sub(b'0') as u16;
-
-                    let zero_state = self.next();
-                    let first_state = self.next();
-                    let mut last = first_state;
-
-                    let upper_limit = index.wrapping_add(count);
-                    let zero_epsilons = self.epsilons.list_push_head();
-
-                    self.epsilons.list_items_add(zero_epsilons, first_state);
-                    self.transitions.graph_add(zero_state, (0, 0), zero_epsilons, 0x02);
-
-                    for idx in index.wrapping_add(1)..=upper_limit {
-                        let inside = idx < upper_limit;
-                        let val = rpn.at(idx as u16);
-
-                        let next = self.next();
-                        let meta = if inside { 0x02 } else { 0x00 };
-
-                        if !inside {
-                            self.accepting.stack_push_front(last);
-                            self.accepting.stack_push_front(0);
-                        }
-
-                        self.transitions.graph_add(last, (val, val), next, meta);
-                        last = next;
-                    }
-
-                    let complete_epsilons = self.epsilons.list_push_head();
-                    self.epsilons.list_items_resize(complete_epsilons, 1);
-
-                    self.transitions.graph_add(last, (0, 0), complete_epsilons, 0x00);
-                    idx = index.wrapping_add(count).wrapping_add(1);
-
-                    self.collapsed.stack_push_front(zero_state);
-                    self.collapsed.stack_push_front(complete_epsilons);
-                }
-                b'-' => {
-                    let low = rpn.at(idx.wrapping_add(1));
-                    let high = rpn.at(idx.wrapping_add(2));
-
-                    let zero_state = self.next();
-                    let first_state = self.next();
-
-                    let last_state = self.next();
-                    let zero_epsilons = self.epsilons.list_push_head();
-
-                    self.epsilons.list_items_add(zero_epsilons, first_state);
-                    self.transitions.graph_add(zero_state, (0, 0), zero_epsilons, 0x02);
-
-                    let complete_epsilons = self.epsilons.list_push_head();
-                    self.epsilons.list_items_resize(complete_epsilons, 1);
-
-                    self.transitions.graph_add(first_state, (low, high), last_state, 0x01);
-                    self.transitions.graph_add(last_state, (0, 0), complete_epsilons, 0x00);
-
-                    self.accepting.stack_push_front(first_state);
-                    self.accepting.stack_push_front(0);
-
-                    idx = idx.wrapping_add(3);
-
-                    self.collapsed.stack_push_front(zero_state);
-                    self.collapsed.stack_push_front(complete_epsilons);
-                }
-                b'!' => {
-                    let mut low = rpn.at(idx.wrapping_add(1));
-                    let mut high = rpn.at(idx.wrapping_add(2));
-
-                    let zero_state = self.next();
-                    let first_state = self.next();
-
-                    let last_state = self.next();
-                    let zero_epsilons = self.epsilons.list_push_head();
-
-                    self.epsilons.list_items_add(zero_epsilons, first_state);
-                    self.transitions.graph_add(zero_state, (0, 0), zero_epsilons, 0x02);
-
-                    let complete_epsilons = self.epsilons.list_push_head();
-                    self.epsilons.list_items_resize(complete_epsilons, 1);
-
-                    if low > 1 {
-                        low = low.wrapping_sub(1);
-                        self.transitions.graph_add(first_state, (1, low), last_state, 0x01);
-                    }
-
-                    if high < 255 {
-                        high = high.wrapping_add(1);
-                        self.transitions.graph_add(first_state, (high, 255), last_state, 0x01);
-                    }
-
-                    self.transitions.graph_add(last_state, (0, 0), complete_epsilons, 0x00);
-
-                    self.accepting.stack_push_front(first_state);
-                    self.accepting.stack_push_front(0);
-
-                    idx = idx.wrapping_add(3);
-
-                    self.collapsed.stack_push_front(zero_state);
-                    self.collapsed.stack_push_front(complete_epsilons);
-                }
-                b'|' => {
-                    let right_last_epsilons = self.collapsed.stack_pop_front();
-                    let right_first_state = self.collapsed.stack_pop_front();
-
-                    let left_last_epsilons = self.collapsed.stack_pop_front();
-                    let left_first_state = self.collapsed.stack_pop_front();
-
-                    let start_state = self.next();
-                    let end_state = self.next();
-
-                    let start_epsilons = self.epsilons.list_push_head();
-                    self.epsilons.list_items_add(start_epsilons, left_first_state);
-                    self.epsilons.list_items_add(start_epsilons, right_first_state);
-
-                    self.epsilons.list_items_set(left_last_epsilons, 0, end_state);
-                    self.epsilons.list_items_set(right_last_epsilons, 0, end_state);
-
-                    idx = idx.wrapping_add(1);
-                    self.transitions.graph_add(start_state, (0, 0), start_epsilons, 0x00);
-
-                    let end_epsilons = self.epsilons.list_push_head();
-                    self.transitions.graph_add(end_state, (0, 0), end_epsilons, 0x00);
-                    self.epsilons.list_items_resize(end_epsilons, 1);
-
-                    self.collapsed.stack_push_front(start_state);
-                    self.collapsed.stack_push_front(end_epsilons);
-
-                    self.accepting.stack_push_front(b'|' as u16);
-                }
-                b'&' => {
-                    let right_last_epsilons = self.collapsed.stack_pop_front();
-                    let right_first_state = self.collapsed.stack_pop_front();
-
-                    let left_last_epsilons = self.collapsed.stack_pop_front();
-                    let left_first_state = self.collapsed.stack_pop_front();
-
-                    let start_state = self.next();
-                    let continue_state = self.next();
-                    let end_state = self.next();
-
-                    let start_epsilons = self.epsilons.list_push_head();
-                    self.epsilons.list_items_add(start_epsilons, left_first_state);
-
-                    let continue_epsilons = self.epsilons.list_push_head();
-                    self.epsilons.list_items_add(continue_epsilons, right_first_state);
-
-                    self.epsilons.list_items_set(left_last_epsilons, 0, continue_state);
-                    self.epsilons.list_items_set(right_last_epsilons, 0, end_state);
-
-                    idx = idx.wrapping_add(1);
-                    self.transitions.graph_add(start_state, (0, 0), start_epsilons, 0x00);
-                    self.transitions.graph_add(continue_state, (0, 0), continue_epsilons, 0x00);
-
-                    let end_epsilons = self.epsilons.list_push_head();
-                    self.transitions.graph_add(end_state, (0, 0), end_epsilons, 0x00);
-                    self.epsilons.list_items_resize(end_epsilons, 1);
-
-                    self.collapsed.stack_push_front(start_state);
-                    self.collapsed.stack_push_front(end_epsilons);
-
-                    if self.accepting.stack_peek_front() == b'?' as u16 {
-                        self.accepting.stack_pop_front();
-                        self.accepting.stack_push_front(b'|' as u16);
-                    } else {
-                        self.accepting.stack_push_front(b'&' as u16);
-                    }
-                }
-                b'+' => {
-                    let op_last_epsilons = self.collapsed.stack_pop_front();
-                    let op_first_state = self.collapsed.stack_pop_front();
-
-                    let start_state = self.next();
-                    let repeat_state = self.next();
-                    let end_state = self.next();
-
-                    let start_epsilons = self.epsilons.list_push_head();
-                    self.epsilons.list_items_add(start_epsilons, op_first_state);
-
-                    let repeat_epsilons = self.epsilons.list_push_head();
-                    self.epsilons.list_items_add(repeat_epsilons, start_state);
-                    self.epsilons.list_items_add(repeat_epsilons, end_state);
-
-                    self.epsilons.list_items_set(op_last_epsilons, 0, repeat_state);
-                    self.transitions.graph_add(start_state, (0, 0), start_epsilons, 0x00);
-                    self.transitions.graph_add(repeat_state, (0, 0), repeat_epsilons, 0x00);
-
-                    let end_epsilons = self.epsilons.list_push_head();
-                    self.transitions.graph_add(end_state, (0, 0), end_epsilons, 0x00);
-                    self.epsilons.list_items_resize(end_epsilons, 1);
-
-                    self.collapsed.stack_push_front(start_state);
-                    self.collapsed.stack_push_front(end_epsilons);
-
-                    idx = idx.wrapping_add(1);
-                }
-                b'?' => {
-                    let op_last_epsilons = self.collapsed.stack_pop_front();
-                    let op_first_state = self.collapsed.stack_pop_front();
-
-                    let start_state = self.next();
-                    let end_state = self.next();
-
-                    let start_epsilons = self.epsilons.list_push_head();
-                    self.epsilons.list_items_add(start_epsilons, op_first_state);
-                    self.epsilons.list_items_add(start_epsilons, end_state);
-
-                    self.epsilons.list_items_set(op_last_epsilons, 0, end_state);
-                    self.transitions.graph_add(start_state, (0, 0), start_epsilons, 0x00);
-
-                    let end_epsilons = self.epsilons.list_push_head();
-                    self.transitions.graph_add(end_state, (0, 0), end_epsilons, 0x00);
-                    self.epsilons.list_items_resize(end_epsilons, 1);
-
-                    self.collapsed.stack_push_front(start_state);
-                    self.collapsed.stack_push_front(end_epsilons);
-
-                    idx = idx.wrapping_add(1);
-                    self.accepting.stack_push_front(b'?' as u16);
-                }
-                _ => break,
+                b'l' => idx = self.handle_literal(&rpn, idx),
+                b'-' => idx = self.handle_positive_class(&rpn, idx),
+                b'!' => idx = self.handle_negative_class(&rpn, idx),
+                b'|' => idx = self.handle_alternation(idx),
+                b'&' => idx = self.handle_concatenation(idx),
+                b'+' => idx = self.handle_repetition(idx),
+                b'?' => idx = self.handle_optionality(idx),
+                _ => {}
             }
         }
 
@@ -358,7 +363,9 @@ impl Builder {
 
         self.epsilons.list_items_set(start_epsilons, 0, first_state);
         self.epsilons.list_items_set(last_epsilons, 0, end_state);
+    }
 
+    fn propagate_accepting_states(&mut self) {
         self.accepting.stack_push_back(1);
         while self.accepting.stack_size_front() > 0 {
             match self.accepting.stack_pop_front() as u8 {
@@ -385,6 +392,11 @@ impl Builder {
                 }
             }
         }
+    }
+
+    fn build<const SIZE: usize>(mut self, rpn: RPN<SIZE>) -> Option<NFA> {
+        self.build_transitions(&rpn);
+        self.propagate_accepting_states();
 
         Some(NFA::from(self.transitions, self.epsilons))
     }
@@ -415,7 +427,7 @@ mod tests {
         // 0008 | 00 - 00 | 0000 | 000e -> 0001
 
         assert_eq!(nfa.transition_count(), 9);
-        assert_eq!(nfa.epsilon_count(), 4);
+        assert_eq!(nfa.epsilons.list_count(), 4);
 
         // points at epsilon
         assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
@@ -461,7 +473,7 @@ mod tests {
         // 0004 | 00 - 00 | 0000 | 000e -> 0001
 
         assert_eq!(nfa.transition_count(), 5);
-        assert_eq!(nfa.epsilon_count(), 4);
+        assert_eq!(nfa.epsilons.list_count(), 4);
 
         // points at epsilon
         assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
@@ -505,7 +517,7 @@ mod tests {
         // 0004 | 00 - 00 | 0000 | 000e -> 0001
 
         assert_eq!(nfa.transition_count(), 6);
-        assert_eq!(nfa.epsilon_count(), 4);
+        assert_eq!(nfa.epsilons.list_count(), 4);
 
         // points at epsilon
         assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
@@ -564,7 +576,7 @@ mod tests {
         // 0010 | 00 - 00 | 0000 | 0023 -> 0001
 
         assert_eq!(nfa.transition_count(), 17);
-        assert_eq!(nfa.epsilon_count(), 8);
+        assert_eq!(nfa.epsilons.list_count(), 8);
 
         // points at epsilon
         assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
@@ -650,7 +662,7 @@ mod tests {
         // 0011 | 00 - 00 | 0000 | 0027 -> 0001
 
         assert_eq!(nfa.transition_count(), 18);
-        assert_eq!(nfa.epsilon_count(), 9);
+        assert_eq!(nfa.epsilons.list_count(), 9);
 
         // points at epsilon
         assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
@@ -737,7 +749,7 @@ mod tests {
         // 000e | 00 - 00 | 0000 | 0032 -> 0001
 
         assert_eq!(nfa.transition_count(), 15);
-        assert_eq!(nfa.epsilon_count(), 11);
+        assert_eq!(nfa.epsilons.list_count(), 11);
 
         // points at epsilon
         assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
@@ -830,7 +842,7 @@ mod tests {
         // 000e | 00 - 00 | 0000 | 0032 -> 0001
 
         assert_eq!(nfa.transition_count(), 15);
-        assert_eq!(nfa.epsilon_count(), 11);
+        assert_eq!(nfa.epsilons.list_count(), 11);
 
         // points at epsilon
         assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
@@ -919,7 +931,7 @@ mod tests {
         // 000a | 00 - 00 | 0000 | 001e -> 0001
 
         assert_eq!(nfa.transition_count(), 11);
-        assert_eq!(nfa.epsilon_count(), 7);
+        assert_eq!(nfa.epsilons.list_count(), 7);
 
         // points at epsilon
         assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
