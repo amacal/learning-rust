@@ -41,6 +41,146 @@ impl<const SIZE: usize> RPN<SIZE> {
     }
 }
 
+enum BuilderState {
+    Completed,
+    InGroups { concatenation: bool },
+    InClasses { alternation: bool, negation: bool },
+}
+
+impl BuilderState {
+    fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, concatenation: bool) -> BuilderState {
+        let token = if let Some(token) = lexer.next_in_group() {
+            unsafe { (*token.0, token.0, token.1) }
+        } else {
+            return BuilderState::Completed;
+        };
+
+        match token.0 {
+            b'(' => {
+                builder.operators.stack_push_front(if concatenation { 1 } else { 0 });
+                builder.operators.stack_push_front(b'(');
+
+                BuilderState::InGroups { concatenation: false }
+            }
+            b'+' | b'?' => {
+                builder.elements.stack_push_front(token.0);
+                BuilderState::InGroups { concatenation }
+            }
+            b'*' => {
+                builder.elements.stack_push_front(b'+');
+                builder.elements.stack_push_front(b'?');
+                BuilderState::InGroups { concatenation }
+            }
+            b'[' => {
+                builder.operators.stack_push_front(if concatenation { 1 } else { 0 });
+                builder.operators.stack_push_front(token.0);
+
+                BuilderState::InClasses {
+                    alternation: false,
+                    negation: false,
+                }
+            }
+            b'|' => {
+                while builder.operators.stack_size_front() > 0 {
+                    match builder.operators.stack_peek_front() {
+                        b'*' | b'+' | b'?' | b'&' => {
+                            let token = builder.operators.stack_pop_front();
+                            builder.elements.stack_push_front(token);
+                        }
+                        _ => break,
+                    }
+                }
+
+                builder.operators.stack_push_front(b'|');
+                BuilderState::InGroups { concatenation: false }
+            }
+            b')' => {
+                let mut concatenation = false;
+
+                while builder.operators.stack_size_front() > 0 {
+                    match builder.operators.stack_pop_front() {
+                        b'(' => {
+                            concatenation = builder.operators.stack_pop_front() == 1;
+                            break;
+                        }
+                        value => {
+                            builder.elements.stack_push_front(value);
+                        }
+                    }
+                }
+
+                if concatenation {
+                    builder.operators.stack_push_front(b'&');
+                }
+
+                BuilderState::InGroups { concatenation: true }
+            }
+            _ => {
+                builder.elements.stack_push_front(b'l');
+                builder.elements.stack_push_front(b'0' + token.2);
+
+                for off in 0..token.2 {
+                    unsafe {
+                        builder.elements.stack_push_front(*token.1.add(off.into()));
+                    }
+                }
+
+                if concatenation {
+                    builder.operators.stack_push_front(b'&');
+                }
+
+                BuilderState::InGroups { concatenation: true }
+            }
+        }
+    }
+
+    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, alternation: bool, negation: bool) -> BuilderState {
+        let token = lexer.next_in_class();
+
+        match token {
+            (0, _) => BuilderState::Completed,
+            (b'^', _) => BuilderState::InClasses {
+                alternation: alternation,
+                negation: true,
+            },
+            (b']', _) => {
+                loop {
+                    match builder.operators.stack_pop_front() {
+                        b'[' => break,
+                        value => builder.elements.stack_push_front(value),
+                    }
+                }
+
+                BuilderState::InGroups {
+                    concatenation: builder.operators.stack_pop_front() == 1,
+                }
+            }
+            (from, to) => {
+                builder.elements.stack_push_front(if negation { b'!' } else { b'-' });
+                builder.elements.stack_push_front(from);
+                builder.elements.stack_push_front(to);
+
+                if alternation {
+                    builder.elements.stack_push_front(b'|');
+                }
+
+                BuilderState::InClasses {
+                    alternation: true,
+                    negation: negation,
+                }
+            }
+        }
+    }
+
+    fn handle<const SIZE: usize>(self, builder: &mut Builder<SIZE>, lexer: &mut Lexer) -> BuilderState {
+        match self {
+            BuilderState::Completed => BuilderState::Completed,
+            BuilderState::InGroups { concatenation } => Self::handle_in_groups(builder, lexer, concatenation),
+            BuilderState::InClasses { alternation, negation } => Self::handle_in_classes(builder, lexer, alternation, negation),
+        }
+    }
+}
+
 struct Builder<const SIZE: usize> {
     elements: Array<ElementsMarker, u8, SIZE, GuardSegfault>,
     operators: Array<OperatorsMarker, u8, 4096, GuardSegfault>,
@@ -56,133 +196,13 @@ impl<const SIZE: usize> Builder<SIZE> {
 
     fn build(mut self, input: *const u8) -> Option<RPN<SIZE>> {
         let mut lexer = Lexer::new(input);
-        let mut in_concatenation = false;
-        let mut in_classes = false;
-        let mut in_negation = false;
-        let mut classes_depth = 0;
+        let mut state = BuilderState::InGroups { concatenation: false };
 
         loop {
-            if in_classes {
-                let token = lexer.next_in_class();
-
-                match token {
-                    (0, _) => break,
-                    (b'^', _) => {
-                        in_negation = true;
-                    }
-                    (b']', _) => {
-                        while self.operators.stack_size_front() > 0 {
-                            match self.operators.stack_peek_front() {
-                                b'[' => {
-                                    self.operators.stack_pop_front();
-                                    in_concatenation = self.operators.stack_pop_front() == 1;
-
-                                    if in_concatenation {
-                                        self.operators.stack_push_front(b'&');
-                                    }
-
-                                    in_concatenation = true;
-
-                                    break;
-                                }
-                                _ => break,
-                            }
-                        }
-
-                        in_negation = false;
-                        in_classes = false;
-                    }
-                    (from, to) => {
-                        self.elements.stack_push_front(if in_negation { b'!' } else { b'-' });
-                        self.elements.stack_push_front(from);
-                        self.elements.stack_push_front(to);
-                        classes_depth += 1;
-
-                        if classes_depth > 1 {
-                            self.elements.stack_push_front(b'|');
-                        }
-                    }
-                }
-            } else {
-                let token = if let Some(token) = lexer.next_in_group() {
-                    unsafe { (*token.0, token.0, token.1) }
-                } else {
-                    break;
-                };
-
-                match token.0 {
-                    b'(' => {
-                        self.operators.stack_push_front(if in_concatenation { 1 } else { 0 });
-                        self.operators.stack_push_front(b'(');
-
-                        in_concatenation = false;
-                    }
-                    b'+' | b'?' => {
-                        self.elements.stack_push_front(token.0);
-                    }
-                    b'*' => {
-                        self.elements.stack_push_front(b'+');
-                        self.elements.stack_push_front(b'?');
-                    }
-                    b'[' => {
-                        self.operators.stack_push_front(if in_concatenation { 1 } else { 0 });
-                        self.operators.stack_push_front(token.0);
-
-                        in_concatenation = false;
-                        in_classes = true;
-                        classes_depth = 0;
-                    }
-                    b'|' => {
-                        while self.operators.stack_size_front() > 0 {
-                            match self.operators.stack_peek_front() {
-                                b'*' | b'+' | b'?' | b'&' => {
-                                    let token = self.operators.stack_pop_front();
-                                    self.elements.stack_push_front(token);
-                                }
-                                _ => break,
-                            }
-                        }
-
-                        self.operators.stack_push_front(b'|');
-                        in_concatenation = false;
-                    }
-                    b')' => {
-                        while self.operators.stack_size_front() > 0 {
-                            match self.operators.stack_pop_front() {
-                                b'(' => {
-                                    in_concatenation = self.operators.stack_pop_front() == 1;
-                                    break;
-                                }
-                                value => {
-                                    self.elements.stack_push_front(value);
-                                }
-                            }
-                        }
-
-                        if in_concatenation {
-                            self.operators.stack_push_front(b'&');
-                        }
-
-                        in_concatenation = true;
-        }
-                    _ => {
-                        self.elements.stack_push_front(b'l');
-                        self.elements.stack_push_front(b'0' + token.2);
-
-                        for off in 0..token.2 {
-                            unsafe {
-                                self.elements.stack_push_front(*token.1.add(off.into()));
-                            }
-                        }
-
-                        if in_concatenation {
-                            self.operators.stack_push_front(b'&');
-                        }
-
-                        in_concatenation = true;
-                    }
-                }
-            }
+            state = match state.handle(&mut self, &mut lexer) {
+                BuilderState::Completed => break,
+                state => state,
+            };
         }
 
         while self.operators.stack_size_front() > 0 {
