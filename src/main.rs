@@ -15,7 +15,7 @@ use rpn::*;
 use std::ops::Shr;
 
 fn main() {
-    let regex = "(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
+    let regex = b"(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
 
     let rpn: RPN<4096> = match RPN::build(regex) {
         Some(rpn) => rpn,
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn handles_closing_nfa_from_epsilon_state() {
-        let regex = "start|stop\0".as_ptr();
+        let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn handles_closing_nfa_from_non_epsilon_state() {
-        let regex = "start|stop\0".as_ptr();
+        let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn handles_recording_nfa_state_not_repeated() {
-        let regex = "start|stop\0".as_ptr();
+        let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn handles_recording_nfa_state_repeated() {
-        let regex = "start|stop\0".as_ptr();
+        let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn handles_converting_nfa_to_dfa_either() {
-        let regex = "start|stop\0".as_ptr();
+        let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn handles_converting_nfa_to_dfa_repeat() {
-        let regex = "(stop)+\0".as_ptr();
+        let regex = b"(stop)+\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn handles_converting_nfa_to_dfa_optional() {
-        let regex = "(st)?op\0".as_ptr();
+        let regex = b"(st)?op\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -637,7 +637,7 @@ mod tests {
 
     #[test]
     fn handles_converting_nfa_to_dfa_class() {
-        let regex = "[0-9]+\0".as_ptr();
+        let regex = b"[0-9]+\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn handles_traversing_dfa_either() {
-        let regex = "start|stop\0".as_ptr();
+        let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -695,7 +695,7 @@ mod tests {
 
     #[test]
     fn handles_traversing_dfa_repeat() {
-        let regex = "(start|stop)+\0".as_ptr();
+        let regex = b"(start|stop)+\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -722,7 +722,7 @@ mod tests {
 
     #[test]
     fn handles_traversing_dfa_optional() {
-        let regex = "(start)?stop\0".as_ptr();
+        let regex = b"(start)?stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
@@ -751,7 +751,7 @@ mod tests {
 
     #[test]
     fn handles_dividing_by_three() {
-        let regex = "(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
+        let regex = b"(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
