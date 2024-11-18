@@ -57,6 +57,18 @@ impl BuilderState {
 
         match token.0 {
             b'(' => {
+                if concatenation {
+                    while builder.operators.stack_size_front() > 0 {
+                        match builder.operators.stack_peek_front() {
+                            b'&' => {
+                                builder.operators.stack_pop_front();
+                                builder.elements.stack_push_front(b'&');
+                            },
+                            _ => break,
+                        }
+                    }
+                }
+
                 builder.operators.stack_push_front(if concatenation { 1 } else { 0 });
                 builder.operators.stack_push_front(b'(');
 
@@ -72,6 +84,18 @@ impl BuilderState {
                 BuilderState::InGroups { concatenation }
             }
             b'[' => {
+                if concatenation {
+                    while builder.operators.stack_size_front() > 0 {
+                        match builder.operators.stack_peek_front() {
+                            b'&' => {
+                                builder.operators.stack_pop_front();
+                                builder.elements.stack_push_front(b'&');
+                            },
+                            _ => break,
+                        }
+                    }
+                }
+
                 builder.operators.stack_push_front(if concatenation { 1 } else { 0 });
                 builder.operators.stack_push_front(token.0);
 
@@ -116,6 +140,18 @@ impl BuilderState {
                 BuilderState::InGroups { concatenation: true }
             }
             _ => {
+                if concatenation {
+                    while builder.operators.stack_size_front() > 0 {
+                        match builder.operators.stack_peek_front() {
+                            b'&' => {
+                                builder.operators.stack_pop_front();
+                                builder.elements.stack_push_front(b'&');
+                            },
+                            _ => break,
+                        }
+                    }
+                }
+
                 builder.elements.stack_push_front(b'l');
                 builder.elements.stack_push_front(b'0' + token.2);
 
@@ -151,9 +187,11 @@ impl BuilderState {
                     }
                 }
 
-                BuilderState::InGroups {
-                    concatenation: builder.operators.stack_pop_front() == 1,
+                if builder.operators.stack_pop_front() == 1 {
+                    builder.operators.stack_push_front(b'&');
                 }
+
+                BuilderState::InGroups { concatenation: true }
             }
             (from, to) => {
                 builder.elements.stack_push_front(if negation { b'!' } else { b'-' });
@@ -254,7 +292,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l9abcdefghil9jklmnopqrl8stuvwxyz&&");
+        assert_eq!(regex.as_bytes(), b"l9abcdefghil9jklmnopqr&l8stuvwxyz&");
     }
 
     #[test]
@@ -410,6 +448,32 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l10l11l10l11+?l200+?l10&&&+?l11&&+?|+?");
+        assert_eq!(regex.as_bytes(), b"l10l11l10l11+?&l200+?&l10&+?&l11&+?|+?");
+    }
+
+    #[test]
+    fn handles_rpn_from_zero_followed_by_two_optional_numbers() {
+        let regex = b"01?2?\0".as_ptr();
+        let builder = Builder::<4096>::new();
+
+        let regex = match builder.build(regex) {
+            Some(regex) => regex,
+            None => return assert!(false),
+        };
+
+        assert_eq!(regex.as_bytes(), b"l10l11?&l12?&");
+    }
+
+    #[test]
+    fn handles_rpn_from_number_regex() {
+        let regex = b"-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?\0".as_ptr();
+        let builder = Builder::<4096>::new();
+
+        let regex = match builder.build(regex) {
+            Some(regex) => regex,
+            None => return assert!(false),
+        };
+
+        assert_eq!(regex.as_bytes(), b"l1-?l10-19-09+?&|&l1.-09+&?&-ee-EE|-++l1-|?&-09+&?&");
     }
 }

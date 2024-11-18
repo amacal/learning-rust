@@ -264,9 +264,11 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
         self.heap.set1((hash & 0xffff) as u16, idx, 3);
     }
 
-    pub fn list_items_contains(&self, idx: u16, item: u16) -> bool {
+    pub fn list_items_contains(&self, idx: u16, item: u16, high: u16) -> bool {
         let mut low: i32 = 0i32;
-        let mut high: i32 = self.list_items_count(idx).into();
+        let mut high: i32 = high.into();
+
+        high = high.wrapping_sub(1);
 
         while low <= high {
             let off = low + (high - low) / 2;
@@ -718,7 +720,7 @@ mod tests {
         let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx = collection.list_push_head();
 
-        assert_eq!(collection.list_items_contains(idx, 13), false);
+        assert_eq!(collection.list_items_contains(idx, 13, 0), false);
     }
 
     #[test]
@@ -731,10 +733,10 @@ mod tests {
         collection.list_items_add(idx, 29);
         collection.list_items_add(idx, 31);
 
-        assert_eq!(collection.list_items_contains(idx, 13), true);
-        assert_eq!(collection.list_items_contains(idx, 17), true);
-        assert_eq!(collection.list_items_contains(idx, 29), true);
-        assert_eq!(collection.list_items_contains(idx, 31), true);
+        assert_eq!(collection.list_items_contains(idx, 13, 4), true);
+        assert_eq!(collection.list_items_contains(idx, 17, 4), true);
+        assert_eq!(collection.list_items_contains(idx, 29, 4), true);
+        assert_eq!(collection.list_items_contains(idx, 31, 4), true);
     }
 
     #[test]
@@ -747,10 +749,10 @@ mod tests {
         collection.list_items_add(idx, 29);
         collection.list_items_add(idx, 31);
 
-        assert_eq!(collection.list_items_contains(idx, 14), false);
-        assert_eq!(collection.list_items_contains(idx, 21), false);
-        assert_eq!(collection.list_items_contains(idx, 27), false);
-        assert_eq!(collection.list_items_contains(idx, 33), false);
+        assert_eq!(collection.list_items_contains(idx, 14, 4), false);
+        assert_eq!(collection.list_items_contains(idx, 21, 4), false);
+        assert_eq!(collection.list_items_contains(idx, 27, 4), false);
+        assert_eq!(collection.list_items_contains(idx, 33, 4), false);
     }
 
     #[test]

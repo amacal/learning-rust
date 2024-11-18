@@ -156,7 +156,7 @@ impl Builder {
         let complete_epsilons = self.epsilons.list_push_head();
         self.epsilons.list_items_resize(complete_epsilons, 1);
 
-        self.transitions.graph_add(first_state, (low, high), last_state, 0x01);
+        self.transitions.graph_add(first_state, (low, high), last_state, 0x00);
         self.transitions.graph_add(last_state, (0, 0), complete_epsilons, 0x00);
 
         self.accepting.stack_push_front(first_state);
@@ -973,5 +973,141 @@ mod tests {
         assert_eq!(nfa.transition_find(10, 0), Some((0x1e, 0x00)));
         assert_eq!(nfa.epsilon_items_count(0x1e), 1);
         assert_eq!(nfa.epsilon_items_get(0x1e, 0), 1);
+    }
+
+    #[test]
+    fn handles_converting_rpn_zero_followed_by_two_optional_numbers_to_nfa() {
+        let builder = Builder::new();
+        let rpn: RPN<4096> = RPN::from_bytes(b"l10l11?&l12?&");
+
+        let nfa = match builder.build(rpn) {
+            Some(nfa) => nfa,
+            None => return assert!(false),
+        };
+
+        // 0000 | 00 - 00 | 0000 | 0000 -> 0012
+        // 0001 | 00 - 00 | 0000 | 0005 ->
+        // 0002 | 00 - 00 | 0002 | 0009 -> 0003
+        // 0003 | 30 - 30 | 0001 | 0004
+        // 0004 | 00 - 00 | 0000 | 000e -> 000b
+        // 0005 | 00 - 00 | 0002 | 0013 -> 0006
+        // 0006 | 31 - 31 | 0001 | 0007
+        // 0007 | 00 - 00 | 0000 | 0018 -> 0009
+        // 0008 | 00 - 00 | 0000 | 001d -> 0005 0009
+        // 0009 | 00 - 00 | 0000 | 0023 -> 000c
+        // 000a | 00 - 00 | 0000 | 0028 -> 0002
+        // 000b | 00 - 00 | 0000 | 002d -> 0008
+        // 000c | 00 - 00 | 0000 | 0032 -> 0013
+        // 000d | 00 - 00 | 0002 | 0037 -> 000e
+        // 000e | 32 - 32 | 0001 | 000f
+        // 000f | 00 - 00 | 0000 | 003c -> 0011
+        // 0010 | 00 - 00 | 0000 | 0041 -> 000d 0011
+        // 0011 | 00 - 00 | 0000 | 0047 -> 0014
+        // 0012 | 00 - 00 | 0000 | 004c -> 000a
+        // 0013 | 00 - 00 | 0000 | 0051 -> 0010
+        // 0014 | 00 - 00 | 0000 | 0056 -> 0001
+
+        assert_eq!(nfa.transition_count(), 21);
+        assert_eq!(nfa.epsilons.list_count(), 18);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x00), 1);
+        assert_eq!(nfa.epsilon_items_get(0x00, 0), 18);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(1, 0), Some((0x05, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x05), 0);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(2, 0), Some((0x09, 0x02)));
+        assert_eq!(nfa.epsilon_items_count(0x09), 1);
+        assert_eq!(nfa.epsilon_items_get(0x09, 0), 3);
+
+        // connects '0' literal
+        assert_eq!(nfa.transition_find(3, b'0'), Some((4, 0x01)));
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(4, 0), Some((0x0e, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x0e), 1);
+        assert_eq!(nfa.epsilon_items_get(0x0e, 0), 11);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(5, 0), Some((0x13, 0x02)));
+        assert_eq!(nfa.epsilon_items_count(0x13), 1);
+        assert_eq!(nfa.epsilon_items_get(0x13, 0), 6);
+
+        // connects '1' literal
+        assert_eq!(nfa.transition_find(6, b'1'), Some((7, 0x01)));
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(7, 0), Some((0x18, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x18), 1);
+        assert_eq!(nfa.epsilon_items_get(0x18, 0), 9);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(8, 0), Some((0x1d, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x1d), 2);
+        assert_eq!(nfa.epsilon_items_get(0x1d, 0), 5);
+        assert_eq!(nfa.epsilon_items_get(0x1d, 1), 9);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(9, 0), Some((0x23, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x23), 1);
+        assert_eq!(nfa.epsilon_items_get(0x23, 0), 12);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(10, 0), Some((0x28, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x28), 1);
+        assert_eq!(nfa.epsilon_items_get(0x28, 0), 2);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(11, 0), Some((0x2d, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x2d), 1);
+        assert_eq!(nfa.epsilon_items_get(0x2d, 0), 8);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(12, 0), Some((0x32, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x32), 1);
+        assert_eq!(nfa.epsilon_items_get(0x32, 0), 19);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(13, 0), Some((0x37, 0x02)));
+        assert_eq!(nfa.epsilon_items_count(0x37), 1);
+        assert_eq!(nfa.epsilon_items_get(0x37, 0), 14);
+
+        // connects '2' literal
+        assert_eq!(nfa.transition_find(14, b'2'), Some((15, 0x01)));
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(15, 0), Some((0x3c, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x3c), 1);
+        assert_eq!(nfa.epsilon_items_get(0x3c, 0), 17);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(16, 0), Some((0x41, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x41), 2);
+        assert_eq!(nfa.epsilon_items_get(0x41, 0), 13);
+        assert_eq!(nfa.epsilon_items_get(0x41, 1), 17);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(17, 0), Some((0x47, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x47), 1);
+        assert_eq!(nfa.epsilon_items_get(0x47, 0), 20);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(18, 0), Some((0x4c, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x4c), 1);
+        assert_eq!(nfa.epsilon_items_get(0x4c, 0), 10);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(19, 0), Some((0x51, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x51), 1);
+        assert_eq!(nfa.epsilon_items_get(0x51, 0), 16);
+
+        // points at epsilon
+        assert_eq!(nfa.transition_find(20, 0), Some((0x56, 0x00)));
+        assert_eq!(nfa.epsilon_items_count(0x56), 1);
+        assert_eq!(nfa.epsilon_items_get(0x56, 0), 1);
     }
 }

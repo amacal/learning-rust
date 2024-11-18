@@ -15,7 +15,7 @@ use rpn::*;
 use std::ops::Shr;
 
 fn main() {
-    let regex = b"(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
+    let regex = b"-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?\0".as_ptr();
 
     let rpn: RPN<4096> = match RPN::build(regex) {
         Some(rpn) => rpn,
@@ -157,6 +157,8 @@ impl Workbench {
     fn nfa_close_epsilon(&mut self, nfa: &NFA, worklist: u16) -> (u16, bool) {
         let mut changed = true;
         let mut epsilon = false;
+
+        let mut size = 0;
         let closure = self.closures_new();
 
         for off in 1..self.worklist.list_items_count(worklist) {
@@ -169,8 +171,18 @@ impl Workbench {
         let next = self.worklist.list_items_get(worklist, 0);
         self.worklist.list_items_set(worklist, 0, 0);
 
+        println!();
+        print!("closing {closure:04x} -> ");
+
+        for off in 0..self.closures.list_items_count(closure) {
+            print!("{:04x} ", self.closures.list_items_get(closure, off));
+        }
+
+        println!();
+
         while changed {
             changed = false;
+            size = self.closures.list_items_count(closure);
 
             for off in 0..self.closures.list_items_count(closure) {
                 let src = self.closures.list_items_get(closure, off);
@@ -181,7 +193,7 @@ impl Workbench {
                         if meta & 0x02 == 0x02 {
                             self.worklist_items_add(worklist, val);
                         } else {
-                            if !self.closures.list_items_contains(closure, val) {
+                            if !self.closures.list_items_contains(closure, val, size) {
                                 self.closures.list_items_add(closure, val);
                                 changed = true;
                                 epsilon = true;
@@ -195,10 +207,26 @@ impl Workbench {
                 self.closures.list_items_sort(closure);
                 self.closures.list_items_distinct(closure);
             }
+
+            print!("closing {closure:04x} -> ");
+
+            for off in 0..self.closures.list_items_count(closure) {
+                print!("{:04x} ", self.closures.list_items_get(closure, off));
+            }
+
+            println!();
         }
 
         self.worklist.list_items_sort(worklist);
         self.worklist.list_items_distinct(worklist);
+
+        print!("closed  {worklist:04x} -> ");
+
+        for off in 0..self.worklist.list_items_count(worklist) {
+            print!("{:04x} ", self.worklist.list_items_get(worklist, off));
+        }
+
+        println!("\n");
 
         let count = self.worklist_items_count(worklist);
         self.closures.list_items_resize(closure, 0);
@@ -230,6 +258,7 @@ impl Workbench {
             self.closures.list_pop_head();
             self.worklist.list_pop_head();
 
+            println!("temporary closure {closure:04x} already exists, reusing {idx:04x}");
             return self.closures.list_items_get(idx, length);
         }
 
@@ -246,6 +275,7 @@ impl Workbench {
             self.worklist.list_items_add(worklist, val);
         }
 
+        println!("temporary closure {closure:04x} persisted in the lookup");
         self.closures_items_get(closure, length)
     }
 
@@ -256,6 +286,8 @@ impl Workbench {
 
         let size = self.worklist.list_items_count(current);
         let src = self.worklist.list_items_get(current, 0);
+
+        println!("iteration nfa-src={src:04x}, dfa-dst={dst:04x}, worklist-out={worklist:04x}, worklist-in-size={size:04x}, via=({:02x}, {:02x})", via.0, via.1);
 
         // add NFA's dst state
         self.worklist.list_items_add(worklist, dst);
@@ -274,6 +306,7 @@ impl Workbench {
         if self.worklist.list_items_count(worklist) > 1 {
             let target = self.nfa_record_state(nfa, 0, worklist);
             dfa.transition_add(src, (via.0, via.1), target, accepting);
+            println!("appending dfa transition {src:04x} | {:02x} - {:02x} | {target:04x} | {accepting:04x}", via.0, via.1);
 
             if target != dst {
                 dfa.next_revert();
@@ -381,13 +414,15 @@ impl Workbench {
         self.closures.print();
 
         while self.worklist_count() > 0 {
-            println!("worklist, used={}", self.worklist.usage());
+            println!("worklist, cnt={}, used={}", self.worklist.list_count(), self.worklist.usage());
             self.worklist.print();
 
             // pop a list from the worklist, each worklist contains at 0 the source state id
             // the remaining items are reachable from the state id via epsilon
             let current = self.worklist.list_pop_tail();
             let intervals = self.merge_intervals(current, nfa);
+
+            println!("handling worklist={current:04x}, intervals={intervals:04x} ...");
 
             for off in 0..self.intervals.list_items_count(intervals) {
                 let encoded = self.intervals.list_items_get(intervals, off);
@@ -398,7 +433,7 @@ impl Workbench {
 
             self.intervals.list_pop_tail();
 
-            println!("closures, used={}", self.closures.usage());
+            println!("\nclosures, used={}", self.closures.usage());
             self.closures.print();
         }
     }
@@ -739,8 +774,6 @@ mod tests {
 
         workbench.nfa_to_dfa(&nfa, &mut dfa);
 
-        dfa.print();
-
         assert_eq!(dfa.traverse(b"start", 0), None);
         assert_eq!(dfa.traverse(b"stop", 0), Some((6, 3)));
         assert_eq!(dfa.traverse(b"startsta", 0), None);
@@ -779,5 +812,41 @@ mod tests {
 
             assert_eq!(result, bytes.len() - 1);
         }
+    }
+
+    #[test]
+    fn handles_traversing_dfa_number_regex() {
+        let regex = b"-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?\0".as_ptr();
+
+        let rpn: RPN<4096> = match RPN::build(regex) {
+            Some(rpn) => rpn,
+            None => return assert!(false),
+        };
+
+        let nfa = match NFA::build(rpn) {
+            Some(nfa) => nfa,
+            None => return assert!(false),
+        };
+
+        let mut dfa = DFA::new();
+        let mut workbench = Workbench::new();
+
+        workbench.nfa_to_dfa(&nfa, &mut dfa);
+        dfa.print();
+
+        assert_eq!(dfa.traverse(b"0", 0), Some((2, 0)));
+        assert_eq!(dfa.traverse(b"12", 0), Some((3, 1)));
+        assert_eq!(dfa.traverse(b"123", 0), Some((3, 2)));
+        assert_eq!(dfa.traverse(b"1e3", 0), Some((7, 2)));
+        assert_eq!(dfa.traverse(b"-123", 0), Some((3, 3)));
+        assert_eq!(dfa.traverse(b"12.34", 0), Some((6, 4)));
+        assert_eq!(dfa.traverse(b"-0.567", 0), Some((6, 5)));
+        assert_eq!(dfa.traverse(b"1.23e10", 0), Some((7, 6)));
+        assert_eq!(dfa.traverse(b"-4.56E-3", 0), Some((7, 7)));
+
+        assert_eq!(dfa.traverse(b".567", 0), None);
+        assert_eq!(dfa.traverse(b"123.", 0), Some((3, 2)));
+        assert_eq!(dfa.traverse(b"+123", 0), None);
+        assert_eq!(dfa.traverse(b"1.2e", 0), Some((6, 2)));
     }
 }
