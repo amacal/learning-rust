@@ -15,7 +15,7 @@ use rpn::*;
 use std::ops::Shr;
 
 fn main() {
-    let regex = b"(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))(.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))(.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))\0".as_ptr();
+    let regex = b"-32768|-?3276[0-7]|-?327[0-5][0-9]|-?32[0-6][0-9][0-9]|-?3[0-1][0-9][0-9][0-9]|-?[12][0-9][0-9][0-9][0-9]|-?[1-9][0-9][0-9][0-9]|-?[1-9][0-9][0-9]|-?[1-9][0-9]|-?[1-9]|0\0".as_ptr();
 
     let rpn: RPN<4096> = match RPN::build(regex) {
         Some(rpn) => rpn,
@@ -289,7 +289,10 @@ impl Workbench {
         let size = self.worklist.list_items_count(current);
         let src = self.worklist.list_items_get(current, 0);
 
-        println!("iteration nfa-src={src:04x}, dfa-dst={dst:04x}, worklist-out={worklist:04x}, worklist-in-size={size:04x}, via=({:02x}, {:02x})", via.0, via.1);
+        println!(
+            "iteration nfa-src={src:04x}, dfa-dst={dst:04x}, worklist-out={worklist:04x}, worklist-in-size={size:04x}, via=({:02x}, {:02x})",
+            via.0, via.1
+        );
 
         // add NFA's dst state
         self.worklist.list_items_add(worklist, dst);
@@ -444,6 +447,7 @@ impl Workbench {
 #[cfg(test)]
 mod tests {
     use crate::*;
+    use std::i16;
 
     #[test]
     fn handles_closing_nfa_from_epsilon_state() {
@@ -910,5 +914,44 @@ mod tests {
         assert_eq!(dfa.traverse(b"abc.def.ghi.jkl", 0), None);
         assert_eq!(dfa.traverse(b"192.168.1.-1", 0), None);
         assert_eq!(dfa.traverse(b"192.168.1,1", 0), None);
+    }
+
+    #[test]
+    fn handles_traversing_dfa_i16_regex() {
+        let regex = b"-32768|-?3276[0-7]|-?327[0-5][0-9]|-?32[0-6][0-9][0-9]|-?3[0-1][0-9][0-9][0-9]|-?[12][0-9][0-9][0-9][0-9]|-?[1-9][0-9][0-9][0-9]|-?[1-9][0-9][0-9]|-?[1-9][0-9]|-?[1-9]|0\0".as_ptr();
+
+        let rpn: RPN<4096> = match RPN::build(regex) {
+            Some(rpn) => rpn,
+            None => return assert!(false),
+        };
+
+        let nfa = match NFA::build(rpn) {
+            Some(nfa) => nfa,
+            None => return assert!(false),
+        };
+
+        let mut dfa = DFA::new();
+        let mut workbench = Workbench::new();
+
+        workbench.nfa_to_dfa(&nfa, &mut dfa);
+
+        let min = (i16::MIN as i32).wrapping_sub(1000);
+        let max = (i16::MAX as i32).wrapping_add(1000);
+
+        for num in min..=max {
+            let binary = format!("{}", num);
+            let bytes = binary.as_bytes();
+
+            let result = match dfa.traverse(bytes, 0) {
+                Some((_, idx)) => idx,
+                _ => return assert!(false),
+            };
+
+            match (num < i16::MIN.into(), num > i16::MAX.into()) {
+                (true, _) => assert_eq!(result, bytes.len() - 2),
+                (_, true) => assert_eq!(result, bytes.len() - 2),
+                _ => assert_eq!(result, bytes.len() - 1),
+            }
+        }
     }
 }
