@@ -477,7 +477,7 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
 
 #[cfg(test)]
 mod tests {
-    use crate::*;
+    use super::*;
 
     #[test]
     fn handles_empty_data_structure() {
