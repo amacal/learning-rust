@@ -20,14 +20,6 @@ impl DFA {
         Builder::new().build(nfa)
     }
 
-    pub fn transition_at(&self, idx: u16) -> (u16, (u8, u8), u16, u16) {
-        self.transitions.graph_at(idx)
-    }
-
-    pub fn transition_add(&mut self, src: u16, via: (u8, u8), dst: u16, metadata: u16) {
-        self.transitions.graph_add(src, via, dst, metadata);
-    }
-
     pub fn transition_count(&self) -> u16 {
         self.transitions.graph_count()
     }
@@ -38,7 +30,7 @@ impl DFA {
 
     pub fn print(&self) {
         for idx in 0..self.transition_count() {
-            let transition = self.transition_at(idx);
+            let transition = self.transitions.graph_at(idx);
             println!("{:04x} | {:02x} - {:02x} | {:04x} | {:04x}", transition.0, transition.1 .0, transition.1 .1, transition.2, transition.3);
         }
 
@@ -103,7 +95,7 @@ impl Builder {
         let mut changed = true;
         let mut epsilon = false;
 
-        let mut size = 0;
+        let mut size;
         let closure = self.closures.list_push_head();
 
         for off in 1..self.worklist.list_items_count(worklist) {

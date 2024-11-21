@@ -81,8 +81,3 @@ impl<LIKE: ArrayLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<L
         self.heap.set0(val, off);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-}

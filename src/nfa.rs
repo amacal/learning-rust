@@ -47,7 +47,7 @@ impl NFA {
 
     pub fn print(&self) {
         for idx in 0..self.transition_count() {
-            let transition = self.transition_at(idx);
+            let transition = self.transitions.graph_at(idx);
             print!("{:04x} | {:02x} - {:02x} | {:04x} | ", transition.0, transition.1 .0, transition.1 .1, transition.3);
 
             if transition.1 .0 > 0 {

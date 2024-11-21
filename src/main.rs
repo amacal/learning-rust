@@ -12,7 +12,7 @@ use nfa::*;
 use rpn::*;
 
 fn main() {
-    let regex = b"-32768|-?3276[0-7]|-?327[0-5][0-9]|-?32[0-6][0-9][0-9]|-?3[0-1][0-9][0-9][0-9]|-?[12][0-9][0-9][0-9][0-9]|-?[1-9][0-9][0-9][0-9]|-?[1-9][0-9][0-9]|-?[1-9][0-9]|-?[1-9]|0\0".as_ptr();
+    let regex = b"[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\0".as_ptr();
 
     let rpn: RPN<4096> = match RPN::build(regex) {
         Some(rpn) => rpn,
@@ -35,5 +35,5 @@ fn main() {
     println!("dfa, transitions={}", dfa.transition_count());
     dfa.print();
 
-    println!("{:?}", dfa.traverse(b"127.0.0.1", 0));
+    println!("{:?}", dfa.traverse(b"www.wp.pl", 0));
 }
