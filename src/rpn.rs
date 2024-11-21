@@ -63,7 +63,7 @@ impl BuilderState {
                             b'&' => {
                                 builder.operators.stack_pop_front();
                                 builder.elements.stack_push_front(b'&');
-                            },
+                            }
                             _ => break,
                         }
                     }
@@ -83,6 +83,11 @@ impl BuilderState {
                 builder.elements.stack_push_front(b'?');
                 BuilderState::InGroups { concatenation }
             }
+            b'#' => {
+                builder.operators.stack_push_front(unsafe { *token.1.add(1) });
+                builder.operators.stack_push_front(b'#');
+                BuilderState::InGroups { concatenation }
+            }
             b'[' => {
                 if concatenation {
                     while builder.operators.stack_size_front() > 0 {
@@ -90,7 +95,7 @@ impl BuilderState {
                             b'&' => {
                                 builder.operators.stack_pop_front();
                                 builder.elements.stack_push_front(b'&');
-                            },
+                            }
                             _ => break,
                         }
                     }
@@ -110,6 +115,13 @@ impl BuilderState {
                         b'*' | b'+' | b'?' | b'&' => {
                             let token = builder.operators.stack_pop_front();
                             builder.elements.stack_push_front(token);
+                        }
+                        b'#' => {
+                            let key = builder.operators.stack_pop_front();
+                            let value = builder.operators.stack_pop_front();
+
+                            builder.elements.stack_push_front(key);
+                            builder.elements.stack_push_front(value);
                         }
                         _ => break,
                     }
@@ -146,7 +158,7 @@ impl BuilderState {
                             b'&' => {
                                 builder.operators.stack_pop_front();
                                 builder.elements.stack_push_front(b'&');
-                            },
+                            }
                             _ => break,
                         }
                     }
@@ -475,5 +487,44 @@ mod tests {
         };
 
         assert_eq!(regex.as_bytes(), b"l1-?l10-19-09+?&|&l1.-09+&?&-ee-EE|-++l1-|?&-09+&?&");
+    }
+
+    #[test]
+    fn handles_rpn_from_accepting_byte() {
+        let regex = b"ab#x\0".as_ptr();
+        let builder = Builder::<4096>::new();
+
+        let regex = match builder.build(regex) {
+            Some(regex) => regex,
+            None => return assert!(false),
+        };
+
+        assert_eq!(regex.as_bytes(), b"l2ab#x");
+    }
+
+    #[test]
+    fn handles_rpn_from_accepting_byte_multiple_group() {
+        let regex = b"(ab#x)|(cd#y)\0".as_ptr();
+        let builder = Builder::<4096>::new();
+
+        let regex = match builder.build(regex) {
+            Some(regex) => regex,
+            None => return assert!(false),
+        };
+
+        assert_eq!(regex.as_bytes(), b"l2ab#xl2cd#y|");
+    }
+
+    #[test]
+    fn handles_rpn_from_accepting_byte_multiple_either() {
+        let regex = b"ab#x|cd#y\0".as_ptr();
+        let builder = Builder::<4096>::new();
+
+        let regex = match builder.build(regex) {
+            Some(regex) => regex,
+            None => return assert!(false),
+        };
+
+        assert_eq!(regex.as_bytes(), b"l2ab#xl2cd#y|");
     }
 }

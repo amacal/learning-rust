@@ -19,11 +19,12 @@ impl Lexer {
             match value {
                 0 if off == 0 => return None,
                 0 => break,
+                b'#' if off == 0 && self.at(1) > 0 => break off = 2,
                 b'(' | b')' | b'[' | b'|' if off == 0 => break off = 1,
-                b'(' | b')' | b'[' | b'|' => break,
+                b'(' | b')' | b'[' | b'|' | b'#' => break,
                 b'*' | b'+' | b'?' if off == 0 => break off = 1,
                 b'*' | b'+' | b'?' if off == 1 => break,
-                b'*' | b'+' | b'?' => break off = off.wrapping_sub(1),
+                b'*' | b'+' | b'?' => break off = off.wrapping_sub(1), // literal was prepended
                 _ => (),
             }
 
@@ -114,6 +115,17 @@ mod tests {
             assert_eq!(lexer.next_in_group(), Some((input.add(0), 9)));
             assert_eq!(lexer.next_in_group(), Some((input.add(9), 9)));
             assert_eq!(lexer.next_in_group(), Some((input.add(18), 8)));
+        }
+    }
+
+    #[test]
+    fn handles_regex_tokenization_accepting_byte() {
+        let input = b"ab#x\0".as_ptr();
+        let mut lexer = Lexer::new(input);
+
+        unsafe {
+            assert_eq!(lexer.next_in_group(), Some((input.add(0), 2)));
+            assert_eq!(lexer.next_in_group(), Some((input.add(2), 2)));
         }
     }
 }
