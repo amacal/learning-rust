@@ -11,9 +11,7 @@ pub struct DFA {
 
 impl DFA {
     fn from(transitions: Graph<4096, GuardSegfault>) -> Self {
-        Self {
-            transitions: transitions,
-        }
+        Self { transitions: transitions }
     }
 
     pub fn build(nfa: NFA) -> Option<Self> {
@@ -55,6 +53,33 @@ impl DFA {
         }
 
         best
+    }
+
+    pub fn traverse_ptr(&self, data: *const u8, mask: usize, offset: usize, mut length: usize) -> Option<(u16, usize)> {
+        let mut current = (0, offset);
+        let mut best = None;
+
+        while length > 0 {
+            let val = unsafe { *data.add(current.1 & mask) };
+            //println!("# {} {val:02x} {length}", current.1);
+            current = match self.transition_find(current.0, val) {
+                None => break,
+                Some((state, meta)) => {
+                    if meta & 0xff > 0x00 {
+                        best = Some((meta & 0xff, current.1.wrapping_add(1).wrapping_sub(offset)));
+                    }
+
+                    length = length.wrapping_sub(1);
+                    (state, current.1.wrapping_add(1))
+                }
+            };
+        }
+
+        if length > 0 {
+            best
+        } else {
+            None
+        }
     }
 }
 
@@ -101,12 +126,14 @@ impl Builder {
         for off in 1..self.worklist.list_items_count(worklist) {
             let val = self.worklist.list_items_get(worklist, off);
             self.closures.list_items_add(closure, val & 0x7fff);
+            //self.worklist.list_items_set(worklist, off, val & 0x7fff);
             epsilon = epsilon | (val & 0x8000 == 0x8000);
         }
 
         // a state where the worklist will point if successfully closed
         let next = self.worklist.list_items_get(worklist, 0);
         self.worklist.list_items_set(worklist, 0, 0);
+        //self.worklist.list_items_resize(worklist, 1);
 
         println!();
         print!("closing {closure:04x} -> ");
@@ -382,7 +409,7 @@ impl Builder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rpn::*;
+    use crate::regex::RPN;
     use std::i16;
 
     #[test]
@@ -627,11 +654,14 @@ mod tests {
             None => return assert!(false),
         };
 
+        nfa.print();
+
         let dfa = match DFA::build(nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
 
+        dfa.print();
         assert_eq!(dfa.transition_count(), 1);
 
         assert_eq!(dfa.transition_find(0, b'0'), Some((0, 0x01)));
