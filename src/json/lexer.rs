@@ -9,9 +9,32 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(data: *const u8, mask: usize) -> Option<Self> {
-        let regex = b"({#\x01)|(}#\x02)|([[]#\x03)|(]#\x04)|(,#\x05)|(:#\x06)|(( |\n)+#\x07)|((\"([^\"]|\\[\"\\/bfnrt])+\")#\x08)|((-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?)#\x09)|((false)#\x0a)|((true)#\x0b)|((null)#\x0c)\0".as_ptr();
+        let regex = b"()|()|()|()|()|()|(()|()|()|()\0".as_ptr();
+        let mut builder = RPN::<4096>::builder();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        // catch {, }, [, ], comma and colon
+        builder.append(b"{#\x01\0".as_ptr());
+        builder.append(b"}#\x02\0".as_ptr());
+        builder.append(b"[[]#\x03\0".as_ptr());
+        builder.append(b"]#\x04\0".as_ptr());
+        builder.append(b",#\x05\0".as_ptr());
+        builder.append(b":#\x06\0".as_ptr());
+
+        // catch white characters
+        builder.append(b"( |\n)+#\x07\0".as_ptr());
+
+        // catch double quoted string literal
+        builder.append(b"(\"([^\"]|\\[\"\\/bfnrt])+\")#\x08\0".as_ptr());
+
+        // catch number with optional floating part or scientific notation
+        builder.append(b"(-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?)#\x09\0".as_ptr());
+
+        // catch false, true, null literals
+        builder.append(b"(false)#\x0a\0".as_ptr());
+        builder.append(b"(true)#\x0b\0".as_ptr());
+        builder.append(b"(null)#\x0c\0".as_ptr());
+
+        let rpn: RPN<4096> = match builder.build() {
             Some(rpn) => rpn,
             None => return None,
         };
@@ -20,6 +43,8 @@ impl Lexer {
             Some(nfa) => nfa,
             None => return None,
         };
+
+        nfa.print();
 
         let dfa = match DFA::build(nfa) {
             Some(dfa) => dfa,
@@ -37,8 +62,6 @@ impl Lexer {
     }
 
     pub fn process(&mut self, length: usize) -> Option<(u16, usize)> {
-        //println!("{} {}", self.offset, length);
-
         let (token, length) = match self.dfa.traverse_ptr(self.data, self.mask, self.offset, length) {
             None => return None,
             Some(val) => val,

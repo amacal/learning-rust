@@ -12,8 +12,15 @@ impl StackLike for OperatorsMarker {}
 pub struct RPN<const SIZE: usize>(Array<ElementsMarker, u8, SIZE, GuardSegfault>);
 
 impl<const SIZE: usize> RPN<SIZE> {
-    pub fn build(input: *const u8) -> Option<Self> {
-        Builder::new().build(input)
+    pub fn build(pattern: *const u8) -> Option<Self> {
+        let mut builder = Builder::new();
+
+        builder.append(pattern);
+        builder.build()
+    }
+
+    pub fn builder() -> Builder<SIZE> {
+        Builder::new()
     }
 
     #[cfg(test)]
@@ -48,6 +55,10 @@ enum BuilderState {
 }
 
 impl BuilderState {
+    fn new() -> Self {
+        BuilderState::InGroups { concatenation: false }
+    }
+
     fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, concatenation: bool) -> BuilderState {
         let token = if let Some(token) = lexer.next_in_group() {
             unsafe { (*token.0, token.0, token.1) }
@@ -231,7 +242,8 @@ impl BuilderState {
     }
 }
 
-struct Builder<const SIZE: usize> {
+pub struct Builder<const SIZE: usize> {
+    counter: usize,
     elements: Array<ElementsMarker, u8, SIZE, GuardSegfault>,
     operators: Array<OperatorsMarker, u8, 4096, GuardSegfault>,
 }
@@ -239,17 +251,18 @@ struct Builder<const SIZE: usize> {
 impl<const SIZE: usize> Builder<SIZE> {
     fn new() -> Self {
         Self {
+            counter: 0,
             elements: Array::new(),
             operators: Array::new(),
         }
     }
 
-    fn build(mut self, input: *const u8) -> Option<RPN<SIZE>> {
-        let mut lexer = Lexer::new(input);
-        let mut state = BuilderState::InGroups { concatenation: false };
+    pub fn append(&mut self, pattern: *const u8) {
+        let mut lexer = Lexer::new(pattern);
+        let mut state = BuilderState::new();
 
         loop {
-            state = match state.handle(&mut self, &mut lexer) {
+            state = match state.handle(self, &mut lexer) {
                 BuilderState::Completed => break,
                 state => state,
             };
@@ -260,6 +273,14 @@ impl<const SIZE: usize> Builder<SIZE> {
             self.elements.stack_push_front(val);
         }
 
+        if self.counter > 0 {
+            self.elements.stack_push_front(b'|');
+        }
+
+        self.counter = self.counter.wrapping_add(1);
+    }
+
+    pub fn build(self) -> Option<RPN<SIZE>> {
         Some(RPN(self.elements))
     }
 }
@@ -270,10 +291,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_seq_of_one_character() {
-        let regex = b"a\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"a\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -283,10 +302,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_seq_of_two_characters() {
-        let regex = b"ab\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"ab\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -296,10 +313,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_seq_of_alphabet() {
-        let regex = b"abcdefghijklmnopqrstuvwxyz\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"abcdefghijklmnopqrstuvwxyz\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -309,10 +324,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_either() {
-        let regex = b"a|b\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"a|b\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -322,10 +335,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_star() {
-        let regex = b"ab*\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"ab*\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -335,10 +346,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_plus() {
-        let regex = b"ab+\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"ab+\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -348,10 +357,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_optional() {
-        let regex = b"ab?\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"ab?\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -361,10 +368,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_optional_concatenated() {
-        let regex = b"(st)?op\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"(st)?op\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -374,10 +379,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_either_and() {
-        let regex = b"abcdefghijkl|mnopqrstuvwx\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"abcdefghijkl|mnopqrstuvwx\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -387,10 +390,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_group() {
-        let regex = b"(ab)*|(cd)+\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"(ab)*|(cd)+\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -400,10 +401,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_class() {
-        let regex = b"(ab)*|[a-z]+\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"(ab)*|[a-z]+\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -413,10 +412,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_class_multiple() {
-        let regex = b"(ab)*|[a-z0-9]+\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"(ab)*|[a-z0-9]+\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -426,10 +423,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_class_multiple_negated() {
-        let regex = b"(ab)*|[^a-z0-9]+\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"(ab)*|[^a-z0-9]+\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -439,10 +434,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_nested_groups() {
-        let regex = b"(0|(0+1+)+)+\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"(0|(0+1+)+)+\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -452,10 +445,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_dividing_by_three_regex() {
-        let regex = b"(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -465,10 +456,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_zero_followed_by_two_optional_numbers() {
-        let regex = b"01?2?\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"01?2?\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -478,10 +467,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_number_regex() {
-        let regex = b"-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -491,10 +478,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_accepting_byte() {
-        let regex = b"ab#x\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"ab#x\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -504,10 +489,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_accepting_byte_multiple_group() {
-        let regex = b"(ab#x)|(cd#y)\0".as_ptr();
-        let builder = Builder::<4096>::new();
-
-        let regex = match builder.build(regex) {
+        let pattern = b"(ab#x)|(cd#y)\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
@@ -517,10 +500,23 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_accepting_byte_multiple_either() {
-        let regex = b"ab#x|cd#y\0".as_ptr();
-        let builder = Builder::<4096>::new();
+        let pattern = b"ab#x|cd#y\0".as_ptr();
+        let regex = match RPN::<4096>::build(pattern) {
+            Some(regex) => regex,
+            None => return assert!(false),
+        };
 
-        let regex = match builder.build(regex) {
+        assert_eq!(regex.as_bytes(), b"l2ab#xl2cd#y|");
+    }
+
+    #[test]
+    fn handles_rpn_from_multiple_appends() {
+        let mut builder = RPN::<4096>::builder();
+
+        builder.append(b"ab#x\0".as_ptr());
+        builder.append(b"cd#y\0".as_ptr());
+
+        let regex = match builder.build() {
             Some(regex) => regex,
             None => return assert!(false),
         };
