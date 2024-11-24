@@ -35,8 +35,8 @@ impl DFA {
         println!();
     }
 
-    pub fn traverse(&self, data: &[u8], start: u16) -> Option<(u16, usize)> {
-        let mut current = (start, 0);
+    pub fn traverse(&self, data: &[u8]) -> Option<(u16, usize)> {
+        let mut current = (1, 0);
         let mut best = None;
 
         for (idx, &val) in data.iter().enumerate() {
@@ -56,12 +56,11 @@ impl DFA {
     }
 
     pub fn traverse_ptr(&self, data: *const u8, mask: usize, offset: usize, mut length: usize) -> Option<(u16, usize)> {
-        let mut current = (0, offset);
+        let mut current = (1, offset);
         let mut best = None;
 
         while length > 0 {
             let val = unsafe { *data.add(current.1 & mask) };
-            //println!("# {} {val:02x} {length}", current.1);
             current = match self.transition_find(current.0, val) {
                 None => break,
                 Some((state, meta)) => {
@@ -94,7 +93,7 @@ struct Builder {
 impl Builder {
     fn new() -> Self {
         Self {
-            counter: 0,
+            counter: 1,
             transitions: Graph::new(),
             worklist: Collection::new(),
             closures: Collection::new(),
@@ -272,12 +271,20 @@ impl Builder {
         // if working list contains any state
         if self.worklist.list_items_count(worklist) > 1 {
             let target = self.nfa_record_state(nfa, 0, worklist);
+
+            let target = if target != dst {
+                self.revert();
+                target
+            } else if self.worklist.list_items_count(worklist) == 1 {
+                self.revert();
+                0x0000
+            } else {
+                target
+            };
+
             self.transitions.graph_add(src, (via.0, via.1), target, accepting);
             println!("appending dfa transition {src:04x} | {:02x} - {:02x} | {target:04x} | {accepting:04x}", via.0, via.1);
 
-            if target != dst {
-                self.revert();
-            }
         } else {
             self.revert();
             self.worklist.list_pop_head();
@@ -550,15 +557,23 @@ mod tests {
             None => return assert!(false),
         };
 
+        // 0001 | 73 - 73 | 0002 | 0000
+        // 0002 | 74 - 74 | 0003 | 0000
+        // 0003 | 61 - 61 | 0004 | 0000
+        // 0003 | 6f - 6f | 0005 | 0000
+        // 0004 | 72 - 72 | 0006 | 0000
+        // 0005 | 70 - 70 | 0000 | 0079
+        // 0006 | 74 - 74 | 0000 | 0078
+
         assert_eq!(dfa.transition_count(), 7);
 
-        assert_eq!(dfa.transition_find(0, b's'), Some((1, 0x00)));
-        assert_eq!(dfa.transition_find(1, b't'), Some((2, 0x00)));
-        assert_eq!(dfa.transition_find(2, b'a'), Some((3, 0x00)));
-        assert_eq!(dfa.transition_find(2, b'o'), Some((4, 0x00)));
-        assert_eq!(dfa.transition_find(3, b'r'), Some((5, 0x00)));
-        assert_eq!(dfa.transition_find(4, b'p'), Some((6, 0x79)));
-        assert_eq!(dfa.transition_find(5, b't'), Some((7, 0x78)));
+        assert_eq!(dfa.transition_find(1, b's'), Some((2, 0x00)));
+        assert_eq!(dfa.transition_find(2, b't'), Some((3, 0x00)));
+        assert_eq!(dfa.transition_find(3, b'a'), Some((4, 0x00)));
+        assert_eq!(dfa.transition_find(3, b'o'), Some((5, 0x00)));
+        assert_eq!(dfa.transition_find(4, b'r'), Some((6, 0x00)));
+        assert_eq!(dfa.transition_find(5, b'p'), Some((0, 0x79)));
+        assert_eq!(dfa.transition_find(6, b't'), Some((0, 0x78)));
     }
 
     #[test]
@@ -580,12 +595,17 @@ mod tests {
             None => return assert!(false),
         };
 
+        // 0001 | 73 - 73 | 0002 | 0000
+        // 0002 | 74 - 74 | 0003 | 0000
+        // 0003 | 6f - 6f | 0004 | 0000
+        // 0004 | 70 - 70 | 0001 | 0078
+
         assert_eq!(dfa.transition_count(), 4);
 
-        assert_eq!(dfa.transition_find(0, b's'), Some((1, 0x00)));
-        assert_eq!(dfa.transition_find(1, b't'), Some((2, 0x00)));
-        assert_eq!(dfa.transition_find(2, b'o'), Some((3, 0x00)));
-        assert_eq!(dfa.transition_find(3, b'p'), Some((0, 0x78)));
+        assert_eq!(dfa.transition_find(1, b's'), Some((2, 0x00)));
+        assert_eq!(dfa.transition_find(2, b't'), Some((3, 0x00)));
+        assert_eq!(dfa.transition_find(3, b'o'), Some((4, 0x00)));
+        assert_eq!(dfa.transition_find(4, b'p'), Some((1, 0x78)));
     }
 
     #[test]
@@ -623,21 +643,21 @@ mod tests {
             None => return assert!(false),
         };
 
-        // 0000 | 6f - 6f | 0001 | 0000
-        // 0000 | 73 - 73 | 0200 | 0000
-        // 0001 | 70 - 70 | 0201 | 0001
-        // 0002 | 74 - 74 | 0004 | 0000
+        // 0001 | 6f - 6f | 0002 | 0000
+        // 0001 | 73 - 73 | 0003 | 0000
+        // 0002 | 70 - 70 | 0000 | 0001
+        // 0003 | 74 - 74 | 0004 | 0000
         // 0004 | 6f - 6f | 0005 | 0000
-        // 0005 | 70 - 70 | 0006 | 0001
+        // 0005 | 70 - 70 | 0000 | 0001
 
         assert_eq!(dfa.transition_count(), 6);
 
-        assert_eq!(dfa.transition_find(0, b'o'), Some((1, 0x00)));
-        assert_eq!(dfa.transition_find(0, b's'), Some((2, 0x00)));
-        assert_eq!(dfa.transition_find(1, b'p'), Some((3, 0x01)));
-        assert_eq!(dfa.transition_find(2, b't'), Some((4, 0x00)));
+        assert_eq!(dfa.transition_find(1, b'o'), Some((2, 0x00)));
+        assert_eq!(dfa.transition_find(1, b's'), Some((3, 0x00)));
+        assert_eq!(dfa.transition_find(2, b'p'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(3, b't'), Some((4, 0x00)));
         assert_eq!(dfa.transition_find(4, b'o'), Some((5, 0x00)));
-        assert_eq!(dfa.transition_find(5, b'p'), Some((6, 0x01)));
+        assert_eq!(dfa.transition_find(5, b'p'), Some((0, 0x01)));
     }
 
     #[test]
@@ -661,19 +681,19 @@ mod tests {
             None => return assert!(false),
         };
 
-        dfa.print();
+        // 0001 | 30 - 39 | 0001 | 0001
         assert_eq!(dfa.transition_count(), 1);
 
-        assert_eq!(dfa.transition_find(0, b'0'), Some((0, 0x01)));
-        assert_eq!(dfa.transition_find(0, b'1'), Some((0, 0x01)));
-        assert_eq!(dfa.transition_find(0, b'2'), Some((0, 0x01)));
-        assert_eq!(dfa.transition_find(0, b'3'), Some((0, 0x01)));
-        assert_eq!(dfa.transition_find(0, b'4'), Some((0, 0x01)));
-        assert_eq!(dfa.transition_find(0, b'5'), Some((0, 0x01)));
-        assert_eq!(dfa.transition_find(0, b'6'), Some((0, 0x01)));
-        assert_eq!(dfa.transition_find(0, b'7'), Some((0, 0x01)));
-        assert_eq!(dfa.transition_find(0, b'8'), Some((0, 0x01)));
-        assert_eq!(dfa.transition_find(0, b'9'), Some((0, 0x01)));
+        assert_eq!(dfa.transition_find(1, b'0'), Some((1, 0x01)));
+        assert_eq!(dfa.transition_find(1, b'1'), Some((1, 0x01)));
+        assert_eq!(dfa.transition_find(1, b'2'), Some((1, 0x01)));
+        assert_eq!(dfa.transition_find(1, b'3'), Some((1, 0x01)));
+        assert_eq!(dfa.transition_find(1, b'4'), Some((1, 0x01)));
+        assert_eq!(dfa.transition_find(1, b'5'), Some((1, 0x01)));
+        assert_eq!(dfa.transition_find(1, b'6'), Some((1, 0x01)));
+        assert_eq!(dfa.transition_find(1, b'7'), Some((1, 0x01)));
+        assert_eq!(dfa.transition_find(1, b'8'), Some((1, 0x01)));
+        assert_eq!(dfa.transition_find(1, b'9'), Some((1, 0x01)));
     }
 
     #[test]
@@ -696,12 +716,12 @@ mod tests {
         };
 
         // fully accepted
-        assert_eq!(dfa.traverse(b"start", 0), Some((1, 4)));
-        assert_eq!(dfa.traverse(b"stop", 0), Some((1, 3)));
+        assert_eq!(dfa.traverse(b"start"), Some((1, 4)));
+        assert_eq!(dfa.traverse(b"stop"), Some((1, 3)));
 
         // not accepted
-        assert_eq!(dfa.traverse(b"stort", 0), None);
-        assert_eq!(dfa.traverse(b"stap", 0), None);
+        assert_eq!(dfa.traverse(b"stort"), None);
+        assert_eq!(dfa.traverse(b"stap"), None);
     }
 
     #[test]
@@ -724,18 +744,18 @@ mod tests {
         };
 
         // fully accepted
-        assert_eq!(dfa.traverse(b"start", 0), Some((1, 4)));
-        assert_eq!(dfa.traverse(b"stop", 0), Some((1, 3)));
-        assert_eq!(dfa.traverse(b"startstop", 0), Some((1, 8)));
-        assert_eq!(dfa.traverse(b"stopstart", 0), Some((1, 8)));
+        assert_eq!(dfa.traverse(b"start"), Some((1, 4)));
+        assert_eq!(dfa.traverse(b"stop"), Some((1, 3)));
+        assert_eq!(dfa.traverse(b"startstop"), Some((1, 8)));
+        assert_eq!(dfa.traverse(b"stopstart"), Some((1, 8)));
 
         // partially accepted
-        assert_eq!(dfa.traverse(b"startsta", 0), Some((1, 4)));
-        assert_eq!(dfa.traverse(b"stopsto", 0), Some((1, 3)));
+        assert_eq!(dfa.traverse(b"startsta"), Some((1, 4)));
+        assert_eq!(dfa.traverse(b"stopsto"), Some((1, 3)));
 
         // not accepted
-        assert_eq!(dfa.traverse(b"sto", 0), None);
-        assert_eq!(dfa.traverse(b"sta", 0), None);
+        assert_eq!(dfa.traverse(b"sto"), None);
+        assert_eq!(dfa.traverse(b"sta"), None);
     }
 
     #[test]
@@ -758,16 +778,16 @@ mod tests {
         };
 
         // fully accepted
-        assert_eq!(dfa.traverse(b"stop", 0), Some((1, 3)));
-        assert_eq!(dfa.traverse(b"startstop", 0), Some((1, 8)));
+        assert_eq!(dfa.traverse(b"stop"), Some((1, 3)));
+        assert_eq!(dfa.traverse(b"startstop"), Some((1, 8)));
 
         // partially accepted
-        assert_eq!(dfa.traverse(b"stopsto", 0), Some((1, 3)));
-        assert_eq!(dfa.traverse(b"stopstart", 0), Some((1, 3)));
+        assert_eq!(dfa.traverse(b"stopsto"), Some((1, 3)));
+        assert_eq!(dfa.traverse(b"stopstart"), Some((1, 3)));
 
         // not accepted
-        assert_eq!(dfa.traverse(b"start", 0), None);
-        assert_eq!(dfa.traverse(b"startsta", 0), None);
+        assert_eq!(dfa.traverse(b"start"), None);
+        assert_eq!(dfa.traverse(b"startsta"), None);
     }
 
     #[test]
@@ -790,15 +810,15 @@ mod tests {
         };
 
         // fully accepted
-        assert_eq!(dfa.traverse(b"start", 0), Some((120, 4)));
-        assert_eq!(dfa.traverse(b"startstop", 0), Some((121, 8)));
+        assert_eq!(dfa.traverse(b"start"), Some((120, 4)));
+        assert_eq!(dfa.traverse(b"startstop"), Some((121, 8)));
 
         // partially accepted
-        assert_eq!(dfa.traverse(b"startsto", 0), Some((120, 4)));
-        assert_eq!(dfa.traverse(b"startstart", 0), Some((120, 4)));
+        assert_eq!(dfa.traverse(b"startsto"), Some((120, 4)));
+        assert_eq!(dfa.traverse(b"startstart"), Some((120, 4)));
 
         // not accepted
-        assert_eq!(dfa.traverse(b"stop", 0), None);
+        assert_eq!(dfa.traverse(b"stop"), None);
     }
 
     #[test]
@@ -824,7 +844,7 @@ mod tests {
             let binary = format!("{:b}", num);
             let bytes = binary.as_bytes();
 
-            let result = match dfa.traverse(bytes, 0) {
+            let result = match dfa.traverse(bytes) {
                 Some((_, idx)) => idx,
                 _ => return assert!(num % 3 != 0),
             };
@@ -853,23 +873,23 @@ mod tests {
         };
 
         // fully accepted
-        assert_eq!(dfa.traverse(b"0", 0), Some((1, 0)));
-        assert_eq!(dfa.traverse(b"12", 0), Some((1, 1)));
-        assert_eq!(dfa.traverse(b"123", 0), Some((1, 2)));
-        assert_eq!(dfa.traverse(b"1e3", 0), Some((1, 2)));
-        assert_eq!(dfa.traverse(b"-123", 0), Some((1, 3)));
-        assert_eq!(dfa.traverse(b"12.34", 0), Some((1, 4)));
-        assert_eq!(dfa.traverse(b"-0.567", 0), Some((1, 5)));
-        assert_eq!(dfa.traverse(b"1.23e10", 0), Some((1, 6)));
-        assert_eq!(dfa.traverse(b"-4.56E-3", 0), Some((1, 7)));
+        assert_eq!(dfa.traverse(b"0"), Some((1, 0)));
+        assert_eq!(dfa.traverse(b"12"), Some((1, 1)));
+        assert_eq!(dfa.traverse(b"123"), Some((1, 2)));
+        assert_eq!(dfa.traverse(b"1e3"), Some((1, 2)));
+        assert_eq!(dfa.traverse(b"-123"), Some((1, 3)));
+        assert_eq!(dfa.traverse(b"12.34"), Some((1, 4)));
+        assert_eq!(dfa.traverse(b"-0.567"), Some((1, 5)));
+        assert_eq!(dfa.traverse(b"1.23e10"), Some((1, 6)));
+        assert_eq!(dfa.traverse(b"-4.56E-3"), Some((1, 7)));
 
         // partially accepted
-        assert_eq!(dfa.traverse(b"123.", 0), Some((1, 2)));
-        assert_eq!(dfa.traverse(b"1.2e", 0), Some((1, 2)));
+        assert_eq!(dfa.traverse(b"123."), Some((1, 2)));
+        assert_eq!(dfa.traverse(b"1.2e"), Some((1, 2)));
 
         // not accepted
-        assert_eq!(dfa.traverse(b".567", 0), None);
-        assert_eq!(dfa.traverse(b"+123", 0), None);
+        assert_eq!(dfa.traverse(b".567"), None);
+        assert_eq!(dfa.traverse(b"+123"), None);
     }
 
     #[test]
@@ -892,27 +912,27 @@ mod tests {
         };
 
         // fully accepted
-        assert_eq!(dfa.traverse(b"0.0.0.0", 0), Some((1, 6)));
-        assert_eq!(dfa.traverse(b"1.2.3.4", 0), Some((1, 6)));
-        assert_eq!(dfa.traverse(b"127.0.0.1", 0), Some((1, 8)));
-        assert_eq!(dfa.traverse(b"172.16.0.0", 0), Some((1, 9)));
-        assert_eq!(dfa.traverse(b"10.0.0.255", 0), Some((1, 9)));
-        assert_eq!(dfa.traverse(b"192.168.1.1", 0), Some((1, 10)));
-        assert_eq!(dfa.traverse(b"255.255.255.255", 0), Some((1, 14)));
+        assert_eq!(dfa.traverse(b"0.0.0.0"), Some((1, 6)));
+        assert_eq!(dfa.traverse(b"1.2.3.4"), Some((1, 6)));
+        assert_eq!(dfa.traverse(b"127.0.0.1"), Some((1, 8)));
+        assert_eq!(dfa.traverse(b"172.16.0.0"), Some((1, 9)));
+        assert_eq!(dfa.traverse(b"10.0.0.255"), Some((1, 9)));
+        assert_eq!(dfa.traverse(b"192.168.1.1"), Some((1, 10)));
+        assert_eq!(dfa.traverse(b"255.255.255.255"), Some((1, 14)));
 
         // partially accepted
-        assert_eq!(dfa.traverse(b"192.168.1.256", 0), Some((1, 11)));
-        assert_eq!(dfa.traverse(b"192.168.1.1.1", 0), Some((1, 10)));
-        assert_eq!(dfa.traverse(b"192.168.1.1.", 0), Some((1, 10)));
+        assert_eq!(dfa.traverse(b"192.168.1.256"), Some((1, 11)));
+        assert_eq!(dfa.traverse(b"192.168.1.1.1"), Some((1, 10)));
+        assert_eq!(dfa.traverse(b"192.168.1.1."), Some((1, 10)));
 
         // not accepted
-        assert_eq!(dfa.traverse(b"256.256.256.256", 0), None);
-        assert_eq!(dfa.traverse(b"192.168.1", 0), None);
-        assert_eq!(dfa.traverse(b"192.168..1", 0), None);
-        assert_eq!(dfa.traverse(b"300.168.1.1", 0), None);
-        assert_eq!(dfa.traverse(b"abc.def.ghi.jkl", 0), None);
-        assert_eq!(dfa.traverse(b"192.168.1.-1", 0), None);
-        assert_eq!(dfa.traverse(b"192.168.1,1", 0), None);
+        assert_eq!(dfa.traverse(b"256.256.256.256"), None);
+        assert_eq!(dfa.traverse(b"192.168.1"), None);
+        assert_eq!(dfa.traverse(b"192.168..1"), None);
+        assert_eq!(dfa.traverse(b"300.168.1.1"), None);
+        assert_eq!(dfa.traverse(b"abc.def.ghi.jkl"), None);
+        assert_eq!(dfa.traverse(b"192.168.1.-1"), None);
+        assert_eq!(dfa.traverse(b"192.168.1,1"), None);
     }
 
     #[test]
@@ -941,7 +961,7 @@ mod tests {
             let binary = format!("{}", num);
             let bytes = binary.as_bytes();
 
-            let result = match dfa.traverse(bytes, 0) {
+            let result = match dfa.traverse(bytes) {
                 Some((_, idx)) => idx,
                 _ => return assert!(false),
             };

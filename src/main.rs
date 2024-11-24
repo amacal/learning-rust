@@ -13,7 +13,7 @@ fn main() {
         Some(lexer) => lexer,
     };
 
-    let mut file = match File::open("large-file.json") {
+    let mut file = match File::open("test.json") {
         Err(_) => return,
         Ok(file) => file,
     };
@@ -21,7 +21,7 @@ fn main() {
     let mut prev = 0;
     let mut total = 0;
     let mut completed = false;
-    let mut counters= [0; 16];
+    let mut counters = [0; 16];
 
     loop {
         let next = if total % 1024 >= prev % 1024 { total % 1024..1024 } else { 0..prev % 1024 };
@@ -31,7 +31,7 @@ fn main() {
                 data[next][0] = 0;
                 completed = true;
                 1
-            },
+            }
             Ok(n) => n,
         };
 
@@ -72,8 +72,10 @@ fn main() {
         }
     }
 
-    println!();
-    for (idx, &val) in counters.iter().enumerate() {
-        println!("{idx:02x} {val}");
+    if total == prev + 1 {
+        println!();
+        for (idx, &val) in counters.iter().enumerate() {
+            println!("{idx:02x} {val}");
+        }
     }
 }

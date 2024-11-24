@@ -9,7 +9,7 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(data: *const u8, mask: usize) -> Option<Self> {
-        let regex = b"({#\x01)|(}#\x02)|([[]#\x03)|(]#\x04)|(,#\x05)|(:#\x06)|(( |\n)+#\x07)|((\"[^\"]+\")#\x08)|((-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?)#\x09)|((false)#\x0a)|((true)#\x0b)|((null)#\x0c)\0".as_ptr();
+        let regex = b"({#\x01)|(}#\x02)|([[]#\x03)|(]#\x04)|(,#\x05)|(:#\x06)|(( |\n)+#\x07)|((\"([^\"]|\\[\"\\/bfnrt])+\")#\x08)|((-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?)#\x09)|((false)#\x0a)|((true)#\x0b)|((null)#\x0c)\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
             Some(rpn) => rpn,
