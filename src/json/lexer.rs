@@ -9,7 +9,6 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(data: *const u8, mask: usize) -> Option<Self> {
-        let regex = b"()|()|()|()|()|()|(()|()|()|()\0".as_ptr();
         let mut builder = RPN::<4096>::builder();
 
         // catch {, }, [, ], comma and colon
@@ -24,7 +23,7 @@ impl Lexer {
         builder.append(b"( |\n)+#\x07\0".as_ptr());
 
         // catch double quoted string literal
-        builder.append(b"(\"([^\"]|\\[\"\\/bfnrt])+\")#\x08\0".as_ptr());
+        builder.append(b"(\"([^\"\\]|\\u[0-9a-f][0-9a-f][0-9a-f][0-9a-f]|\\[\"\\/bfnrt])+\")#\x08\0".as_ptr());
 
         // catch number with optional floating part or scientific notation
         builder.append(b"(-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?)#\x09\0".as_ptr());

@@ -55,7 +55,12 @@ fn main() {
                     std::str::from_utf8(&data[prev % 1024..std::cmp::min(1024, (prev % 1024) + len)]),
                     std::str::from_utf8(&data[0..std::cmp::max(0, ((prev % 1024) + len) as isize - 1023) as usize])
                 ),
-                (9, len) => println!("number, len={}", len),
+                (9, len) => println!(
+                    "number, len={}, val=[{:?} {:?}]",
+                    len,
+                    std::str::from_utf8(&data[prev % 1024..std::cmp::min(1024, (prev % 1024) + len)]),
+                    std::str::from_utf8(&data[0..std::cmp::max(0, ((prev % 1024) + len) as isize - 1023) as usize])
+                ),
                 (10, _) => println!("false"),
                 (11, _) => println!("true"),
                 (12, _) => println!("null"),
@@ -67,7 +72,7 @@ fn main() {
             counters[token as usize] += 1;
         }
 
-        if completed {
+        if completed || total - prev == 1024 {
             break;
         }
     }
