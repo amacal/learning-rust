@@ -64,8 +64,8 @@ impl DFA {
             current = match self.transition_find(current.0, val) {
                 None => break,
                 Some((state, meta)) => {
-                    if meta & 0xff > 0x00 {
-                        best = Some((meta & 0xff, current.1.wrapping_add(1).wrapping_sub(offset)));
+                    if meta > 0x00 {
+                        best = Some((meta, current.1.wrapping_add(1).wrapping_sub(offset)));
                     }
 
                     length = length.wrapping_sub(1);
@@ -75,6 +75,24 @@ impl DFA {
         }
 
         if length > 0 {
+            best
+        } else {
+            None
+        }
+    }
+
+    pub fn traverse_ptr2(&self, data: *const u8) -> Option<(u16, *const u8)> {
+        let mut current = (1, data);
+        let mut best = None;
+
+        while let Some((state, meta)) = self.transition_find(current.0, unsafe { *current.1 }) {
+            current = (state, unsafe { current.1.add(1) });
+            if meta > 0x00 {
+                best = Some((meta, current.1));
+            }
+        }
+
+        if data != current.1 {
             best
         } else {
             None
@@ -284,7 +302,6 @@ impl Builder {
 
             self.transitions.graph_add(src, (via.0, via.1), target, accepting);
             println!("appending dfa transition {src:04x} | {:02x} - {:02x} | {target:04x} | {accepting:04x}", via.0, via.1);
-
         } else {
             self.revert();
             self.worklist.list_pop_head();

@@ -196,6 +196,8 @@ impl BuilderState {
     fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, alternation: bool, negation: bool) -> BuilderState {
         let token = lexer.next_in_class();
 
+        println!("{:?} {} {}", token.0 as char, alternation, negation);
+
         match token {
             (0, _) => BuilderState::Completed,
             (b'^', _) => BuilderState::InClasses {
@@ -258,7 +260,7 @@ impl<const SIZE: usize> Builder<SIZE> {
     }
 
     pub fn append(&mut self, pattern: *const u8) {
-        let mut lexer = Lexer::new(pattern);
+        let mut lexer = Lexer::new(pattern).expect("");
         let mut state = BuilderState::new();
 
         loop {
