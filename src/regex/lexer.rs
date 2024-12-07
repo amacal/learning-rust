@@ -142,13 +142,13 @@ impl Lexer2 {
         // range class single, escaped
         class.append(b"(\\[\x01-\xff])#\x09\0".as_ptr());
 
-        // range class dashed without ], - or ^ both
+        // range class dashed without ], -, \ or ^ both
         class.append(b"([\x01-\x2c\x2e-\x5b\x5f-\xff]-[\x01-\x2c\x2e-\x5b\x5f-\xff])#\x0a\0".as_ptr());
 
-        // range class dashed without ], - or ^ right, escaped left
+        // range class dashed without ], -, \ or ^ right, escaped left
         class.append(b"(\\[\x01-\xff]-[\x01-\x2c\x2e-\x5b\x5f-\xff])#\x0b\0".as_ptr());
 
-        // range class dashed without ], - or ^ left, escaped right
+        // range class dashed without ], -, \ or ^ left, escaped right
         class.append(b"([\x01-\x2c\x2e-\x5b\x5f-\xff]-\\[\x01-\xff])#\x0c\0".as_ptr());
 
         // range class dashed, escaped both
