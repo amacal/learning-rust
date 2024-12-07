@@ -111,7 +111,6 @@ impl<T, const SIZE: usize, GUARD: Guard<T, SIZE>> Heap<T, SIZE, GUARD> {
         Self(ptr as *mut T, PhantomData)
     }
 
-    #[cfg(test)]
     pub fn as_bytes(&self, len: usize) -> &[T] {
         unsafe { std::slice::from_raw_parts(self.0, len) }
     }
@@ -185,6 +184,23 @@ impl<T, const SIZE: usize, GUARD: Guard<T, SIZE>> Heap<T, SIZE, GUARD> {
         U: Into<usize>,
     {
         self.deref_set(self.guard2(off.into(), inc1.into(), inc2.into()), val);
+    }
+}
+
+impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Heap<u16, SIZE, GUARD> {
+    pub fn as_string(&self, len: usize) -> String {
+        let bytes = self.as_bytes(len);
+        let mut out = String::from("[");
+
+        for (i, b) in bytes.iter().enumerate() {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&format!("0x{:02x}", b));
+        }
+
+        out.push(']');
+        out
     }
 }
 

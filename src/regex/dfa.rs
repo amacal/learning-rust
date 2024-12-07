@@ -26,6 +26,10 @@ impl DFA {
         self.transitions.graph_find(src, via)
     }
 
+    pub fn transition_at(&self, idx: u16) -> (u16, (u8, u8), u16, u16) {
+        self.transitions.graph_at(idx)
+    }
+
     pub fn print(&self) {
         for idx in 0..self.transition_count() {
             let transition = self.transitions.graph_at(idx);

@@ -58,6 +58,10 @@ impl<const SIZE: usize, GUARD: Guard<u64, SIZE>> Graph<SIZE, GUARD> {
         (src, (via0, via1), dst, meta)
     }
 
+    pub fn graph_bytes(&self) -> &[u64] {
+        self.heap.as_bytes(self.graph_count().into())
+    }
+
     fn graph_swap(&mut self, left: u16, right: u16) {
         let src = self.heap.get0(left);
         let dst = self.heap.get0(right);

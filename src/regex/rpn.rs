@@ -196,8 +196,6 @@ impl BuilderState {
     fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, alternation: bool, negation: bool) -> BuilderState {
         let token = lexer.next_in_class();
 
-        println!("{:?} {} {}", token.0 as char, alternation, negation);
-
         match token {
             (0, _) => BuilderState::Completed,
             (b'^', _) => BuilderState::InClasses {

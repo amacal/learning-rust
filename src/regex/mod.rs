@@ -4,6 +4,7 @@ mod graph;
 mod heap;
 mod lexer;
 mod list;
+mod matrix;
 mod nfa;
 mod rpn;
 
