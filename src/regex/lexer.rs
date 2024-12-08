@@ -463,10 +463,6 @@ mod tests {
             Some(lexer) => lexer,
         };
 
-        // if let Some(Token::Literal { start, length }) = lexer.next_in_group() {
-        //     println!("token: {}", unsafe { *start });
-        // }
-
         unsafe {
             assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: input.add(1), length: 1 }));
             assert_eq!(lexer.next_in_group(), Some(Token::Plus {}));
