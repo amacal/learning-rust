@@ -5,12 +5,12 @@ use super::list::*;
 use super::rpn::*;
 
 pub struct NFA {
-    transitions: Graph<4096, GuardSegfault>,
-    epsilons: Collection<4096, GuardSegfault>,
+    transitions: Graph<8192, GuardSegfault>,
+    epsilons: Collection<8192, GuardSegfault>,
 }
 
 impl NFA {
-    fn from(transitions: Graph<4096, GuardSegfault>, epsilons: Collection<4096, GuardSegfault>) -> Self {
+    fn from(transitions: Graph<8192, GuardSegfault>, epsilons: Collection<8192, GuardSegfault>) -> Self {
         Self {
             transitions: transitions,
             epsilons: epsilons,
@@ -75,8 +75,8 @@ impl StackLike for Accepting {}
 
 struct Builder {
     counter: u16,
-    transitions: Graph<4096, GuardSegfault>,
-    epsilons: Collection<4096, GuardSegfault>,
+    transitions: Graph<8192, GuardSegfault>,
+    epsilons: Collection<8192, GuardSegfault>,
     collapsed: Array<Collapsed, u16, 4096, GuardSegfault>,
     accepting: Array<Accepting, u16, 4096, GuardSegfault>,
 }
