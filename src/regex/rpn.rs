@@ -52,7 +52,7 @@ impl<const SIZE: usize> RPN<SIZE> {
 enum BuilderState {
     Completed,
     InGroups { concatenation: bool },
-    InClasses { alternation: bool, negation: bool },
+    InClasses { negation: bool, bits: [u64; 4] },
 }
 
 impl BuilderState {
@@ -60,7 +60,7 @@ impl BuilderState {
         BuilderState::InGroups { concatenation: false }
     }
 
-    fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, concatenation: bool) -> BuilderState {
+    fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, concatenation: bool) -> Self {
         let token = match lexer.next_in_group() {
             None => return BuilderState::Completed,
             Some(token) => token,
@@ -83,27 +83,27 @@ impl BuilderState {
                 builder.operators.stack_push_front(if concatenation { 1 } else { 0 });
                 builder.operators.stack_push_front(b'(');
 
-                BuilderState::InGroups { concatenation: false }
+                Self::InGroups { concatenation: false }
             }
             Token::Plus {} => {
                 builder.elements.stack_push_front(b'+');
-                BuilderState::InGroups { concatenation }
+                Self::InGroups { concatenation }
             }
             Token::Optional {} => {
                 builder.elements.stack_push_front(b'?');
-                BuilderState::InGroups { concatenation }
+                Self::InGroups { concatenation }
             }
             Token::Star {} => {
                 builder.elements.stack_push_front(b'+');
                 builder.elements.stack_push_front(b'?');
-                BuilderState::InGroups { concatenation }
+                Self::InGroups { concatenation }
             }
             Token::Marker { value } => {
                 builder.operators.stack_push_front(value);
                 builder.operators.stack_push_front(b'#');
-                BuilderState::InGroups { concatenation }
+                Self::InGroups { concatenation }
             }
-            Token::OpenClass {  } => {
+            Token::OpenClass {} => {
                 if concatenation {
                     while builder.operators.stack_size_front() > 0 {
                         match builder.operators.stack_peek_front() {
@@ -119,9 +119,9 @@ impl BuilderState {
                 builder.operators.stack_push_front(if concatenation { 1 } else { 0 });
                 builder.operators.stack_push_front(b'[');
 
-                BuilderState::InClasses { alternation: false, negation: false }
+                Self::InClasses { negation: false , bits: [0; 4] }
             }
-            Token::Either { } => {
+            Token::Either {} => {
                 while builder.operators.stack_size_front() > 0 {
                     match builder.operators.stack_peek_front() {
                         b'*' | b'+' | b'?' | b'&' => {
@@ -140,9 +140,9 @@ impl BuilderState {
                 }
 
                 builder.operators.stack_push_front(b'|');
-                BuilderState::InGroups { concatenation: false }
+                Self::InGroups { concatenation: false }
             }
-            Token::CloseGroup { } => {
+            Token::CloseGroup {} => {
                 let mut concatenation = false;
 
                 while builder.operators.stack_size_front() > 0 {
@@ -161,7 +161,7 @@ impl BuilderState {
                     builder.operators.stack_push_front(b'&');
                 }
 
-                BuilderState::InGroups { concatenation: true }
+                Self::InGroups { concatenation: true }
             }
             Token::Literal { mut start, mut length } => {
                 let mut concatenation = concatenation;
@@ -201,23 +201,64 @@ impl BuilderState {
                     }
                 }
 
-                BuilderState::InGroups { concatenation: true }
+                Self::InGroups { concatenation: true }
             }
-            _ => {
-                BuilderState::Completed
-            }
+            _ => Self::Completed,
         }
     }
 
-    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, alternation: bool, negation: bool) -> BuilderState {
+    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, negation: bool, mut bits: [u64; 4]) -> Self {
         let token = match lexer.next_in_class() {
-            None => return BuilderState::Completed,
+            None => return Self::Completed,
             Some(token) => token,
         };
 
         match token {
-            Token::NegateClass { } => BuilderState::InClasses { alternation: alternation, negation: true },
-            Token::CloseClass {  } => {
+            Token::NegateClass {} => Self::InClasses { negation: true, bits: bits },
+            Token::CloseClass {} => {
+                let mut min = 0u8;
+                let mut max = 0u8;
+
+                let mut alternation = false;
+
+                for idx in 1..=255u8 {
+                    if (bits[idx as usize / 64] & (1 << (idx as u64 % 64)) == 0) == negation {
+                        if min == 0 {
+                            min = idx;
+                            max = idx;
+                        } else {
+                            max = idx;
+                        }
+                    } else {
+                        if min > 0 {
+                            builder.elements.stack_push_front(b'-');
+                            builder.elements.stack_push_front(min);
+                            builder.elements.stack_push_front(max);
+
+                            if alternation {
+                                builder.elements.stack_push_front(b'|');
+                            } else {
+                                alternation = true;
+                            }
+                        }
+
+                        min = 0;
+                        max = 0;
+                    }
+                }
+
+                if min > 0 {
+                    builder.elements.stack_push_front(b'-');
+                    builder.elements.stack_push_front(min);
+                    builder.elements.stack_push_front(max);
+
+                    if alternation {
+                        builder.elements.stack_push_front(b'|');
+                    } else {
+                        alternation = true;
+                    }
+                }
+
                 loop {
                     match builder.operators.stack_pop_front() {
                         b'[' => break,
@@ -229,28 +270,24 @@ impl BuilderState {
                     builder.operators.stack_push_front(b'&');
                 }
 
-                BuilderState::InGroups { concatenation: true }
+                Self::InGroups { concatenation: true }
             }
             Token::RangeClass { min, max } => {
-                builder.elements.stack_push_front(if negation { b'!' } else { b'-' });
-                builder.elements.stack_push_front(min);
-                builder.elements.stack_push_front(max);
-
-                if alternation {
-                    builder.elements.stack_push_front(b'|');
+                for idx in min..=max {
+                    bits[idx as usize / 64] |= 1 << (idx as u64 % 64);
                 }
 
-                BuilderState::InClasses { alternation: true, negation: negation }
-            },
-            _ => BuilderState::Completed
+                Self::InClasses { negation: negation, bits: bits }
+            }
+            _ => Self::Completed,
         }
     }
 
-    fn handle<const SIZE: usize>(self, builder: &mut Builder<SIZE>, lexer: &mut Lexer) -> BuilderState {
+    fn handle<const SIZE: usize>(self, builder: &mut Builder<SIZE>, lexer: &mut Lexer) -> Self {
         match self {
-            BuilderState::Completed => BuilderState::Completed,
-            BuilderState::InGroups { concatenation } => Self::handle_in_groups(builder, lexer, concatenation),
-            BuilderState::InClasses { alternation, negation } => Self::handle_in_classes(builder, lexer, alternation, negation),
+            Self::Completed => Self::Completed,
+            Self::InGroups { concatenation } => Self::handle_in_groups(builder, lexer, concatenation),
+            Self::InClasses { negation, mut bits } => Self::handle_in_classes(builder, lexer, negation, bits),
         }
     }
 }
@@ -427,7 +464,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab+?-az-09|+|");
+        assert_eq!(regex.as_bytes_front(), b"l2ab+?-09-az|+|");
     }
 
     #[test]
@@ -438,7 +475,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab+?!az!09|+|");
+        assert_eq!(regex.as_bytes_front(), b"l2ab+?-\x01\x2f-\x3a\x60|-\x7b\xff|+|");
     }
 
     #[test]
@@ -476,13 +513,13 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_number_regex() {
-        let pattern = b"-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?\0".as_ptr();
+        let pattern = b"\\-?(0|[1-9][0-9]*)(.[0-9]+)?([eE](\\+|\\-)?[0-9]+)?\0".as_ptr();
         let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l1-?l10-19-09+?&|&l1.-09+&?&-ee-EE|-++l1-|?&-09+&?&");
+        assert_eq!(regex.as_bytes_front(), b"l1-?l10-19-09+?&|&l1.-09+&?&-EE-ee|l1+l1-|?&-09+&?&");
     }
 
     #[test]
