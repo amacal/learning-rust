@@ -35,7 +35,7 @@ impl<const SIZE: usize> RPN<SIZE> {
     }
 
     #[cfg(test)]
-    fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes_front(&self) -> &[u8] {
         self.0.as_bytes_front()
     }
 
@@ -48,6 +48,7 @@ impl<const SIZE: usize> RPN<SIZE> {
     }
 }
 
+#[derive(Debug)]
 enum BuilderState {
     Completed,
     InGroups { concatenation: bool },
@@ -59,15 +60,14 @@ impl BuilderState {
         BuilderState::InGroups { concatenation: false }
     }
 
-    fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, concatenation: bool) -> BuilderState {
-        let token = if let Some(token) = lexer.next_in_group() {
-            unsafe { (*token.0, token.0, token.1) }
-        } else {
-            return BuilderState::Completed;
+    fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer2, concatenation: bool) -> BuilderState {
+        let token = match lexer.next_in_group() {
+            None => return BuilderState::Completed,
+            Some(token) => token,
         };
 
-        match token.0 {
-            b'(' => {
+        match token {
+            Token::OpenGroup {} => {
                 if concatenation {
                     while builder.operators.stack_size_front() > 0 {
                         match builder.operators.stack_peek_front() {
@@ -85,21 +85,25 @@ impl BuilderState {
 
                 BuilderState::InGroups { concatenation: false }
             }
-            b'+' | b'?' => {
-                builder.elements.stack_push_front(token.0);
+            Token::Plus {} => {
+                builder.elements.stack_push_front(b'+');
                 BuilderState::InGroups { concatenation }
             }
-            b'*' => {
+            Token::Optional {} => {
+                builder.elements.stack_push_front(b'?');
+                BuilderState::InGroups { concatenation }
+            }
+            Token::Star {} => {
                 builder.elements.stack_push_front(b'+');
                 builder.elements.stack_push_front(b'?');
                 BuilderState::InGroups { concatenation }
             }
-            b'#' => {
-                builder.operators.stack_push_front(unsafe { *token.1.add(1) });
+            Token::Marker { value } => {
+                builder.operators.stack_push_front(value);
                 builder.operators.stack_push_front(b'#');
                 BuilderState::InGroups { concatenation }
             }
-            b'[' => {
+            Token::OpenClass {  } => {
                 if concatenation {
                     while builder.operators.stack_size_front() > 0 {
                         match builder.operators.stack_peek_front() {
@@ -113,14 +117,11 @@ impl BuilderState {
                 }
 
                 builder.operators.stack_push_front(if concatenation { 1 } else { 0 });
-                builder.operators.stack_push_front(token.0);
+                builder.operators.stack_push_front(b'[');
 
-                BuilderState::InClasses {
-                    alternation: false,
-                    negation: false,
-                }
+                BuilderState::InClasses { alternation: false, negation: false }
             }
-            b'|' => {
+            Token::Either { } => {
                 while builder.operators.stack_size_front() > 0 {
                     match builder.operators.stack_peek_front() {
                         b'*' | b'+' | b'?' | b'&' => {
@@ -141,7 +142,7 @@ impl BuilderState {
                 builder.operators.stack_push_front(b'|');
                 BuilderState::InGroups { concatenation: false }
             }
-            b')' => {
+            Token::CloseGroup { } => {
                 let mut concatenation = false;
 
                 while builder.operators.stack_size_front() > 0 {
@@ -162,47 +163,61 @@ impl BuilderState {
 
                 BuilderState::InGroups { concatenation: true }
             }
-            _ => {
-                if concatenation {
-                    while builder.operators.stack_size_front() > 0 {
-                        match builder.operators.stack_peek_front() {
-                            b'&' => {
-                                builder.operators.stack_pop_front();
-                                builder.elements.stack_push_front(b'&');
+            Token::Literal { mut start, mut length } => {
+                let mut concatenation = concatenation;
+
+                while length > 0 {
+                    let batch = std::cmp::min(length, 9);
+
+                    if concatenation {
+                        while builder.operators.stack_size_front() > 0 {
+                            match builder.operators.stack_peek_front() {
+                                b'&' => {
+                                    builder.operators.stack_pop_front();
+                                    builder.elements.stack_push_front(b'&');
+                                }
+                                _ => break,
                             }
-                            _ => break,
                         }
                     }
-                }
 
-                builder.elements.stack_push_front(b'l');
-                builder.elements.stack_push_front(b'0' + token.2);
+                    builder.elements.stack_push_front(b'l');
+                    builder.elements.stack_push_front(b'0' + batch as u8);
 
-                for off in 0..token.2 {
-                    unsafe {
-                        builder.elements.stack_push_front(*token.1.add(off.into()));
+                    for off in 0..batch {
+                        unsafe {
+                            builder.elements.stack_push_front(*start.add(off));
+                        }
                     }
-                }
 
-                if concatenation {
-                    builder.operators.stack_push_front(b'&');
+                    if concatenation {
+                        builder.operators.stack_push_front(b'&');
+                    }
+
+                    unsafe {
+                        length -= batch;
+                        start = start.add(batch);
+                        concatenation = true;
+                    }
                 }
 
                 BuilderState::InGroups { concatenation: true }
             }
+            _ => {
+                BuilderState::Completed
+            }
         }
     }
 
-    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, alternation: bool, negation: bool) -> BuilderState {
-        let token = lexer.next_in_class();
+    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer2, alternation: bool, negation: bool) -> BuilderState {
+        let token = match lexer.next_in_class() {
+            None => return BuilderState::Completed,
+            Some(token) => token,
+        };
 
         match token {
-            (0, _) => BuilderState::Completed,
-            (b'^', _) => BuilderState::InClasses {
-                alternation: alternation,
-                negation: true,
-            },
-            (b']', _) => {
+            Token::NegateClass { } => BuilderState::InClasses { alternation: alternation, negation: true },
+            Token::CloseClass {  } => {
                 loop {
                     match builder.operators.stack_pop_front() {
                         b'[' => break,
@@ -216,24 +231,22 @@ impl BuilderState {
 
                 BuilderState::InGroups { concatenation: true }
             }
-            (from, to) => {
+            Token::RangeClass { min, max } => {
                 builder.elements.stack_push_front(if negation { b'!' } else { b'-' });
-                builder.elements.stack_push_front(from);
-                builder.elements.stack_push_front(to);
+                builder.elements.stack_push_front(min);
+                builder.elements.stack_push_front(max);
 
                 if alternation {
                     builder.elements.stack_push_front(b'|');
                 }
 
-                BuilderState::InClasses {
-                    alternation: true,
-                    negation: negation,
-                }
-            }
+                BuilderState::InClasses { alternation: true, negation: negation }
+            },
+            _ => BuilderState::Completed
         }
     }
 
-    fn handle<const SIZE: usize>(self, builder: &mut Builder<SIZE>, lexer: &mut Lexer) -> BuilderState {
+    fn handle<const SIZE: usize>(self, builder: &mut Builder<SIZE>, lexer: &mut Lexer2) -> BuilderState {
         match self {
             BuilderState::Completed => BuilderState::Completed,
             BuilderState::InGroups { concatenation } => Self::handle_in_groups(builder, lexer, concatenation),
@@ -250,15 +263,11 @@ pub struct Builder<const SIZE: usize> {
 
 impl<const SIZE: usize> Builder<SIZE> {
     fn new() -> Self {
-        Self {
-            counter: 0,
-            elements: Array::new(),
-            operators: Array::new(),
-        }
+        Self { counter: 0, elements: Array::new(), operators: Array::new() }
     }
 
     pub fn append(&mut self, pattern: *const u8) {
-        let mut lexer = Lexer::new(pattern).expect("");
+        let mut lexer = Lexer2::new(pattern).expect("");
         let mut state = BuilderState::new();
 
         loop {
@@ -297,7 +306,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l1a");
+        assert_eq!(regex.as_bytes_front(), b"l1a");
     }
 
     #[test]
@@ -308,7 +317,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l2ab");
+        assert_eq!(regex.as_bytes_front(), b"l2ab");
     }
 
     #[test]
@@ -319,7 +328,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l9abcdefghil9jklmnopqr&l8stuvwxyz&");
+        assert_eq!(regex.as_bytes_front(), b"l9abcdefghil9jklmnopqr&l8stuvwxyz&");
     }
 
     #[test]
@@ -330,7 +339,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l1al1b|");
+        assert_eq!(regex.as_bytes_front(), b"l1al1b|");
     }
 
     #[test]
@@ -341,7 +350,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l1al1b+?&");
+        assert_eq!(regex.as_bytes_front(), b"l1al1b+?&");
     }
 
     #[test]
@@ -352,7 +361,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l1al1b+&");
+        assert_eq!(regex.as_bytes_front(), b"l1al1b+&");
     }
 
     #[test]
@@ -363,7 +372,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l1al1b?&");
+        assert_eq!(regex.as_bytes_front(), b"l1al1b?&");
     }
 
     #[test]
@@ -374,7 +383,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l2st?l2op&");
+        assert_eq!(regex.as_bytes_front(), b"l2st?l2op&");
     }
 
     #[test]
@@ -385,7 +394,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l9abcdefghil3jkl&l9mnopqrstul3vwx&|");
+        assert_eq!(regex.as_bytes_front(), b"l9abcdefghil3jkl&l9mnopqrstul3vwx&|");
     }
 
     #[test]
@@ -396,7 +405,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l2ab+?l2cd+|");
+        assert_eq!(regex.as_bytes_front(), b"l2ab+?l2cd+|");
     }
 
     #[test]
@@ -407,7 +416,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l2ab+?-az+|");
+        assert_eq!(regex.as_bytes_front(), b"l2ab+?-az+|");
     }
 
     #[test]
@@ -418,7 +427,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l2ab+?-az-09|+|");
+        assert_eq!(regex.as_bytes_front(), b"l2ab+?-az-09|+|");
     }
 
     #[test]
@@ -429,7 +438,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l2ab+?!az!09|+|");
+        assert_eq!(regex.as_bytes_front(), b"l2ab+?!az!09|+|");
     }
 
     #[test]
@@ -440,7 +449,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l10l10+l11+&+|+");
+        assert_eq!(regex.as_bytes_front(), b"l10l10+l11+&+|+");
     }
 
     #[test]
@@ -451,7 +460,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l10l11l10l11+?&l200+?&l10&+?&l11&+?|+?");
+        assert_eq!(regex.as_bytes_front(), b"l10l11l10l11+?&l200+?&l10&+?&l11&+?|+?");
     }
 
     #[test]
@@ -462,7 +471,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l10l11?&l12?&");
+        assert_eq!(regex.as_bytes_front(), b"l10l11?&l12?&");
     }
 
     #[test]
@@ -473,7 +482,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l1-?l10-19-09+?&|&l1.-09+&?&-ee-EE|-++l1-|?&-09+&?&");
+        assert_eq!(regex.as_bytes_front(), b"l1-?l10-19-09+?&|&l1.-09+&?&-ee-EE|-++l1-|?&-09+&?&");
     }
 
     #[test]
@@ -484,7 +493,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l2ab#x");
+        assert_eq!(regex.as_bytes_front(), b"l2ab#x");
     }
 
     #[test]
@@ -495,7 +504,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l2ab#xl2cd#y|");
+        assert_eq!(regex.as_bytes_front(), b"l2ab#xl2cd#y|");
     }
 
     #[test]
@@ -506,7 +515,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l2ab#xl2cd#y|");
+        assert_eq!(regex.as_bytes_front(), b"l2ab#xl2cd#y|");
     }
 
     #[test]
@@ -521,6 +530,6 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes(), b"l2ab#xl2cd#y|");
+        assert_eq!(regex.as_bytes_front(), b"l2ab#xl2cd#y|");
     }
 }

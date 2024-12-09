@@ -61,7 +61,7 @@ impl<LIKE: StackLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<L
         self.heap.get0(self.tail.wrapping_add(1))
     }
 
-    #[cfg(test)]
+    // #[cfg(test)]
     pub fn as_bytes_front(&self) -> &[T] {
         self.heap.as_bytes(self.stack_size_front().into())
     }

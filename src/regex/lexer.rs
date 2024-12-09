@@ -116,70 +116,70 @@ impl Lexer2 {
         let mut class = RPN::<4096>::builder();
 
         // literal naively
-        group.append(b"([-.a-z0-9A-Z]+)#\x01\0".as_ptr());
+        group.append(b"([\\-\\.a-z0-9A-Z]+)#\x01\0".as_ptr());
 
         // literal naively, started with an escaped character
-        group.append(b"(\\(^|]|[-.\\[#()*+?|])[-.a-z0-9A-Z]*)#\x02\0".as_ptr());
+        group.append(b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\-\\.a-z0-9A-Z]*)#\x02\0".as_ptr());
 
         // literal followed by *, ? or +
-        group.append(b"([-.a-z0-9A-Z]+[-.a-z0-9A-Z][+?*])#\x03\0".as_ptr());
+        group.append(b"([\\-\\.a-z0-9A-Z]+[\\-\\.a-z0-9A-Z][\\+\\?\\*])#\x03\0".as_ptr());
 
         // literal followed by *, ? or +, started with an escaped character
-        group.append(b"(\\(^|]|[-.\\[#()*+?|])[-.a-z0-9A-Z]*[-.a-z0-9A-Z][+?*])#\x04\0".as_ptr());
+        group.append(b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\-\\.a-z0-9A-Z]*[\\-\\.a-z0-9A-Z][\\+\\?\\*])#\x04\0".as_ptr());
 
         // leter followed by *, ? or +
-        group.append(b"([-.a-z0-9A-Z][+?*])#\x05\0".as_ptr());
+        group.append(b"([\\-\\.a-z0-9A-Z][\\+\\?\\*])#\x05\0".as_ptr());
 
         // leter followed by *, ? or +, started with an escaped character
-        group.append(b"(\\(^|]|[-.\\[#()*+?|])[+?*])#\x06\0".as_ptr());
+        group.append(b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\+\\?\\*])#\x06\0".as_ptr());
 
         // marker
-        group.append(b"([#][\x01-\xff])#\x10\0".as_ptr());
+        group.append(b"(\\#[\x01-\xff])#\x10\0".as_ptr());
 
         // negate class
-        class.append(b"(^)#\x11\0".as_ptr());
+        class.append(b"(\\^)#\x11\0".as_ptr());
 
         // open class
-        group.append(b"([[])#\x12\0".as_ptr());
+        group.append(b"(\\[)#\x12\0".as_ptr());
 
         // close class
-        class.append(b"(])#\x13\0".as_ptr());
+        class.append(b"(\\])#\x13\0".as_ptr());
 
         // range class single without [, - or ^
         class.append(b"([\x01-\x2c\x2e-\x5b\x5f-\xff])#\x14\0".as_ptr());
 
         // range class single, escaped
-        class.append(b"(\\[\x01-\xff])#\x15\0".as_ptr());
+        class.append(b"(\\\\[\x01-\xff])#\x15\0".as_ptr());
 
         // range class dashed without ], -, \ or ^ both
-        class.append(b"([\x01-\x2c\x2e-\x5b\x5f-\xff]-[\x01-\x2c\x2e-\x5b\x5f-\xff])#\x16\0".as_ptr());
+        class.append(b"([\x01-\x2c\x2e-\x5b\x5f-\xff]\\-[\x01-\x2c\x2e-\x5b\x5f-\xff])#\x16\0".as_ptr());
 
         // range class dashed without ], -, \ or ^ right, escaped left
-        class.append(b"(\\[\x01-\xff]-[\x01-\x2c\x2e-\x5b\x5f-\xff])#\x17\0".as_ptr());
+        class.append(b"(\\\\[\x01-\xff]\\-[\x01-\x2c\x2e-\x5b\x5f-\xff])#\x17\0".as_ptr());
 
         // range class dashed without ], -, \ or ^ left, escaped right
-        class.append(b"([\x01-\x2c\x2e-\x5b\x5f-\xff]-\\[\x01-\xff])#\x18\0".as_ptr());
+        class.append(b"([\x01-\x2c\x2e-\x5b\x5f-\xff]\\-\\\\[\x01-\xff])#\x18\0".as_ptr());
 
         // range class dashed, escaped both
-        class.append(b"(\\[\x01-\xff]-\\[\x01-\xff])#\x19\0".as_ptr());
+        class.append(b"(\\\\[\x01-\xff]\\-\\\\[\x01-\xff])#\x19\0".as_ptr());
 
         // open group
-        group.append(b"[(]#\x1a\0".as_ptr());
+        group.append(b"(\\()#\x1a\0".as_ptr());
 
         // close group
-        group.append(b"[)]#\x1b\0".as_ptr());
+        group.append(b"(\\))#\x1b\0".as_ptr());
 
         // star
-        group.append(b"[*]#\x1c\0".as_ptr());
+        group.append(b"(\\*)#\x1c\0".as_ptr());
 
         // plus
-        group.append(b"[+]#\x1d\0".as_ptr());
+        group.append(b"(\\+)#\x1d\0".as_ptr());
 
         // optional
-        group.append(b"[?]#\x1e\0".as_ptr());
+        group.append(b"(\\?)#\x1e\0".as_ptr());
 
         // either
-        group.append(b"[|]#\x1f\0".as_ptr());
+        group.append(b"(\\|)#\x1f\0".as_ptr());
 
         let group = match build_matrix::<4096, 8192>(group) {
             None => return,
