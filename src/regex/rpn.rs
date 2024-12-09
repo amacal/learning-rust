@@ -60,7 +60,7 @@ impl BuilderState {
         BuilderState::InGroups { concatenation: false }
     }
 
-    fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer2, concatenation: bool) -> BuilderState {
+    fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, concatenation: bool) -> BuilderState {
         let token = match lexer.next_in_group() {
             None => return BuilderState::Completed,
             Some(token) => token,
@@ -209,7 +209,7 @@ impl BuilderState {
         }
     }
 
-    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer2, alternation: bool, negation: bool) -> BuilderState {
+    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, alternation: bool, negation: bool) -> BuilderState {
         let token = match lexer.next_in_class() {
             None => return BuilderState::Completed,
             Some(token) => token,
@@ -246,7 +246,7 @@ impl BuilderState {
         }
     }
 
-    fn handle<const SIZE: usize>(self, builder: &mut Builder<SIZE>, lexer: &mut Lexer2) -> BuilderState {
+    fn handle<const SIZE: usize>(self, builder: &mut Builder<SIZE>, lexer: &mut Lexer) -> BuilderState {
         match self {
             BuilderState::Completed => BuilderState::Completed,
             BuilderState::InGroups { concatenation } => Self::handle_in_groups(builder, lexer, concatenation),
@@ -267,7 +267,7 @@ impl<const SIZE: usize> Builder<SIZE> {
     }
 
     pub fn append(&mut self, pattern: *const u8) {
-        let mut lexer = Lexer2::new(pattern).expect("");
+        let mut lexer = Lexer::new(pattern).expect("");
         let mut state = BuilderState::new();
 
         loop {
