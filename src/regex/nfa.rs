@@ -169,54 +169,6 @@ impl Builder {
         idx.wrapping_add(3)
     }
 
-    fn handle_negative_class<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>, idx: u16) -> u16 {
-        let mut low = rpn.at(idx.wrapping_add(1));
-        let mut high = rpn.at(idx.wrapping_add(2));
-
-        let zero_state = self.next();
-        let first_state = self.next();
-
-        let last_state = self.next();
-        let zero_epsilons = self.epsilons.list_push_head();
-
-        self.epsilons.list_items_add(zero_epsilons, first_state);
-        self.transitions.graph_add(zero_state, (0, 0), zero_epsilons, 0x0200);
-
-        let complete_epsilons = self.epsilons.list_push_head();
-        self.epsilons.list_items_resize(complete_epsilons, 1);
-
-        if low > 1 {
-            low = low.wrapping_sub(1);
-
-            let first_state_idx = self.transitions.graph_inc();
-            self.transitions.graph_set(first_state_idx, first_state, (1, low), last_state, 0x00);
-
-            self.accepting.stack_push_front(first_state_idx);
-            self.accepting.stack_push_front(0);
-        }
-
-        if high < 255 {
-            high = high.wrapping_add(1);
-
-            let first_state_idx = self.transitions.graph_inc();
-            self.transitions.graph_set(first_state_idx, first_state, (high, 255), last_state, 0x00);
-
-            self.accepting.stack_push_front(first_state_idx);
-            self.accepting.stack_push_front(0);
-        }
-
-        if low > 1 && high < 255 {
-            self.accepting.stack_push_front(b'|' as u16);
-        }
-
-        self.transitions.graph_add(last_state, (0, 0), complete_epsilons, 0x00);
-
-        self.collapsed.stack_push_front(zero_state);
-        self.collapsed.stack_push_front(complete_epsilons);
-
-        idx.wrapping_add(3)
-    }
-
     fn handle_alternation(&mut self, idx: u16) -> u16 {
         let right_last_epsilons = self.collapsed.stack_pop_front();
         let right_first_state = self.collapsed.stack_pop_front();
@@ -368,7 +320,6 @@ impl Builder {
             match rpn.at(idx) {
                 b'l' => idx = self.handle_literal(&rpn, idx),
                 b'-' => idx = self.handle_positive_class(&rpn, idx),
-                b'!' => idx = self.handle_negative_class(&rpn, idx),
                 b'#' => idx = self.handle_acceptance(&rpn, idx),
                 b'|' => idx = self.handle_alternation(idx),
                 b'&' => idx = self.handle_concatenation(idx),
@@ -585,54 +536,6 @@ mod tests {
         assert_eq!(nfa.transition_find(7, 0), Some((0x1e, 0x00)));
         assert_eq!(nfa.epsilon_items_count(0x1e), 1);
         assert_eq!(nfa.epsilon_items_get(0x1e, 0), 1);
-    }
-
-    #[test]
-    fn handles_converting_rpn_negated_class_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"!09");
-
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
-
-        // 0000 | 00 - 00 | 0000 | 0000 -> 0002
-        // 0001 | 00 - 00 | 0000 | 0005 ->
-        // 0002 | 00 - 00 | 0200 | 0009 -> 0003
-        // 0003 | 01 - 2f | 0001 | 0004
-        // 0003 | 3a - ff | 0001 | 0004
-        // 0004 | 00 - 00 | 0000 | 000e -> 0001
-
-        assert_eq!(nfa.transition_count(), 6);
-        assert_eq!(nfa.epsilons.list_count(), 4);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x00), 1);
-        assert_eq!(nfa.epsilon_items_get(0x00, 0), 2);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(1, 0), Some((0x05, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x05), 0);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(2, 0), Some((0x09, 0x0200)));
-        assert_eq!(nfa.epsilon_items_count(0x09), 1);
-        assert_eq!(nfa.epsilon_items_get(0x09, 0), 3);
-
-        for idx in 1..48 {
-            assert_eq!(nfa.transition_find(3, idx), Some((4, 0x01)));
-        }
-
-        for idx in 58..=255 {
-            assert_eq!(nfa.transition_find(3, idx), Some((4, 0x01)));
-        }
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(4, 0), Some((0x0e, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x0e), 1);
-        assert_eq!(nfa.epsilon_items_get(0x0e, 0), 1);
     }
 
     #[test]
@@ -1061,118 +964,6 @@ mod tests {
         assert_eq!(nfa.transition_find(10, 0), Some((0x1e, 0x00)));
         assert_eq!(nfa.epsilon_items_count(0x1e), 1);
         assert_eq!(nfa.epsilon_items_get(0x1e, 0), 1);
-    }
-
-    #[test]
-    fn handles_converting_rpn_class_around_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"l1a!aa&l1a&");
-
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
-
-        // 0000 | 00 - 00 | 0000 | 0000 -> 000e
-        // 0001 | 00 - 00 | 0000 | 0005 ->
-        // 0002 | 00 - 00 | 0200 | 0009 -> 0003
-        // 0003 | 61 - 61 | 0000 | 0004
-        // 0004 | 00 - 00 | 0000 | 000e -> 0009
-        // 0005 | 00 - 00 | 0200 | 0013 -> 0006
-        // 0006 | 01 - 60 | 0000 | 0007
-        // 0006 | 62 - ff | 0000 | 0007
-        // 0007 | 00 - 00 | 0000 | 0018 -> 000a
-        // 0008 | 00 - 00 | 0000 | 001d -> 0002
-        // 0009 | 00 - 00 | 0000 | 0022 -> 0005
-        // 000a | 00 - 00 | 0000 | 0027 -> 000f
-        // 000b | 00 - 00 | 0200 | 002c -> 000c
-        // 000c | 61 - 61 | 0001 | 000d
-        // 000d | 00 - 00 | 0000 | 0031 -> 0010
-        // 000e | 00 - 00 | 0000 | 0036 -> 0008
-        // 000f | 00 - 00 | 0000 | 003b -> 000b
-        // 0010 | 00 - 00 | 0000 | 0040 -> 0001
-
-        assert_eq!(nfa.transition_count(), 18);
-        assert_eq!(nfa.epsilons.list_count(), 14);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(0, 0), Some((0x00, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x00), 1);
-        assert_eq!(nfa.epsilon_items_get(0x00, 0), 14);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(1, 0), Some((0x05, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x05), 0);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(2, 0), Some((0x09, 0x0200)));
-        assert_eq!(nfa.epsilon_items_count(0x09), 1);
-        assert_eq!(nfa.epsilon_items_get(0x09, 0), 3);
-
-        // connects 'a' literal
-        assert_eq!(nfa.transition_find(3, b'a'), Some((4, 0x00)));
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(4, 0), Some((0x0e, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x0e), 1);
-        assert_eq!(nfa.epsilon_items_get(0x0e, 0), 9);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(5, 0), Some((0x13, 0x0200)));
-        assert_eq!(nfa.epsilon_items_count(0x13), 1);
-        assert_eq!(nfa.epsilon_items_get(0x13, 0), 6);
-
-        // connects ! 'a' literal
-        assert_eq!(nfa.transition_find(6, b'0'), Some((7, 0x00)));
-        assert_eq!(nfa.transition_find(6, b'b'), Some((7, 0x00)));
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(7, 0), Some((0x18, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x18), 1);
-        assert_eq!(nfa.epsilon_items_get(0x18, 0), 10);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(8, 0), Some((0x1d, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x1d), 1);
-        assert_eq!(nfa.epsilon_items_get(0x1d, 0), 2);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(9, 0), Some((0x22, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x22), 1);
-        assert_eq!(nfa.epsilon_items_get(0x22, 0), 5);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(10, 0), Some((0x27, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x27), 1);
-        assert_eq!(nfa.epsilon_items_get(0x27, 0), 15);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(11, 0), Some((0x2c, 0x0200)));
-        assert_eq!(nfa.epsilon_items_count(0x2c), 1);
-        assert_eq!(nfa.epsilon_items_get(0x2c, 0), 12);
-
-        // connects 'a' literal
-        assert_eq!(nfa.transition_find(12, b'a'), Some((13, 0x01)));
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(13, 0), Some((0x31, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x31), 1);
-        assert_eq!(nfa.epsilon_items_get(0x31, 0), 16);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(14, 0), Some((0x36, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x36), 1);
-        assert_eq!(nfa.epsilon_items_get(0x36, 0), 8);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(15, 0), Some((0x3b, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x3b), 1);
-        assert_eq!(nfa.epsilon_items_get(0x3b, 0), 11);
-
-        // points at epsilon
-        assert_eq!(nfa.transition_find(16, 0), Some((0x40, 0x00)));
-        assert_eq!(nfa.epsilon_items_count(0x40), 1);
-        assert_eq!(nfa.epsilon_items_get(0x40, 0), 1);
     }
 
     #[test]
