@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_number_regex() {
-        let pattern = b"\\-?(0|[1-9][0-9]*)(.[0-9]+)?([eE](\\+|\\-)?[0-9]+)?\0".as_ptr();
+        let pattern = b"\\-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE](\\+|\\-)?[0-9]+)?\0".as_ptr();
         let regex = match RPN::<4096>::build(pattern) {
             Some(regex) => regex,
             None => return assert!(false),
