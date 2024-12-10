@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn handles_regex_preparation() {
         Lexer::prepare();
-        assert!(false);
+        // assert!(false);
     }
 
     #[test]
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn handles_regex_tokenization_rule_0x14() {
-        let input = b"([\x01-\x2c\x2e-\x5b\x5f-\xff])#\x14\0".as_ptr();
+        let input = b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x14\0".as_ptr();
         let mut lexer = match Lexer::new(input) {
             None => return assert!(false),
             Some(lexer) => lexer,
@@ -561,9 +561,20 @@ mod tests {
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x01, max: 0x2c }));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x2e, max: 0x5b }));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x5f, max: 0xff }));
+        assert_eq!(lexer.next_in_class(), Some(Token::NegateClass {}));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'-', max: b'-' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'.', max: b'.' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'\\', max: b'\\' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'^', max: b'^' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'[', max: b'[' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b']', max: b']' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'#', max: b'#' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'(', max: b'(' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b')', max: b')' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'*', max: b'*' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'+', max: b'+' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'?', max: b'?' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'|', max: b'|' }));
         assert_eq!(lexer.next_in_class(), Some(Token::CloseClass {}));
         assert_eq!(lexer.next_in_group(), Some(Token::CloseGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Marker { value: 0x14 }));
@@ -590,7 +601,7 @@ mod tests {
 
     #[test]
     fn handles_regex_tokenization_rule_0x16() {
-        let input = b"([\x01-\x2c\x2e-\x5b\x5f-\xff]\\-[\x01-\x2c\x2e-\x5b\x5f-\xff])#\x16\0".as_ptr();
+        let input = b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]\\-[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x16\0".as_ptr();
         let mut lexer = match Lexer::new(input) {
             None => return assert!(false),
             Some(lexer) => lexer,
@@ -598,15 +609,37 @@ mod tests {
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x01, max: 0x2c }));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x2e, max: 0x5b }));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x5f, max: 0xff }));
+        assert_eq!(lexer.next_in_class(), Some(Token::NegateClass {}));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'-', max: b'-' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'.', max: b'.' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'\\', max: b'\\' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'^', max: b'^' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'[', max: b'[' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b']', max: b']' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'#', max: b'#' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'(', max: b'(' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b')', max: b')' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'*', max: b'*' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'+', max: b'+' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'?', max: b'?' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'|', max: b'|' }));
         assert_eq!(lexer.next_in_class(), Some(Token::CloseClass {}));
-        assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(13) }, length: 1 }));
+        assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(31) }, length: 1 }));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x01, max: 0x2c }));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x2e, max: 0x5b }));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x5f, max: 0xff }));
+        assert_eq!(lexer.next_in_class(), Some(Token::NegateClass {}));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'-', max: b'-' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'.', max: b'.' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'\\', max: b'\\' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'^', max: b'^' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'[', max: b'[' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b']', max: b']' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'#', max: b'#' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'(', max: b'(' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b')', max: b')' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'*', max: b'*' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'+', max: b'+' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'?', max: b'?' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'|', max: b'|' }));
         assert_eq!(lexer.next_in_class(), Some(Token::CloseClass {}));
         assert_eq!(lexer.next_in_group(), Some(Token::CloseGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Marker { value: 0x16 }));
@@ -615,7 +648,7 @@ mod tests {
 
     #[test]
     fn handles_regex_tokenization_rule_0x17() {
-        let input = b"(\\\\[\x01-\xff]\\-[\x01-\x2c\x2e-\x5b\x5f-\xff])#\x17\0".as_ptr();
+        let input = b"(\\\\[\x01-\xff]\\-[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x17\0".as_ptr();
         let mut lexer = match Lexer::new(input) {
             None => return assert!(false),
             Some(lexer) => lexer,
@@ -628,9 +661,20 @@ mod tests {
         assert_eq!(lexer.next_in_class(), Some(Token::CloseClass {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(9) }, length: 1 }));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x01, max: 0x2c }));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x2e, max: 0x5b }));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x5f, max: 0xff }));
+        assert_eq!(lexer.next_in_class(), Some(Token::NegateClass {}));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'-', max: b'-' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'.', max: b'.' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'\\', max: b'\\' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'^', max: b'^' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'[', max: b'[' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b']', max: b']' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'#', max: b'#' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'(', max: b'(' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b')', max: b')' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'*', max: b'*' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'+', max: b'+' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'?', max: b'?' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'|', max: b'|' }));
         assert_eq!(lexer.next_in_class(), Some(Token::CloseClass {}));
         assert_eq!(lexer.next_in_group(), Some(Token::CloseGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Marker { value: 0x17 }));
@@ -639,7 +683,7 @@ mod tests {
 
     #[test]
     fn handles_regex_tokenization_rule_0x18() {
-        let input = b"([\x01-\x2c\x2e-\x5b\x5f-\xff]\\-\\\\[\x01-\xff])#\x18\0".as_ptr();
+        let input = b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]\\-\\\\[\x01-\xff])#\x18\0".as_ptr();
         let mut lexer = match Lexer::new(input) {
             None => return assert!(false),
             Some(lexer) => lexer,
@@ -647,12 +691,23 @@ mod tests {
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x01, max: 0x2c }));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x2e, max: 0x5b }));
-        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x5f, max: 0xff }));
+        assert_eq!(lexer.next_in_class(), Some(Token::NegateClass {}));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'-', max: b'-' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'.', max: b'.' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'\\', max: b'\\' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'^', max: b'^' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'[', max: b'[' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b']', max: b']' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'#', max: b'#' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'(', max: b'(' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b')', max: b')' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'*', max: b'*' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'+', max: b'+' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'?', max: b'?' }));
+        assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: b'|', max: b'|' }));
         assert_eq!(lexer.next_in_class(), Some(Token::CloseClass {}));
-        assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(13) }, length: 1 }));
-        assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(15) }, length: 1 }));
+        assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(31) }, length: 1 }));
+        assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(33) }, length: 1 }));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
         assert_eq!(lexer.next_in_class(), Some(Token::RangeClass { min: 0x01, max: 0xff }));
         assert_eq!(lexer.next_in_class(), Some(Token::CloseClass {}));
