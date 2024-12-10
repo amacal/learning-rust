@@ -78,7 +78,7 @@ impl Lexer {
         class.append(b"(\\])#\x13\0".as_ptr());
 
         // range class single without [, - or ^
-        class.append(b"([\x01-\x2c\x2e-\x5b\x5f-\xff])#\x14\0".as_ptr());
+        class.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x14\0".as_ptr());
 
         // range class single, escaped
         class.append(b"(\\\\[\x01-\xff])#\x15\0".as_ptr());
