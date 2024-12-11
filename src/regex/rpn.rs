@@ -210,41 +210,17 @@ impl BuilderState {
             Token::NegateClass {} => Self::InClasses { negation: true, bits: bits },
             Token::CloseClass {} => {
                 let mut alternation = false;
-                let (mut min, mut max) = (0u8, 0u8);
+                let mut iterator = bits.iter(negation);
 
-                for idx in 1..=255u8 {
-                    if bits.get(idx) != negation {
-                        if min == 0 {
-                            min = idx;
-                            max = idx;
-                        } else {
-                            max = idx;
-                        }
-                    } else {
-                        if min > 0 {
-                            builder.elements.stack_push_front(b'-');
-                            builder.elements.stack_push_front(min);
-                            builder.elements.stack_push_front(max);
-
-                            if alternation {
-                                builder.elements.stack_push_front(b'|');
-                            } else {
-                                alternation = true;
-                            }
-                        }
-
-                        min = 0;
-                        max = 0;
-                    }
-                }
-
-                if min > 0 {
+                while let Some((min, max)) = iterator.next() {
                     builder.elements.stack_push_front(b'-');
                     builder.elements.stack_push_front(min);
                     builder.elements.stack_push_front(max);
 
                     if alternation {
                         builder.elements.stack_push_front(b'|');
+                    } else {
+                        alternation = true;
                     }
                 }
 
