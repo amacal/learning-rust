@@ -34,8 +34,8 @@ impl<const SIZE: usize> RPN<SIZE> {
         Self(elements)
     }
 
-    // #[cfg(test)]
-    pub fn as_bytes_front(&self) -> &[u8] {
+    #[cfg(test)]
+    pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes_front()
     }
 
@@ -99,8 +99,8 @@ impl BuilderState {
                 Self::InGroups { concatenation }
             }
             Token::Marker { value } => {
-                builder.operators.stack_push_front(value);
-                builder.operators.stack_push_front(b'#');
+                builder.elements.stack_push_front(b'#');
+                builder.elements.stack_push_front(value);
                 Self::InGroups { concatenation }
             }
             Token::OpenClass {} => {
@@ -124,16 +124,9 @@ impl BuilderState {
             Token::Either {} => {
                 while builder.operators.stack_size_front() > 0 {
                     match builder.operators.stack_peek_front() {
-                        b'*' | b'+' | b'?' | b'&' => {
+                        b'&' => {
                             let token = builder.operators.stack_pop_front();
                             builder.elements.stack_push_front(token);
-                        }
-                        b'#' => {
-                            let key = builder.operators.stack_pop_front();
-                            let value = builder.operators.stack_pop_front();
-
-                            builder.elements.stack_push_front(key);
-                            builder.elements.stack_push_front(value);
                         }
                         _ => break,
                     }
@@ -287,7 +280,7 @@ impl BuilderState {
         match self {
             Self::Completed => Self::Completed,
             Self::InGroups { concatenation } => Self::handle_in_groups(builder, lexer, concatenation),
-            Self::InClasses { negation, mut bits } => Self::handle_in_classes(builder, lexer, negation, bits),
+            Self::InClasses { negation, bits } => Self::handle_in_classes(builder, lexer, negation, bits),
         }
     }
 }
@@ -343,7 +336,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l1a");
+        assert_eq!(regex.as_bytes(), b"l1a");
     }
 
     #[test]
@@ -354,7 +347,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab");
+        assert_eq!(regex.as_bytes(), b"l2ab");
     }
 
     #[test]
@@ -365,7 +358,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l9abcdefghil9jklmnopqr&l8stuvwxyz&");
+        assert_eq!(regex.as_bytes(), b"l9abcdefghil9jklmnopqr&l8stuvwxyz&");
     }
 
     #[test]
@@ -376,7 +369,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l1al1b|");
+        assert_eq!(regex.as_bytes(), b"l1al1b|");
     }
 
     #[test]
@@ -387,7 +380,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l1al1b+?&");
+        assert_eq!(regex.as_bytes(), b"l1al1b+?&");
     }
 
     #[test]
@@ -398,7 +391,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l1al1b+&");
+        assert_eq!(regex.as_bytes(), b"l1al1b+&");
     }
 
     #[test]
@@ -409,7 +402,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l1al1b?&");
+        assert_eq!(regex.as_bytes(), b"l1al1b?&");
     }
 
     #[test]
@@ -420,7 +413,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2st?l2op&");
+        assert_eq!(regex.as_bytes(), b"l2st?l2op&");
     }
 
     #[test]
@@ -431,7 +424,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l9abcdefghil3jkl&l9mnopqrstul3vwx&|");
+        assert_eq!(regex.as_bytes(), b"l9abcdefghil3jkl&l9mnopqrstul3vwx&|");
     }
 
     #[test]
@@ -442,7 +435,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab+?l2cd+|");
+        assert_eq!(regex.as_bytes(), b"l2ab+?l2cd+|");
     }
 
     #[test]
@@ -453,7 +446,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab+?-az+|");
+        assert_eq!(regex.as_bytes(), b"l2ab+?-az+|");
     }
 
     #[test]
@@ -464,7 +457,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab+?-09-az|+|");
+        assert_eq!(regex.as_bytes(), b"l2ab+?-09-az|+|");
     }
 
     #[test]
@@ -475,7 +468,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab+?-\x01\x2f-\x3a\x60|-\x7b\xff|+|");
+        assert_eq!(regex.as_bytes(), b"l2ab+?-\x01\x2f-\x3a\x60|-\x7b\xff|+|");
     }
 
     #[test]
@@ -486,7 +479,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l10l10+l11+&+|+");
+        assert_eq!(regex.as_bytes(), b"l10l10+l11+&+|+");
     }
 
     #[test]
@@ -497,7 +490,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l10l11l10l11+?&l200+?&l10&+?&l11&+?|+?");
+        assert_eq!(regex.as_bytes(), b"l10l11l10l11+?&l200+?&l10&+?&l11&+?|+?");
     }
 
     #[test]
@@ -508,7 +501,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l10l11?&l12?&");
+        assert_eq!(regex.as_bytes(), b"l10l11?&l12?&");
     }
 
     #[test]
@@ -519,7 +512,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l1-?l10-19-09+?&|&l1.-09+&?&-EE-ee|l1+l1-|?&-09+&?&");
+        assert_eq!(regex.as_bytes(), b"l1-?l10-19-09+?&|&l1.-09+&?&-EE-ee|l1+l1-|?&-09+&?&");
     }
 
     #[test]
@@ -530,7 +523,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab#x");
+        assert_eq!(regex.as_bytes(), b"l2ab#x");
     }
 
     #[test]
@@ -541,7 +534,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab#xl2cd#y|");
+        assert_eq!(regex.as_bytes(), b"l2ab#xl2cd#y|");
     }
 
     #[test]
@@ -552,7 +545,7 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab#xl2cd#y|");
+        assert_eq!(regex.as_bytes(), b"l2ab#xl2cd#y|");
     }
 
     #[test]
@@ -567,6 +560,6 @@ mod tests {
             None => return assert!(false),
         };
 
-        assert_eq!(regex.as_bytes_front(), b"l2ab#xl2cd#y|");
+        assert_eq!(regex.as_bytes(), b"l2ab#xl2cd#y|");
     }
 }
