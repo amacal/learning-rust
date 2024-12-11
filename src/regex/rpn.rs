@@ -1,3 +1,4 @@
+use super::bits::*;
 use super::array::*;
 use super::heap::*;
 use super::lexer::*;
@@ -48,11 +49,10 @@ impl<const SIZE: usize> RPN<SIZE> {
     }
 }
 
-#[derive(Debug)]
 enum BuilderState {
     Completed,
     InGroups { concatenation: bool },
-    InClasses { negation: bool, bits: [u64; 4] },
+    InClasses { negation: bool, bits: Bits },
 }
 
 impl BuilderState {
@@ -119,7 +119,7 @@ impl BuilderState {
                 builder.operators.stack_push_front(if concatenation { 1 } else { 0 });
                 builder.operators.stack_push_front(b'[');
 
-                Self::InClasses { negation: false , bits: [0; 4] }
+                Self::InClasses { negation: false , bits: Bits::new() }
             }
             Token::Either {} => {
                 while builder.operators.stack_size_front() > 0 {
@@ -200,7 +200,7 @@ impl BuilderState {
         }
     }
 
-    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, negation: bool, mut bits: [u64; 4]) -> Self {
+    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, negation: bool, mut bits: Bits) -> Self {
         let token = match lexer.next_in_class() {
             None => return Self::Completed,
             Some(token) => token,
@@ -209,13 +209,11 @@ impl BuilderState {
         match token {
             Token::NegateClass {} => Self::InClasses { negation: true, bits: bits },
             Token::CloseClass {} => {
-                let mut min = 0u8;
-                let mut max = 0u8;
-
                 let mut alternation = false;
+                let (mut min, mut max) = (0u8, 0u8);
 
                 for idx in 1..=255u8 {
-                    if (bits[idx as usize / 64] & (1 << (idx as u64 % 64)) == 0) == negation {
+                    if bits.get(idx) != negation {
                         if min == 0 {
                             min = idx;
                             max = idx;
@@ -247,8 +245,6 @@ impl BuilderState {
 
                     if alternation {
                         builder.elements.stack_push_front(b'|');
-                    } else {
-                        alternation = true;
                     }
                 }
 
@@ -267,7 +263,7 @@ impl BuilderState {
             }
             Token::RangeClass { min, max } => {
                 for idx in min..=max {
-                    bits[idx as usize / 64] |= 1 << (idx as u64 % 64);
+                    bits.set(idx);
                 }
 
                 Self::InClasses { negation: negation, bits: bits }
