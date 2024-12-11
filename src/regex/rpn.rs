@@ -1,5 +1,5 @@
-use super::bits::*;
 use super::array::*;
+use super::bits::*;
 use super::heap::*;
 use super::lexer::*;
 
@@ -60,6 +60,20 @@ impl BuilderState {
         BuilderState::InGroups { concatenation: false }
     }
 
+    fn pop_concatenation<const SIZE: usize>(builder: &mut Builder<SIZE>, condition: bool) {
+        if condition {
+            while builder.operators.stack_size_front() > 0 {
+                match builder.operators.stack_peek_front() {
+                    b'&' => {
+                        builder.operators.stack_pop_front();
+                        builder.elements.stack_push_front(b'&');
+                    }
+                    _ => break,
+                }
+            }
+        }
+    }
+
     fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, concatenation: bool) -> Self {
         let token = match lexer.next_in_group() {
             None => return BuilderState::Completed,
@@ -68,17 +82,7 @@ impl BuilderState {
 
         match token {
             Token::OpenGroup {} => {
-                if concatenation {
-                    while builder.operators.stack_size_front() > 0 {
-                        match builder.operators.stack_peek_front() {
-                            b'&' => {
-                                builder.operators.stack_pop_front();
-                                builder.elements.stack_push_front(b'&');
-                            }
-                            _ => break,
-                        }
-                    }
-                }
+                Self::pop_concatenation(builder, concatenation);
 
                 builder.operators.stack_push_front(if concatenation { 1 } else { 0 });
                 builder.operators.stack_push_front(b'(');
@@ -104,33 +108,15 @@ impl BuilderState {
                 Self::InGroups { concatenation }
             }
             Token::OpenClass {} => {
-                if concatenation {
-                    while builder.operators.stack_size_front() > 0 {
-                        match builder.operators.stack_peek_front() {
-                            b'&' => {
-                                builder.operators.stack_pop_front();
-                                builder.elements.stack_push_front(b'&');
-                            }
-                            _ => break,
-                        }
-                    }
-                }
+                Self::pop_concatenation(builder, concatenation);
 
                 builder.operators.stack_push_front(if concatenation { 1 } else { 0 });
                 builder.operators.stack_push_front(b'[');
 
-                Self::InClasses { negation: false , bits: Bits::new() }
+                Self::InClasses { negation: false, bits: Bits::new() }
             }
             Token::Either {} => {
-                while builder.operators.stack_size_front() > 0 {
-                    match builder.operators.stack_peek_front() {
-                        b'&' => {
-                            let token = builder.operators.stack_pop_front();
-                            builder.elements.stack_push_front(token);
-                        }
-                        _ => break,
-                    }
-                }
+                Self::pop_concatenation(builder, true);
 
                 builder.operators.stack_push_front(b'|');
                 Self::InGroups { concatenation: false }
@@ -161,18 +147,7 @@ impl BuilderState {
 
                 while length > 0 {
                     let batch = std::cmp::min(length, 9);
-
-                    if concatenation {
-                        while builder.operators.stack_size_front() > 0 {
-                            match builder.operators.stack_peek_front() {
-                                b'&' => {
-                                    builder.operators.stack_pop_front();
-                                    builder.elements.stack_push_front(b'&');
-                                }
-                                _ => break,
-                            }
-                        }
-                    }
+                    Self::pop_concatenation(builder, concatenation);
 
                     builder.elements.stack_push_front(b'l');
                     builder.elements.stack_push_front(b'0' + batch as u8);
@@ -269,7 +244,7 @@ impl<const SIZE: usize> Builder<SIZE> {
     }
 
     pub fn append(&mut self, pattern: *const u8) {
-        let mut lexer = Lexer::new(pattern).expect("");
+        let mut lexer = Lexer::new(pattern);
         let mut state = BuilderState::new();
 
         loop {

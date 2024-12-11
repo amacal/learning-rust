@@ -130,8 +130,8 @@ impl Lexer {
         println!("const CLASS_DFA: [u16; {}] = {};", len, class.as_string(len));
     }
 
-    pub fn new(data: *const u8) -> Option<Self> {
-        Some(Self { data: data, group: Matrix::at(GROUP_DFA.as_ptr()), class: Matrix::at(CLASS_DFA.as_ptr()) })
+    pub fn new(data: *const u8) -> Self {
+        Self { data: data, group: Matrix::at(GROUP_DFA.as_ptr()), class: Matrix::at(CLASS_DFA.as_ptr()) }
     }
 
     fn next(&mut self, in_group: bool) -> Option<Token> {
@@ -212,10 +212,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x01() {
         let input = b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]+)#\x01\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
@@ -243,10 +240,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x02() {
         let input = b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]*)#\x02\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -290,10 +284,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x03() {
         let input = b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]+[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\+\\?\\*])#\x03\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
@@ -342,10 +333,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x04() {
         let input = b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]+[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\+\\?\\*])#\x04\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -410,10 +398,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x05() {
         let input = b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\+\\?\\*])#\x05\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
@@ -445,10 +430,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x06() {
         let input = b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x06\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -491,10 +473,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x10() {
         let input = b"(\\#[\x01-\xff])#\x10\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -509,10 +488,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x11() {
         let input = b"(\\^)#\x11\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -524,10 +500,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x12() {
         let input = b"(\\[)#\x12\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -539,10 +512,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x13() {
         let input = b"(\\])#\x13\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -554,10 +524,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x14() {
         let input = b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x14\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
@@ -584,10 +551,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x15() {
         let input = b"(\\\\[\x01-\xff])#\x15\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -602,10 +566,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x16() {
         let input = b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]\\-[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x16\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
@@ -649,10 +610,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x17() {
         let input = b"(\\\\[\x01-\xff]\\-[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x17\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -684,10 +642,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x18() {
         let input = b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]\\-\\\\[\x01-\xff])#\x18\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::OpenClass {}));
@@ -719,10 +674,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x19() {
         let input = b"(\\\\[\x01-\xff]\\-\\\\[\x01-\xff])#\x19\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -742,10 +694,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x1a() {
         let input = b"(\\()#\x1a\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -757,10 +706,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x1b() {
         let input = b"(\\))#\x1b\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -772,10 +718,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x1c() {
         let input = b"(\\*)#\x1c\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -787,10 +730,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x1d() {
         let input = b"(\\+)#\x1d\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -802,10 +742,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x1e() {
         let input = b"(\\?)#\x1e\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
@@ -817,10 +754,7 @@ mod tests {
     #[test]
     fn handles_regex_tokenization_rule_0x1f() {
         let input = b"(\\|)#\x1f\0".as_ptr();
-        let mut lexer = match Lexer::new(input) {
-            None => return assert!(false),
-            Some(lexer) => lexer,
-        };
+        let mut lexer = Lexer::new(input);
 
         assert_eq!(lexer.next_in_group(), Some(Token::OpenGroup {}));
         assert_eq!(lexer.next_in_group(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
