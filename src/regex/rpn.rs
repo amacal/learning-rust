@@ -34,7 +34,7 @@ impl<const SIZE: usize> RPN<SIZE> {
         Self(elements)
     }
 
-    #[cfg(test)]
+    // #[cfg(test)]
     pub fn as_bytes_front(&self) -> &[u8] {
         self.0.as_bytes_front()
     }

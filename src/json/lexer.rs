@@ -14,8 +14,8 @@ impl Lexer {
         // catch {, }, [, ], comma and colon
         builder.append(b"{#\x01\0".as_ptr());
         builder.append(b"}#\x02\0".as_ptr());
-        builder.append(b"[[]#\x03\0".as_ptr());
-        builder.append(b"]#\x04\0".as_ptr());
+        builder.append(b"\\[#\x03\0".as_ptr());
+        builder.append(b"\\]#\x04\0".as_ptr());
         builder.append(b",#\x05\0".as_ptr());
         builder.append(b":#\x06\0".as_ptr());
 
@@ -23,10 +23,10 @@ impl Lexer {
         builder.append(b"( |\n)+#\x07\0".as_ptr());
 
         // catch double quoted string literal
-        builder.append(b"(\"([^\"\\]|\\u[0-9a-f][0-9a-f][0-9a-f][0-9a-f]|\\[\"\\/bfnrt])+\")#\x08\0".as_ptr());
+        builder.append(b"(\"([^\"\\\\]|\\\\u[0-9a-f][0-9a-f][0-9a-f][0-9a-f]|\\\\[\"\\\\/bfnrt])*\")#\x08\0".as_ptr());
 
         // catch number with optional floating part or scientific notation
-        builder.append(b"(-?(0|[1-9][0-9]*)(.[0-9]+)?([eE]([+]|-)?[0-9]+)?)#\x09\0".as_ptr());
+        builder.append(b"(\\-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE](\\+|\\-)?[0-9]+)?)#\x09\0".as_ptr());
 
         // catch false, true, null literals
         builder.append(b"(false)#\x0a\0".as_ptr());
