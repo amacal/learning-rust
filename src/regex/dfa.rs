@@ -1,9 +1,8 @@
+use super::bits::*;
 use super::graph::*;
 use super::heap::*;
 use super::list::*;
 use super::nfa::*;
-
-use std::ops::Shr;
 
 pub struct DFA {
     transitions: Graph<4096, GuardSegfault>,
@@ -84,24 +83,6 @@ impl DFA {
             None
         }
     }
-
-    pub fn traverse_ptr2(&self, data: *const u8) -> Option<(u16, *const u8)> {
-        let mut current = (1, data);
-        let mut best = None;
-
-        while let Some((state, meta)) = self.transition_find(current.0, unsafe { *current.1 }) {
-            current = (state, unsafe { current.1.add(1) });
-            if meta > 0x00 {
-                best = Some((meta, current.1));
-            }
-        }
-
-        if data != current.1 {
-            best
-        } else {
-            None
-        }
-    }
 }
 
 struct Builder {
@@ -109,7 +90,6 @@ struct Builder {
     transitions: Graph<4096, GuardSegfault>,
     worklist: Collection<4096, GuardWrapping>,
     closures: Collection<4096, GuardSegfault>,
-    intervals: Collection<4096, GuardWrapping>,
 }
 
 impl Builder {
@@ -119,7 +99,6 @@ impl Builder {
             transitions: Graph::new(),
             worklist: Collection::new(),
             closures: Collection::new(),
-            intervals: Collection::new(),
         }
     }
 
@@ -312,8 +291,9 @@ impl Builder {
         }
     }
 
-    fn merge_intervals(&mut self, worklist: u16, nfa: &NFA) -> u16 {
-        let ranges = self.intervals.list_push_head();
+    fn merge_intervals(&mut self, worklist: u16, nfa: &NFA) -> Bits {
+        let mut bits = Bits::new();
+        print!("setting interval bits: ");
 
         for off in 1..self.worklist.list_items_count(worklist) {
             let idx = self.worklist.list_items_get(worklist, off);
@@ -321,73 +301,22 @@ impl Builder {
 
             if let Some(range) = range {
                 for idx in range.0..=range.1 {
-                    let val = nfa.transition_at(idx);
-                    let (from, to) = (val.1 .0 as u16, val.1 .1 as u16);
+                    let (_, (min, max), _, _) = nfa.transition_at(idx);
 
-                    if from > 0 {
-                        self.intervals.list_items_add(ranges, from.rotate_left(8) | to);
+                    if min > 0 {
+                        print!("0x{min:02x}-0x{max:02x} ");
+                        bits.set(min);
+                    }
+
+                    if max > 0 && max < 255 {
+                        bits.set(max + 1);
                     }
                 }
             }
         }
 
-        self.intervals.list_items_sort(ranges);
-        self.intervals.list_items_distinct(ranges);
-
-        let deltas = self.intervals.list_push_head();
-
-        for off in 0..self.intervals.list_items_count(ranges) {
-            let range = self.intervals.list_items_get(ranges, off);
-
-            self.intervals.list_items_add(deltas, range & 0xff00);
-            self.intervals.list_items_add(deltas, (range & 0x00ff).rotate_left(8) | 0x01);
-        }
-
-        self.intervals.list_items_sort(deltas);
-
-        let intervals = self.intervals.list_push_head();
-        let count = self.intervals.list_items_count(deltas);
-        let mut depth = 0u16;
-        let mut last: Option<u16> = None;
-
-        for off in 0..count {
-            let val = self.intervals.list_items_get(deltas, off);
-
-            if let Some(x) = last {
-                if depth > 0 {
-                    let end: u16 = val.shr(8);
-                    let end = end.wrapping_sub(if val & 0x01 == 0x01 { 0 } else { 1 });
-
-                    if x.shr(8) <= end {
-                        self.intervals.list_items_add(intervals, x | end);
-                    }
-
-                    last = Some(end.wrapping_add(1).rotate_left(8));
-                }
-            }
-
-            if val & 0x01 == 0x00 {
-                depth = depth.wrapping_add(1);
-            } else {
-                depth = depth.wrapping_sub(1);
-            }
-
-            if let Some(x) = last {
-                if x < val & 0xff00 {
-                    last = Some(val & 0xff00);
-                }
-            } else {
-                last = Some(val & 0xff00);
-            }
-        }
-
-        println!("intervals, used={}", self.intervals.usage());
-        self.intervals.print();
-
-        self.intervals.list_pop_tail();
-        self.intervals.list_pop_tail();
-
-        intervals
+        println!();
+        bits
     }
 
     fn nfa_to_dfa(&mut self, nfa: NFA) {
@@ -416,17 +345,13 @@ impl Builder {
             // the remaining items are reachable from the state id via epsilon
             let current = self.worklist.list_pop_tail();
             let intervals = self.merge_intervals(current, &nfa);
+            let mut iterator = intervals.edge();
 
-            println!("handling worklist={current:04x}, intervals={intervals:04x} ...");
+            println!("handling worklist={current:04x}, intervals={intervals:08x?} ...");
 
-            for off in 0..self.intervals.list_items_count(intervals) {
-                let encoded = self.intervals.list_items_get(intervals, off);
-                let (from, to) = (encoded.shr(8) as u8, (encoded & 0xff) as u8);
-
-                self.nfa_iteration(current, &nfa, (from, to));
+            while let Some((min, max)) = iterator.next() {
+                self.nfa_iteration(current, &nfa, (min, max));
             }
-
-            self.intervals.list_pop_tail();
 
             println!("\nclosures, used={}", self.closures.usage());
             self.closures.print();

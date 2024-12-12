@@ -185,7 +185,7 @@ impl BuilderState {
             Token::NegateClass {} => Self::InClasses { negation: true, bits: bits },
             Token::CloseClass {} => {
                 let mut alternation = false;
-                let mut iterator = bits.iter(negation);
+                let mut iterator = bits.area(negation);
 
                 while let Some((min, max)) = iterator.next() {
                     builder.elements.stack_push_front(b'-');
