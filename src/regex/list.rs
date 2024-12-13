@@ -9,18 +9,7 @@ pub struct Collection<const SIZE: usize, GUARD: Guard<u16, SIZE>> {
 
 impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
     pub fn new() -> Self {
-        let mut heap = Heap::alloc();
-
-        // simulate that current list has some elements
-        // so that new list will start at index zero
-        heap.set0((SIZE / 2) as u16 - 4, 0u16);
-
-        Self {
-            heap: heap,
-            count: 0,
-            head: 0,
-            tail: 0,
-        }
+        Self { heap: Heap::alloc(), count: 0, head: 0, tail: 0 }
     }
 
     pub fn usage(&self) -> u16 {
@@ -78,15 +67,16 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
         // previous head
         let head = self.head;
 
-        // length of the current head list
-        let off = self.heap.get0(self.head);
+        if self.count > 0 {
+            // length of the current head list
+            let off = self.heap.get0(self.head);
+
+            // new head is incremented by size of the added empty list
+            self.head = GUARD::apply(self.head.wrapping_add(off).wrapping_add(4).into()) as u16;
+        }
 
         // increment number of available list
         self.count = self.count.wrapping_add(1);
-
-        // new head is incremented by size of the added empty list
-        self.head =
-            <GuardWrapping as Guard<u16, SIZE>>::apply(self.head.wrapping_add(off).wrapping_add(4).into()) as u16;
 
         // new list contains zero elements and no hash
         self.heap.set0(0, self.head);
@@ -108,20 +98,31 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
         self.head
     }
 
+    pub fn list_peak_tail(&mut self) -> u16 {
+        self.tail
+    }
+
     pub fn list_pop_tail(&mut self) -> u16 {
         // decrement number of available lists
         self.count = self.count.wrapping_sub(1);
 
-        // find prev and next list for the current tail
-        let prev = self.list_prev(self.tail);
-        let next = self.list_next(self.tail);
+        if self.count > 0 {
+            // find prev and next list for the current tail
+            let prev = self.list_prev(self.tail);
+            let next = self.list_next(self.tail);
 
-        // relink prev and next lists to point at each other
-        self.heap.set1(prev, next, 1);
-        self.heap.set1(next, prev, 2);
+            // relink prev and next lists to point at each other
+            self.heap.set1(prev, next, 1);
+            self.heap.set1(next, prev, 2);
 
-        // tail points where next was pointing at
-        self.tail = next;
+            // tail points where next was pointing at
+            self.tail = next;
+        } else {
+            // reset both pointers
+            self.head = 0;
+            self.tail = 0;
+        }
+
         self.tail
     }
 
@@ -129,16 +130,23 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
         // decrement number of available lists
         self.count = self.count.wrapping_sub(1);
 
-        // find prev and next list for the current head
-        let prev = self.list_prev(self.head);
-        let next = self.list_next(self.head);
+        if self.count > 0 {
+            // find prev and next list for the current head
+            let prev = self.list_prev(self.head);
+            let next = self.list_next(self.head);
 
-        // relink prev and next lists to point at each other
-        self.heap.set1(prev, next, 1);
-        self.heap.set1(next, prev, 2);
+            // relink prev and next lists to point at each other
+            self.heap.set1(prev, next, 1);
+            self.heap.set1(next, prev, 2);
 
-        // head points where prev was pointing at
-        self.head = prev;
+            // head points where prev was pointing at
+            self.head = prev;
+        } else {
+            // reset both pointers
+            self.head = 0;
+            self.tail = 0;
+        }
+
         self.head
     }
 
@@ -338,15 +346,16 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
         // previous head
         let head = self.head;
 
-        // length of the current head list
-        let off = self.heap.get0(self.head);
+        if self.head > 0 {
+            // length of the current head list
+            let off = self.heap.get0(self.head);
+
+            // new head is incremented by size of the added empty list
+            self.head = GUARD::apply(self.head.wrapping_add(off).wrapping_add(4).into()) as u16;
+        }
 
         // increment number of available list
         self.count = self.count.wrapping_add(1);
-
-        // new head is incremented by size of the added empty list
-        self.head =
-            <GuardWrapping as Guard<u16, SIZE>>::apply(self.head.wrapping_add(off).wrapping_add(4).into()) as u16;
 
         // new list contains number of passed slots and no link
         self.heap.set0(slots, self.head);
@@ -574,6 +583,35 @@ mod tests {
     }
 
     #[test]
+    fn handles_removing_last_list_from_the_head() {
+        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let idx1 = collection.list_push_head();
+
+        collection.list_items_add(idx1, 13);
+        collection.list_items_add(idx1, 17);
+        assert_eq!(collection.list_items_count(idx1), 2);
+
+        let idx2 = collection.list_push_head();
+        collection.list_items_add(idx2, 23);
+        assert_eq!(collection.list_items_get(idx2, 0), 23);
+
+        let idx3 = collection.list_pop_head();
+        assert_eq!(idx3, idx1);
+        assert_eq!(collection.list_items_get(idx3, 0), 13);
+        assert_eq!(collection.list_items_get(idx3, 1), 17);
+
+        assert_eq!(collection.list_prev(idx1), idx1);
+        assert_eq!(collection.list_next(idx1), idx1);
+
+        let idx4 = collection.list_pop_head();
+        assert_eq!(idx4, 0);
+        assert_eq!(collection.count, 0);
+
+        assert_eq!(collection.head, 0);
+        assert_eq!(collection.tail, 0);
+    }
+
+    #[test]
     fn handles_removing_existing_list_from_the_tail() {
         let mut collection = Collection::<4096, GuardDisabled>::new();
         let idx1 = collection.list_push_head();
@@ -592,6 +630,34 @@ mod tests {
 
         assert_eq!(collection.list_prev(idx2), idx2);
         assert_eq!(collection.list_next(idx2), idx2);
+    }
+
+    #[test]
+    fn handles_removing_last_list_from_the_tail() {
+        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let idx1 = collection.list_push_head();
+
+        collection.list_items_add(idx1, 13);
+        collection.list_items_add(idx1, 17);
+        assert_eq!(collection.list_items_count(idx1), 2);
+
+        let idx2 = collection.list_push_head();
+        collection.list_items_add(idx2, 23);
+        assert_eq!(collection.list_items_get(idx2, 0), 23);
+
+        let idx3 = collection.list_pop_tail();
+        assert_eq!(idx3, idx2);
+        assert_eq!(collection.list_items_get(idx3, 0), 23);
+
+        assert_eq!(collection.list_prev(idx2), idx2);
+        assert_eq!(collection.list_next(idx2), idx2);
+
+        let idx4 = collection.list_pop_tail();
+        assert_eq!(idx4, 0);
+        assert_eq!(collection.count, 0);
+
+        assert_eq!(collection.head, 0);
+        assert_eq!(collection.tail, 0);
     }
 
     #[test]

@@ -277,7 +277,10 @@ impl Builder {
                 self.revert();
                 target
             } else if self.worklist.list_items_count(worklist) == 1 {
+                println!("reverting worklist {worklist:04x}, because nothing useful can be added...");
+
                 self.revert();
+                self.worklist.list_pop_head();
                 0x0000
             } else {
                 target
@@ -286,6 +289,8 @@ impl Builder {
             self.transitions.graph_add(src, (via.0, via.1), target, accepting);
             println!("appending dfa transition {src:04x} | {:02x} - {:02x} | {target:04x} | {accepting:04x}", via.0, via.1);
         } else {
+            println!("reverting worklist {worklist:04x}, because nothing useful can be added...");
+
             self.revert();
             self.worklist.list_pop_head();
         }
@@ -341,12 +346,12 @@ impl Builder {
             println!("worklist, cnt={}, used={}", self.worklist.list_count(), self.worklist.usage());
             self.worklist.print();
 
-            // pop a list from the worklist, each worklist contains at 0 the source state id
+            // peak a list from the worklist, each worklist contains at 0 the source state id
             // the remaining items are reachable from the state id via epsilon
-            let current = self.worklist.list_pop_tail();
+            let current = self.worklist.list_peak_tail();
             let intervals = self.merge_intervals(current, &nfa);
-            let mut iterator = intervals.edge();
 
+            let mut iterator = intervals.edge();
             println!("handling worklist={current:04x}, intervals={intervals:08x?} ...");
 
             while let Some((min, max)) = iterator.next() {
@@ -355,6 +360,9 @@ impl Builder {
 
             println!("\nclosures, used={}", self.closures.usage());
             self.closures.print();
+
+            // when processed the list can be popped
+            self.worklist.list_pop_tail();
         }
     }
 }
