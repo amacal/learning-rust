@@ -93,27 +93,27 @@ impl Builder {
     }
 
     fn next(&mut self) -> u16 {
-        self.counter = self.counter.wrapping_add(1);
-        self.counter.wrapping_sub(1)
+        self.counter += 1;
+        self.counter - 1
     }
 
     fn handle_literal<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>, idx: u16) -> u16 {
-        let index = idx.wrapping_add(1);
-        let count = rpn.at(index).wrapping_sub(b'0') as u16;
+        let index = idx + 1;
+        let count = rpn.at(index) - b'0';
 
         let zero_state = self.next();
         let first_state = self.next();
         let mut last = first_state;
 
-        let upper_limit = index.wrapping_add(count);
+        let upper_limit = index + count as u16;
         let zero_epsilons = self.epsilons.list_push_head();
 
         self.epsilons.list_items_add(zero_epsilons, first_state);
         self.transitions.graph_add(zero_state, (0, 0), zero_epsilons, 0x0200);
 
-        for idx in index.wrapping_add(1)..=upper_limit {
+        for idx in index+1..=upper_limit {
             let inside = idx < upper_limit;
-            let val = rpn.at(idx as u16);
+            let val = rpn.at(idx);
 
             let next = self.next();
             let meta = if inside { 0x0200 } else { 0x00 };
@@ -137,12 +137,12 @@ impl Builder {
         self.collapsed.stack_push_front(zero_state);
         self.collapsed.stack_push_front(complete_epsilons);
 
-        index.wrapping_add(count).wrapping_add(1)
+        index + count as u16 + 1
     }
 
     fn handle_positive_class<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>, idx: u16) -> u16 {
-        let low = rpn.at(idx.wrapping_add(1));
-        let high = rpn.at(idx.wrapping_add(2));
+        let low = rpn.at(idx + 1);
+        let high = rpn.at(idx + 2);
 
         let zero_state = self.next();
         let first_state = self.next();
@@ -166,7 +166,7 @@ impl Builder {
         self.collapsed.stack_push_front(zero_state);
         self.collapsed.stack_push_front(complete_epsilons);
 
-        idx.wrapping_add(3)
+        idx + 3
     }
 
     fn handle_alternation(&mut self, idx: u16) -> u16 {
@@ -196,7 +196,7 @@ impl Builder {
         self.collapsed.stack_push_front(end_epsilons);
         self.accepting.stack_push_front(b'|' as u16);
 
-        idx.wrapping_add(1)
+        idx + 1
     }
 
     fn handle_concatenation(&mut self, idx: u16) -> u16 {
@@ -236,7 +236,7 @@ impl Builder {
             self.accepting.stack_push_front(b'&' as u16);
         }
 
-        idx.wrapping_add(1)
+        idx + 1
     }
 
     fn handle_repetition(&mut self, idx: u16) -> u16 {
@@ -265,7 +265,7 @@ impl Builder {
         self.collapsed.stack_push_front(start_state);
         self.collapsed.stack_push_front(end_epsilons);
 
-        idx.wrapping_add(1)
+        idx + 1
     }
 
     fn handle_optionality(&mut self, idx: u16) -> u16 {
@@ -290,14 +290,14 @@ impl Builder {
         self.collapsed.stack_push_front(end_epsilons);
         self.accepting.stack_push_front(b'?' as u16);
 
-        idx.wrapping_add(1)
+        idx + 1
     }
 
     fn handle_acceptance<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>, idx: u16) -> u16 {
-        self.accepting.stack_push_front(rpn.at(idx.wrapping_add(1)) as u16);
+        self.accepting.stack_push_front(rpn.at(idx + 1).into());
         self.accepting.stack_push_front(b'#' as u16);
 
-        idx.wrapping_add(2)
+        idx + 2
     }
 
     fn build_transitions<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>) {
@@ -325,7 +325,7 @@ impl Builder {
                 b'&' => idx = self.handle_concatenation(idx),
                 b'+' => idx = self.handle_repetition(idx),
                 b'?' => idx = self.handle_optionality(idx),
-                _ => idx = idx.wrapping_add(1),
+                _ => idx = idx + 1,
             }
         }
 

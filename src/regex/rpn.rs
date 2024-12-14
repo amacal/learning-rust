@@ -263,7 +263,7 @@ impl<const SIZE: usize> Builder<SIZE> {
             self.elements.stack_push_front(b'|');
         }
 
-        self.counter = self.counter.wrapping_add(1);
+        self.counter += 1;
     }
 
     pub fn build(self) -> Option<RPN<SIZE>> {

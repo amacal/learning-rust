@@ -1,5 +1,5 @@
-use std::mem;
 use std::marker::PhantomData;
+use std::mem;
 
 use super::heap::*;
 
@@ -15,33 +15,28 @@ pub struct Array<LIKE, T, const SIZE: usize, GUARD: Guard<T, SIZE>> {
 
 impl<LIKE, T, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<LIKE, T, SIZE, GUARD> {
     pub fn new() -> Self {
-        Self {
-            heap: Heap::alloc(),
-            like: PhantomData,
-            head: 0,
-            tail: (SIZE / mem::size_of::<T>()).wrapping_sub(1) as u16,
-        }
+        Self { heap: Heap::alloc(), like: PhantomData, head: 0, tail: (SIZE / mem::size_of::<T>()) as u16 - 1 }
     }
 }
 
 impl<LIKE: StackLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<LIKE, T, SIZE, GUARD> {
     pub fn stack_push_front(&mut self, val: T) {
         self.heap.set0(val, self.head);
-        self.head = self.head.wrapping_add(1);
+        self.head += 1;
     }
 
     pub fn stack_push_back(&mut self, val: T) {
         self.heap.set0(val, self.tail);
-        self.tail = self.tail.wrapping_sub(1);
+        self.tail -= 1;
     }
 
     pub fn stack_pop_front(&mut self) -> T {
-        self.head = self.head.wrapping_sub(1);
+        self.head -= 1;
         self.heap.get0(self.head)
     }
 
     pub fn stack_pop_back(&mut self) -> T {
-        self.tail = self.tail.wrapping_add(1);
+        self.tail += 1;
         self.heap.get0(self.tail)
     }
 
@@ -54,11 +49,11 @@ impl<LIKE: StackLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<L
     }
 
     pub fn stack_peek_front(&self) -> T {
-        self.heap.get0(self.head.wrapping_sub(1))
+        self.heap.get0(self.head - 1)
     }
 
     pub fn stack_peek_back(&self) -> T {
-        self.heap.get0(self.tail.wrapping_add(1))
+        self.heap.get0(self.tail + 1)
     }
 
     // #[cfg(test)]

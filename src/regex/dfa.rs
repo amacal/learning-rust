@@ -68,11 +68,11 @@ impl DFA {
                 None => break,
                 Some((state, meta)) => {
                     if meta > 0x00 {
-                        best = Some((meta, current.1.wrapping_add(1).wrapping_sub(offset)));
+                        best = Some((meta, current.1 + 1 - offset));
                     }
 
-                    length = length.wrapping_sub(1);
-                    (state, current.1.wrapping_add(1))
+                    length -= 1;
+                    (state, current.1 + 1)
                 }
             };
         }
@@ -94,21 +94,16 @@ struct Builder {
 
 impl Builder {
     fn new() -> Self {
-        Self {
-            counter: 1,
-            transitions: Graph::new(),
-            worklist: Collection::new(),
-            closures: Collection::new(),
-        }
+        Self { counter: 1, transitions: Graph::new(), worklist: Collection::new(), closures: Collection::new() }
     }
 
     fn next(&mut self) -> u16 {
-        self.counter = self.counter.wrapping_add(1);
-        self.counter.wrapping_sub(1)
+        self.counter += 1;
+        self.counter - 1
     }
 
     fn revert(&mut self) {
-        self.counter = self.counter.wrapping_sub(1);
+        self.counter -= 1;
     }
 
     fn build(mut self, nfa: NFA) -> Option<DFA> {
@@ -908,8 +903,8 @@ mod tests {
             None => return assert!(false),
         };
 
-        let min = (i16::MIN as i32).wrapping_sub(1000);
-        let max = (i16::MAX as i32).wrapping_add(1000);
+        let min = (i16::MIN as i32) - 1000;
+        let max = (i16::MAX as i32) + 1000;
 
         for num in min..=max {
             let binary = format!("{}", num);

@@ -35,8 +35,8 @@ fn main() {
             Ok(n) => n,
         };
 
-        total = total.wrapping_add(read);
-        let mut length = total.wrapping_sub(prev);
+        total = total + read;
+        let mut length = total - prev;
 
         while let Some((token, size)) = lexer.process(length) {
             print!("{:08x} ", prev);
@@ -67,8 +67,8 @@ fn main() {
                 (_, _) => panic!("unknown"),
             }
 
+            length -= size;
             prev = lexer.offset();
-            length = length.wrapping_sub(size);
             counters[token as usize] += 1;
         }
 

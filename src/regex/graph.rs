@@ -22,7 +22,7 @@ impl<const SIZE: usize, GUARD: Guard<u64, SIZE>> Graph<SIZE, GUARD> {
 
     pub fn graph_inc(&mut self) -> u16 {
         let idx = self.head;
-        self.head = self.head.wrapping_add(1);
+        self.head += 1;
         idx
     }
 
@@ -129,15 +129,15 @@ impl<const SIZE: usize, GUARD: Guard<u64, SIZE>> Graph<SIZE, GUARD> {
                 }
 
                 if via > val.1 .0 {
-                    low = idx.wrapping_add(1);
+                    low = idx + 1;
                 } else {
-                    high = idx.wrapping_sub(1);
+                    high = idx - 1;
                 }
             } else {
                 if src > val.0 {
-                    low = idx.wrapping_add(1);
+                    low = idx + 1;
                 } else {
-                    high = idx.wrapping_sub(1);
+                    high = idx - 1;
                 }
             }
         }
@@ -159,9 +159,9 @@ impl<const SIZE: usize, GUARD: Guard<u64, SIZE>> Graph<SIZE, GUARD> {
                 break;
             } else {
                 if src > val.0 {
-                    low = idx.wrapping_add(1);
+                    low = idx + 1;
                 } else {
-                    high = idx.wrapping_sub(1);
+                    high = idx - 1;
                 }
             }
         }
@@ -171,15 +171,15 @@ impl<const SIZE: usize, GUARD: Guard<u64, SIZE>> Graph<SIZE, GUARD> {
             let (src, _, _, _) = self.graph_at(idx as u16);
 
             while low > 0 {
-                low = match self.graph_at(low.wrapping_sub(1)) {
-                    (val, _, _, _) if val == src && low > 0 => low.wrapping_sub(1),
+                low = match self.graph_at(low - 1) {
+                    (val, _, _, _) if val == src && low > 0 => low - 1,
                     _ => break,
                 };
             }
 
             while high < self.head {
-                high = match self.graph_at(high.wrapping_add(1)) {
-                    (val, _, _, _) if val == src && high < self.head => high.wrapping_add(1),
+                high = match self.graph_at(high + 1) {
+                    (val, _, _, _) if val == src && high < self.head => high + 1,
                     _ => break,
                 };
             }

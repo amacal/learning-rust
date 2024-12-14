@@ -17,8 +17,7 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
         let (mut idx, mut count) = (self.tail, 0u16);
 
         while in_progress {
-            count = count.wrapping_add(4);
-            count = count.wrapping_add(self.heap.get0(idx));
+            count += 4 + self.heap.get0(idx);
             idx = self.heap.get1(idx, 2);
             in_progress = idx != self.tail;
         }
@@ -72,11 +71,11 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
             let off = self.heap.get0(self.head);
 
             // new head is incremented by size of the added empty list
-            self.head = GUARD::apply(self.head.wrapping_add(off).wrapping_add(4).into()) as u16;
+            self.head = GUARD::apply(self.head + off + 4) as u16;
         }
 
         // increment number of available list
-        self.count = self.count.wrapping_add(1);
+        self.count += 1;
 
         // new list contains zero elements and no hash
         self.heap.set0(0, self.head);
@@ -104,7 +103,7 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
 
     pub fn list_pop_tail(&mut self) -> u16 {
         // decrement number of available lists
-        self.count = self.count.wrapping_sub(1);
+        self.count -= 1;
 
         if self.count > 0 {
             // find prev and next list for the current tail
@@ -128,7 +127,7 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
 
     pub fn list_pop_head(&mut self) -> u16 {
         // decrement number of available lists
-        self.count = self.count.wrapping_sub(1);
+        self.count -= 1;
 
         if self.count > 0 {
             // find prev and next list for the current head
@@ -276,7 +275,7 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
         let mut low: i32 = 0i32;
         let mut high: i32 = high.into();
 
-        high = high.wrapping_sub(1);
+        high -= 1;
 
         while low <= high {
             let off = low + (high - low) / 2;
@@ -287,9 +286,9 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
             }
 
             if item > val {
-                low = off.wrapping_add(1);
+                low = off + 1;
             } else {
-                high = off.wrapping_sub(1);
+                high = off - 1;
             }
         }
 
@@ -303,7 +302,7 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
         let mut in_progress = true;
 
         while in_progress {
-            count = count.wrapping_add(1);
+            count += 1;
             idx = self.heap.get1(idx, 3);
             in_progress = idx > 0;
         }
@@ -316,7 +315,7 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
         let mut in_progress = true;
 
         while in_progress {
-            count = count.wrapping_add(self.heap.get0(idx));
+            count += self.heap.get0(idx);
             idx = self.heap.get1(idx, 3);
             in_progress = idx > 0;
         }
@@ -331,7 +330,7 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
         while in_progress {
             for i in 0..self.heap.get0(idx) {
                 if self.heap.get2(idx, i, 4) != 0 {
-                    count = count.wrapping_add(1);
+                    count += 1;
                 }
             }
 
@@ -351,11 +350,11 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
             let off = self.heap.get0(self.head);
 
             // new head is incremented by size of the added empty list
-            self.head = GUARD::apply(self.head.wrapping_add(off).wrapping_add(4).into()) as u16;
+            self.head = GUARD::apply(self.head + off + 4) as u16;
         }
 
         // increment number of available list
-        self.count = self.count.wrapping_add(1);
+        self.count += 1;
 
         // new list contains number of passed slots and no link
         self.heap.set0(slots, self.head);

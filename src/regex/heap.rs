@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use std::ptr;
 
 pub trait Guard<T, const SIZE: usize> {
-    fn apply(off: usize) -> usize;
+    fn apply<U: Into<usize>>(off: U) -> usize;
 
     fn deref_get(ptr: *const T, off: usize) -> T
     where
@@ -17,8 +17,8 @@ pub struct GuardDisabled;
 pub struct GuardSegfault;
 
 impl<T, const SIZE: usize> Guard<T, SIZE> for GuardWrapping {
-    fn apply(off: usize) -> usize {
-        off & (SIZE / size_of::<T>() - 1)
+    fn apply<U: Into<usize>>(off: U) -> usize {
+        off.into() & (SIZE / size_of::<T>() - 1)
     }
 
     fn deref_get(ptr: *const T, off: usize) -> T
@@ -34,8 +34,8 @@ impl<T, const SIZE: usize> Guard<T, SIZE> for GuardWrapping {
 }
 
 impl<T, const SIZE: usize> Guard<T, SIZE> for GuardDisabled {
-    fn apply(off: usize) -> usize {
-        off
+    fn apply<U: Into<usize>>(off: U) -> usize {
+        off.into()
     }
 
     fn deref_get(ptr: *const T, off: usize) -> T
@@ -51,8 +51,8 @@ impl<T, const SIZE: usize> Guard<T, SIZE> for GuardDisabled {
 }
 
 impl<T, const SIZE: usize> Guard<T, SIZE> for GuardSegfault {
-    fn apply(off: usize) -> usize {
-        off
+    fn apply<U: Into<usize>>(off: U) -> usize {
+        off.into()
     }
 
     fn deref_get(ptr: *const T, off: usize) -> T
@@ -60,11 +60,7 @@ impl<T, const SIZE: usize> Guard<T, SIZE> for GuardSegfault {
         T: Copy,
     {
         unsafe {
-            let src = if off < SIZE / size_of::<T>() {
-                ptr.add(off)
-            } else {
-                ptr::null()
-            };
+            let src = if off < SIZE / size_of::<T>() { ptr.add(off) } else { ptr::null() };
 
             ptr::read_volatile(src)
         }
@@ -72,11 +68,7 @@ impl<T, const SIZE: usize> Guard<T, SIZE> for GuardSegfault {
 
     fn deref_set(ptr: *mut T, off: usize, val: T) {
         unsafe {
-            let dst = if off < SIZE / size_of::<T>() {
-                ptr.add(off)
-            } else {
-                ptr::null_mut()
-            };
+            let dst = if off < SIZE / size_of::<T>() { ptr.add(off) } else { ptr::null_mut() };
 
             ptr::write_volatile(dst, val);
         }
@@ -131,11 +123,11 @@ impl<T, const SIZE: usize, GUARD: Guard<T, SIZE>> Heap<T, SIZE, GUARD> {
     }
 
     pub fn guard1(&self, off: usize, inc: usize) -> usize {
-        GUARD::apply(off.wrapping_add(inc))
+        GUARD::apply(off + inc)
     }
 
     pub fn guard2(&self, off: usize, inc1: usize, inc2: usize) -> usize {
-        GUARD::apply(off.wrapping_add(inc1).wrapping_add(inc2))
+        GUARD::apply(off + inc1 + inc2)
     }
 
     pub fn get0<U>(&self, off: U) -> T

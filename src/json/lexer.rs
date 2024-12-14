@@ -66,7 +66,7 @@ impl Lexer {
             Some(val) => val,
         };
 
-        self.offset = self.offset.wrapping_add(length);
+        self.offset += length;
         Some((token, length))
     }
 

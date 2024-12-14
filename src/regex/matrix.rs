@@ -32,7 +32,7 @@ impl Matrix {
 
                 // state may be accepting
                 if state > threshold {
-                    let off = state.wrapping_sub(threshold);
+                    let off = state - threshold;
                     let ptr = self.0.add(off as usize);
 
                     // next best is found in the first row
