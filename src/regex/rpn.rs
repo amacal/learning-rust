@@ -74,12 +74,7 @@ impl BuilderState {
         }
     }
 
-    fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, concatenation: bool) -> Self {
-        let token = match lexer.next_in_group() {
-            None => return BuilderState::Completed,
-            Some(token) => token,
-        };
-
+    fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, token: Token, concatenation: bool) -> Self {
         match token {
             Token::OpenGroup {} => {
                 Self::pop_concatenation(builder, concatenation);
@@ -175,12 +170,7 @@ impl BuilderState {
         }
     }
 
-    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, lexer: &mut Lexer, negation: bool, mut bits: Bits) -> Self {
-        let token = match lexer.next_in_class() {
-            None => return Self::Completed,
-            Some(token) => token,
-        };
-
+    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, token: Token, negation: bool, mut bits: Bits) -> Self {
         match token {
             Token::NegateClass {} => Self::InClasses { negation: true, bits: bits },
             Token::CloseClass {} => {
@@ -223,11 +213,11 @@ impl BuilderState {
         }
     }
 
-    fn handle<const SIZE: usize>(self, builder: &mut Builder<SIZE>, lexer: &mut Lexer) -> Self {
+    fn handle<const SIZE: usize>(self, builder: &mut Builder<SIZE>, token: Token) -> Self {
         match self {
             Self::Completed => Self::Completed,
-            Self::InGroups { concatenation } => Self::handle_in_groups(builder, lexer, concatenation),
-            Self::InClasses { negation, bits } => Self::handle_in_classes(builder, lexer, negation, bits),
+            Self::InGroups { concatenation } => Self::handle_in_groups(builder, token, concatenation),
+            Self::InClasses { negation, bits } => Self::handle_in_classes(builder, token, negation, bits),
         }
     }
 }
@@ -248,7 +238,12 @@ impl<const SIZE: usize> Builder<SIZE> {
         let mut state = BuilderState::new();
 
         loop {
-            state = match state.handle(self, &mut lexer) {
+            let token = match lexer.next() {
+                None => break,
+                Some(token) => token,
+            };
+
+            state = match state.handle(self, token) {
                 BuilderState::Completed => break,
                 state => state,
             };

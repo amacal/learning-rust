@@ -121,14 +121,12 @@ impl Builder {
         for off in 1..self.worklist.list_items_count(worklist) {
             let val = self.worklist.list_items_get(worklist, off);
             self.closures.list_items_add(closure, val & 0x7fff);
-            //self.worklist.list_items_set(worklist, off, val & 0x7fff);
             epsilon = epsilon | (val & 0x8000 == 0x8000);
         }
 
         // a state where the worklist will point if successfully closed
         let next = self.worklist.list_items_get(worklist, 0);
         self.worklist.list_items_set(worklist, 0, 0);
-        //self.worklist.list_items_resize(worklist, 1);
 
         println!();
         print!("closing {closure:04x} -> ");
