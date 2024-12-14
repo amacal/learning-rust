@@ -311,6 +311,10 @@ impl Builder {
                     if max > 0 && max < 255 {
                         bits.set(max + 1);
                     }
+
+                    if max == 255 {
+                        bits.set(255);
+                    }
                 }
             }
         }

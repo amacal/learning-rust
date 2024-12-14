@@ -267,4 +267,25 @@ mod tests {
         assert_eq!(iterator.next(), Some((61, 80)));
         assert_eq!(iterator.next(), None);
     }
+
+    #[test]
+    fn iterates_edge_over_two_regions_overlapping_till_end() {
+        let mut bits = Bits::new();
+
+        bits.set(20);
+        bits.set(61);
+        bits.set(40);
+        bits.set(81);
+        bits.set(80);
+        bits.set(255);
+
+        let mut iterator = bits.edge();
+
+        assert_eq!(iterator.next(), Some((20, 39)));
+        assert_eq!(iterator.next(), Some((40, 60)));
+        assert_eq!(iterator.next(), Some((61, 79)));
+        assert_eq!(iterator.next(), Some((80, 80)));
+        assert_eq!(iterator.next(), Some((81, 255)));
+        assert_eq!(iterator.next(), None);
+    }
 }
