@@ -28,14 +28,10 @@ fn build_matrix<const SIZE: usize, const MATRIX: usize>(builder: Builder<SIZE>) 
         None => return None,
     };
 
-    nfa.print();
-
     let dfa = match DFA::build(nfa) {
         Some(dfa) => dfa,
         None => return None,
     };
-
-    dfa.print();
 
     match Matrix::build::<MATRIX>(&dfa) {
         Some(matrix) => Some(matrix),
@@ -169,8 +165,10 @@ impl Lexer {
         };
 
         match result {
-            Some(Token::OpenClass {}) => self.inside = true,
-            Some(Token::CloseClass {}) => self.inside = false,
+            Some(Token::OpenClass {}) if self.inside == false => self.inside = true,
+            Some(Token::CloseClass {}) if self.inside == true => self.inside = false,
+            Some(Token::OpenClass {}) if self.inside == true => return None,
+            Some(Token::CloseClass {}) if self.inside == false => return None,
             _ => {}
         }
 
@@ -759,6 +757,33 @@ mod tests {
         assert_eq!(lexer.next(), Some(Token::Literal { start: unsafe { input.add(2) }, length: 1 }));
         assert_eq!(lexer.next(), Some(Token::CloseGroup {}));
         assert_eq!(lexer.next(), Some(Token::Marker { value: 0x1f }));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn handles_regex_tokenization_with_double_opened_class() {
+        let input = b"[[\0".as_ptr();
+        let mut lexer = Lexer::new(input);
+
+        assert_eq!(lexer.next(), Some(Token::OpenClass {}));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn handles_regex_tokenization_with_double_closed_class() {
+        let input = b"[]]\0".as_ptr();
+        let mut lexer = Lexer::new(input);
+
+        assert_eq!(lexer.next(), Some(Token::OpenClass {}));
+        assert_eq!(lexer.next(), Some(Token::CloseClass {}));
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn handles_regex_tokenization_with_closed_but_not_opened_class() {
+        let input = b"]\0".as_ptr();
+        let mut lexer = Lexer::new(input);
+
         assert_eq!(lexer.next(), None);
     }
 }

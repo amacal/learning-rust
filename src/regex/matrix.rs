@@ -10,7 +10,7 @@ struct Builder<const SIZE: usize> {
 }
 
 impl Matrix {
-    pub fn at(data: *const u16) -> Self {
+    pub const fn at(data: *const u16) -> Self {
         Self(data)
     }
 
