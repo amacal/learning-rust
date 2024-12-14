@@ -174,7 +174,13 @@ impl BuilderState {
 
     fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, token: Token, negation: bool, mut bits: Bits) -> Self {
         match token {
-            Token::NegateClass {} => Self::InClasses { negation: true, bits: bits },
+            Token::NegateClass {} => {
+                if negation || bits.any() {
+                    Self::Invalid
+                } else {
+                    Self::InClasses { negation: true, bits: bits }
+                }
+            }
             Token::CloseClass {} => {
                 let mut alternation = false;
                 let mut iterator = bits.area(negation);
@@ -500,8 +506,8 @@ mod tests {
     fn handles_rpn_from_multiple_appends() {
         let mut builder = RPN::<4096>::builder();
 
-        builder.append(b"ab#x\0".as_ptr());
-        builder.append(b"cd#y\0".as_ptr());
+        builder.append(b"ab#x\0".as_ptr()).unwrap();
+        builder.append(b"cd#y\0".as_ptr()).unwrap();
 
         let regex = match builder.build() {
             Ok(regex) => regex,
@@ -509,5 +515,25 @@ mod tests {
         };
 
         assert_eq!(regex.as_bytes(), b"l2ab#xl2cd#y|");
+    }
+
+    #[test]
+    fn handles_rpn_error_from_double_negated_class() {
+        let pattern = b"[^^]\0".as_ptr();
+
+        match RPN::<4096>::build(pattern) {
+            Err(Error::InvalidRegex {}) => {}
+            _ => return assert!(false),
+        }
+    }
+
+    #[test]
+    fn handles_rpn_error_from_negated_in_the_middle_class() {
+        let pattern = b"[a-z^]\0".as_ptr();
+
+        match RPN::<4096>::build(pattern) {
+            Err(Error::InvalidRegex {}) => {}
+            _ => return assert!(false),
+        }
     }
 }

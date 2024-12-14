@@ -85,6 +85,16 @@ impl Bits {
         self.0[idx as usize / 64] |= (1 as u64) << (idx as u64 % 64);
     }
 
+    pub fn any(&self) -> bool {
+        for idx in 0..4 {
+            if self.0[idx] > 0 {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     pub fn area<'a>(&'a self, negation: bool) -> AreaIterator<'a> {
         AreaIterator { bits: self, negation: negation, state: 0 }
     }
