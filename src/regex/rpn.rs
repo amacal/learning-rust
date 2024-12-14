@@ -1,5 +1,6 @@
 use super::array::*;
 use super::bits::*;
+use super::error::*;
 use super::heap::*;
 use super::lexer::*;
 
@@ -233,14 +234,15 @@ impl<const SIZE: usize> Builder<SIZE> {
         Self { counter: 0, elements: Array::new(), operators: Array::new() }
     }
 
-    pub fn append(&mut self, pattern: *const u8) {
+    pub fn append(&mut self, pattern: *const u8) -> Result<(), Error> {
         let mut lexer = Lexer::new(pattern);
         let mut state = BuilderState::new();
 
         loop {
             let token = match lexer.next() {
-                None => break,
-                Some(token) => token,
+                Err(error) => return Err(error),
+                Ok(Some(token)) => token,
+                Ok(None) => break,
             };
 
             state = match state.handle(self, token) {
@@ -259,6 +261,7 @@ impl<const SIZE: usize> Builder<SIZE> {
         }
 
         self.counter += 1;
+        Ok(())
     }
 
     pub fn build(self) -> Option<RPN<SIZE>> {
