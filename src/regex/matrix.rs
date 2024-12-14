@@ -107,8 +107,8 @@ mod tests {
         let regex = b"(st)?op\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -162,8 +162,8 @@ mod tests {
         let regex = b"(st)?op\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -199,8 +199,8 @@ mod tests {
         let regex = b"(start#x)(stop)?#y\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -260,8 +260,8 @@ mod tests {
         let regex = b"(start#x)(stop)?#y\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {

@@ -34,8 +34,8 @@ impl Lexer {
         builder.append(b"(null)#\x0c\0".as_ptr());
 
         let rpn: RPN<4096> = match builder.build() {
-            Some(rpn) => rpn,
-            None => return None,
+            Ok(rpn) => rpn,
+            _ => return None,
         };
 
         let nfa = match NFA::build(rpn) {

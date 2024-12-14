@@ -20,8 +20,8 @@ pub struct Lexer {
 
 fn build_matrix<const SIZE: usize, const MATRIX: usize>(builder: Builder<SIZE>) -> Option<Heap<u16, MATRIX, GuardSegfault>> {
     let rpn = match builder.build() {
-        Some(rpn) => rpn,
-        None => return None,
+        Ok(rpn) => rpn,
+        _ => return None,
     };
 
     let nfa = match NFA::build(rpn) {
@@ -41,89 +41,89 @@ fn build_matrix<const SIZE: usize, const MATRIX: usize>(builder: Builder<SIZE>) 
 }
 
 impl Lexer {
-    pub fn prepare() {
+    pub fn prepare() -> Result<(), Error> {
         let mut group = RPN::<4096>::builder();
         let mut class = RPN::<4096>::builder();
 
         // literal naively
-        group.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]+)#\x01\0".as_ptr());
+        group.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]+)#\x01\0".as_ptr())?;
 
         // literal naively, started with an escaped character
-        group.append(b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]*)#\x02\0".as_ptr());
+        group.append(b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]*)#\x02\0".as_ptr())?;
 
         // literal followed by *, ? or +
-        group.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]+[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\+\\?\\*])#\x03\0".as_ptr());
+        group.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]+[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\+\\?\\*])#\x03\0".as_ptr())?;
 
         // literal followed by *, ? or +, started with an escaped character
-        group.append(b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]+[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\+\\?\\*])#\x04\0".as_ptr());
+        group.append(b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]+[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\+\\?\\*])#\x04\0".as_ptr())?;
 
         // leter followed by *, ? or +
-        group.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\+\\?\\*])#\x05\0".as_ptr());
+        group.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][\\+\\?\\*])#\x05\0".as_ptr())?;
 
         // leter followed by *, ? or +, started with an escaped character
-        group.append(b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x06\0".as_ptr());
+        group.append(b"(\\\\[\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|][^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x06\0".as_ptr())?;
 
         // marker
-        group.append(b"(\\#[\x01-\xff])#\x10\0".as_ptr());
+        group.append(b"(\\#[\x01-\xff])#\x10\0".as_ptr())?;
 
         // negate class
-        class.append(b"(\\^)#\x11\0".as_ptr());
+        class.append(b"(\\^)#\x11\0".as_ptr())?;
 
         // open class
-        group.append(b"(\\[)#\x12\0".as_ptr());
+        group.append(b"(\\[)#\x12\0".as_ptr())?;
 
         // open class
-        class.append(b"(\\[)#\x12\0".as_ptr());
+        class.append(b"(\\[)#\x12\0".as_ptr())?;
 
         // close class
-        group.append(b"(\\])#\x13\0".as_ptr());
+        group.append(b"(\\])#\x13\0".as_ptr())?;
 
         // close class
-        class.append(b"(\\])#\x13\0".as_ptr());
+        class.append(b"(\\])#\x13\0".as_ptr())?;
 
         // range class single without [, - or ^
-        class.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x14\0".as_ptr());
+        class.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x14\0".as_ptr())?;
 
         // range class single, escaped
-        class.append(b"(\\\\[\x01-\xff])#\x15\0".as_ptr());
+        class.append(b"(\\\\[\x01-\xff])#\x15\0".as_ptr())?;
 
         // range class dashed without ], -, \ or ^ both
-        class.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]\\-[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x16\0".as_ptr());
+        class.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]\\-[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x16\0".as_ptr())?;
 
         // range class dashed without ], -, \ or ^ right, escaped left
-        class.append(b"(\\\\[\x01-\xff]\\-[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x17\0".as_ptr());
+        class.append(b"(\\\\[\x01-\xff]\\-[^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|])#\x17\0".as_ptr())?;
 
         // range class dashed without ], -, \ or ^ left, escaped right
-        class.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]\\-\\\\[\x01-\xff])#\x18\0".as_ptr());
+        class.append(b"([^\\-\\.\\\\\\^\\[\\]\\#\\(\\)\\*\\+\\?\\|]\\-\\\\[\x01-\xff])#\x18\0".as_ptr())?;
 
         // range class dashed, escaped both
-        class.append(b"(\\\\[\x01-\xff]\\-\\\\[\x01-\xff])#\x19\0".as_ptr());
+        class.append(b"(\\\\[\x01-\xff]\\-\\\\[\x01-\xff])#\x19\0".as_ptr())?;
 
         // open group
-        group.append(b"(\\()#\x1a\0".as_ptr());
+        group.append(b"(\\()#\x1a\0".as_ptr())?;
 
         // close group
-        group.append(b"(\\))#\x1b\0".as_ptr());
+        group.append(b"(\\))#\x1b\0".as_ptr())?;
 
         // star
-        group.append(b"(\\*)#\x1c\0".as_ptr());
+        group.append(b"(\\*)#\x1c\0".as_ptr())?;
 
         // plus
-        group.append(b"(\\+)#\x1d\0".as_ptr());
+        group.append(b"(\\+)#\x1d\0".as_ptr())?;
 
         // optional
-        group.append(b"(\\?)#\x1e\0".as_ptr());
+        group.append(b"(\\?)#\x1e\0".as_ptr())?;
 
         // either
-        group.append(b"(\\|)#\x1f\0".as_ptr());
+        group.append(b"(\\|)#\x1f\0".as_ptr())?;
 
         let group = match build_matrix::<4096, 8192>(group) {
-            None => return,
+            None => return Err(Error::NotEnoughHeap {}),
             Some(dfa) => dfa,
         };
 
         let class = match build_matrix::<4096, 8192>(class) {
-            None => return,
+            None => return Err(Error::NotEnoughHeap {}),
             Some(dfa) => dfa,
         };
 
@@ -132,6 +132,8 @@ impl Lexer {
 
         let len = class.get0(0u16) as usize * 256;
         println!("const CLASS_DFA: [u16; {}] = {};", len, class.as_string(len));
+
+        Ok(())
     }
 
     pub fn new(data: *const u8) -> Self {
@@ -212,7 +214,10 @@ mod tests {
 
     #[test]
     fn handles_regex_preparation() {
-        Lexer::prepare();
+        if let Err(_) = Lexer::prepare() {
+            assert!(false);
+        }
+
         // assert!(false);
     }
 

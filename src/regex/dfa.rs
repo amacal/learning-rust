@@ -375,8 +375,8 @@ mod tests {
         let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -407,8 +407,8 @@ mod tests {
         let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -438,8 +438,8 @@ mod tests {
         let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -463,8 +463,8 @@ mod tests {
         let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -494,8 +494,8 @@ mod tests {
         let regex = b"start#x|stop#y\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -532,8 +532,8 @@ mod tests {
         let regex = b"(stop)+#x\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -564,8 +564,8 @@ mod tests {
         let regex = b"(st)?op\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -616,8 +616,8 @@ mod tests {
         let regex = b"[0-9]+\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -652,8 +652,8 @@ mod tests {
         let regex = b"start|stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -680,8 +680,8 @@ mod tests {
         let regex = b"(start|stop)+\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -714,8 +714,8 @@ mod tests {
         let regex = b"(start)?stop\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -746,8 +746,8 @@ mod tests {
         let regex = b"(start#x)(stop)?#y\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -777,8 +777,8 @@ mod tests {
         let regex = b"(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -809,8 +809,8 @@ mod tests {
         let regex = b"\\-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE](\\+|\\-)?[0-9]+)?\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -848,8 +848,8 @@ mod tests {
         let regex = b"(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
@@ -891,8 +891,8 @@ mod tests {
         let regex = b"\\-32768|\\-?3276[0-7]|\\-?327[0-5][0-9]|\\-?32[0-6][0-9][0-9]|\\-?3[0-1][0-9][0-9][0-9]|\\-?[12][0-9][0-9][0-9][0-9]|\\-?[1-9][0-9][0-9][0-9]|\\-?[1-9][0-9][0-9]|\\-?[1-9][0-9]|\\-?[1-9]|0\0".as_ptr();
 
         let rpn: RPN<4096> = match RPN::build(regex) {
-            Some(rpn) => rpn,
-            None => return assert!(false),
+            Ok(rpn) => rpn,
+            _ => return assert!(false),
         };
 
         let nfa = match NFA::build(rpn) {
