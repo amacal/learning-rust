@@ -147,7 +147,7 @@ impl Builder {
                     for off in 0..nfa.epsilon_items_count(epsilon_idx) {
                         let val = nfa.epsilon_items_get(epsilon_idx, off);
 
-                        if meta & 0x0200 == 0x0200 {
+                        if meta & NON_EPSILON_FLAG == NON_EPSILON_FLAG {
                             self.worklist.list_items_add(worklist, val);
                         } else {
                             if !self.closures.list_items_contains(closure, val, size) {
@@ -256,7 +256,7 @@ impl Builder {
         for idx in 1..size {
             let src = self.worklist.list_items_get(current, idx);
             if let Some((dst, meta)) = nfa.transition_find(src, via.0) {
-                let dst = if meta & 0x0200 == 0x0200 { dst } else { dst | 0x8000 };
+                let dst = if meta & NON_EPSILON_FLAG == NON_EPSILON_FLAG { dst } else { dst | 0x8000 };
                 self.worklist.list_items_add(worklist, dst);
                 accepting = accepting | (meta & 0xff);
             }
@@ -293,23 +293,29 @@ impl Builder {
         let mut bits = Bits::new();
         print!("setting interval bits: ");
 
+        // enumerating all source states in the current worklist
         for off in 1..self.worklist.list_items_count(worklist) {
             let idx = self.worklist.list_items_get(worklist, off);
             let range = nfa.transition_find_all(idx);
 
+            // allows us to find all transition indices
             if let Some(range) = range {
                 for idx in range.0..=range.1 {
+                    // leading us to actual transtion characters
                     let (_, (min, max), _, _) = nfa.transition_at(idx);
 
+                    // min is added as is
                     if min > 0 {
                         print!("0x{min:02x}-0x{max:02x} ");
                         bits.set(min);
                     }
 
+                    // max is incremented
                     if max > 0 && max < 255 {
                         bits.set(max + 1);
                     }
 
+                    // or left 255 to keep byte boundary
                     if max == 255 {
                         bits.set(255);
                     }

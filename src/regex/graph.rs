@@ -356,7 +356,7 @@ mod tests {
         graph.graph_add(17, (0, 0), 29, 98);
         graph.graph_add(17, (99, 99), 29, 98);
         graph.graph_add(29, (32, 32), 31, 99);
-        graph.graph_add(29, (34, 33), 31, 99);
+        graph.graph_add(29, (33, 34), 31, 99);
         graph.graph_add(29, (36, 36), 31, 99);
 
         assert_eq!(graph.graph_find_all(13), Some((0, 1)));
