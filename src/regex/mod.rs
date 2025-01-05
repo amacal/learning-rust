@@ -1,3 +1,4 @@
+mod alloc;
 mod array;
 mod bits;
 mod dfa;
@@ -13,4 +14,3 @@ mod rpn;
 pub use dfa::DFA;
 pub use nfa::NFA;
 pub use rpn::RPN;
-pub use error::Error;
