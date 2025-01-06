@@ -28,6 +28,9 @@ extern "C" {
     fn alloc_one_bit(data: *const u8, bitmap: *const u64) -> *mut u8;
     fn free_one_bit(data: *const u8, bitmap: *const u64, ptr: *const u8);
 
+    fn alloc_two_bits(date: *const u8, bitmap: *const u64, mask: u8) -> *mut u8;
+    fn free_two_bits(data: *const u8, bitmap: *const u64, mask: u8, ptr: *const u8);
+
     fn alloc_n_bits(date: *const u8, bitmap: *const u64, mask: u8) -> *mut u8;
     fn free_n_bits(data: *const u8, bitmap: *const u64, mask: u8, ptr: *const u8);
 }
@@ -59,6 +62,46 @@ global_asm!(
 
 global_asm!(
     r#"
+        .global alloc_two_bits
+        .global free_two_bits
+
+        alloc_two_bits:
+            mov rax, [rsi]
+            mov r9, rax
+            shl r9, 0x01
+            and rax, r9
+
+            bsf rcx, rax
+            jz no_slot_two_bits
+
+            sub rcx, 0x01
+            mov r9, rdx
+            shl r9, cl
+
+            not r9
+            and [rsi], r9
+
+            shl rcx, 0x0c
+            lea rax, [rdi + rcx]
+            ret
+
+        free_two_bits:
+            sub rcx, rdi
+            shr rcx, 0x0c
+            shl rdx, cl
+            or [rsi], rdx
+            ret
+
+        no_slot_two_overflow:
+            mov rax, 0x00
+
+        no_slot_two_bits:
+            ret
+    "#
+);
+
+global_asm!(
+    r#"
         .global alloc_n_bits
         .global free_n_bits
 
@@ -66,49 +109,37 @@ global_asm!(
             mov rax, [rsi]
 
         find_n_bits:
-            // find a spot
             bsf rcx, rax
             jz no_slot_n_bits
 
-            // align mask to the spot
-            // fail if shift is too big
             mov r9, rdx
             shl r9, cl
-            jc no_slot_overflow
+            jc no_slot_n_overflow
 
-            // check if the spot fits
-            // next if the spot doesn't
             mov r8, rax
             and r8, r9
             cmp r8, r9
             jne next_n_bits
 
-            // reserve these bits
             not r9
             and [rsi], r9
 
-            // compute ptr
             shl rcx, 0x0c
             lea rax, [rdi + rcx]
             ret
 
         next_n_bits:
-            // reset tmp bit
-            // and try again
             btr rax, rcx
             jmp find_n_bits
 
         free_n_bits:
-            // find the spot
             sub rcx, rdi
             shr rcx, 0x0c
-
-            // and release it
             shl rdx, cl
-            or qword ptr [rsi], rdx
+            or [rsi], rdx
             ret
 
-        no_slot_overflow:
+        no_slot_n_overflow:
             mov rax, 0x00
 
         no_slot_n_bits:
@@ -121,7 +152,7 @@ impl Allocator for &Naive64Pages {
         unsafe {
             let ptr = match size {
                 AllocatorBytes::B4096 => alloc_one_bit(self.data.as_ptr(), &self.bitmap as *const u64),
-                AllocatorBytes::B8192 => alloc_n_bits(self.data.as_ptr(), &self.bitmap as *const u64,0b11),
+                AllocatorBytes::B8192 => alloc_two_bits(self.data.as_ptr(), &self.bitmap as *const u64,0b11),
                 AllocatorBytes::B16384 => alloc_n_bits(self.data.as_ptr(), &self.bitmap as *const u64,0b1111),
             };
 
@@ -137,7 +168,7 @@ impl Allocator for &Naive64Pages {
         unsafe {
             match size {
                 AllocatorBytes::B4096 => free_one_bit(self.data.as_ptr(), &self.bitmap as *const u64, ptr),
-                AllocatorBytes::B8192 => free_n_bits(self.data.as_ptr(), &self.bitmap as *const u64, 0b11, ptr),
+                AllocatorBytes::B8192 => free_two_bits(self.data.as_ptr(), &self.bitmap as *const u64, 0b11, ptr),
                 AllocatorBytes::B16384 => free_n_bits(self.data.as_ptr(), &self.bitmap as *const u64, 0b1111, ptr),
             }
         }
@@ -215,6 +246,10 @@ mod tests {
         for i in 0..32 {
             let ptr = allocator.alloc(size);
             let data = pages.data.as_ptr() as usize;
+
+            println!("{:08x}", data);
+            println!("{:08x}", ptr.unwrap() as usize);
+            println!("{:08x}", data + i as usize * 8192);
 
             assert_eq!(ptr.unwrap() as usize, data + i as usize * 8192);
         }
