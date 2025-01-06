@@ -1,24 +1,30 @@
+use super::alloc::Allocator;
 use super::array::*;
 use super::graph::*;
-use super::heap::*;
+use super::heap::AllocatorSize;
+use super::heap::GuardSegfault;
+use super::heap::B4096;
 use super::list::*;
 use super::rpn::*;
 
 pub const DEFAULT_FLAG: u16 = 0x0000;
 pub const NON_EPSILON_FLAG: u16 = 0x0200;
 
-pub struct NFA {
-    transitions: Graph<8192, GuardSegfault>,
-    epsilons: Collection<8192, GuardSegfault>,
+pub struct NFA<ALLOCATOR: Allocator, SIZE: AllocatorSize> {
+    transitions: Graph<ALLOCATOR, SIZE, GuardSegfault>,
+    epsilons: Collection<ALLOCATOR, SIZE, GuardSegfault>,
 }
 
-impl NFA {
-    fn from(transitions: Graph<8192, GuardSegfault>, epsilons: Collection<8192, GuardSegfault>) -> Self {
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize> NFA<ALLOCATOR, SIZE> {
+    fn from(transitions: Graph<ALLOCATOR, SIZE, GuardSegfault>, epsilons: Collection<ALLOCATOR, SIZE, GuardSegfault>) -> Self {
         Self { transitions: transitions, epsilons: epsilons }
     }
 
-    pub fn build<const SIZE: usize>(rpn: RPN<SIZE>) -> Option<Self> {
-        Builder::new().build(rpn)
+    pub fn build<RPN_SIZE: AllocatorSize>(allocator: ALLOCATOR, rpn: RPN<ALLOCATOR, RPN_SIZE>) -> Option<Self>
+    where
+        ALLOCATOR: Copy,
+    {
+        Builder::new(allocator)?.build(rpn)
     }
 
     pub fn transition_count(&self) -> u16 {
@@ -73,17 +79,26 @@ impl StackLike for Collapsed {}
 struct Accepting {}
 impl StackLike for Accepting {}
 
-struct Builder {
+struct Builder<ALLOCATOR: Allocator, SIZE: AllocatorSize> {
     counter: u16,
-    transitions: Graph<8192, GuardSegfault>,
-    epsilons: Collection<8192, GuardSegfault>,
-    collapsed: Array<Collapsed, u16, 4096, GuardSegfault>,
-    accepting: Array<Accepting, u16, 4096, GuardSegfault>,
+    transitions: Graph<ALLOCATOR, SIZE, GuardSegfault>,
+    epsilons: Collection<ALLOCATOR, SIZE, GuardSegfault>,
+    collapsed: Array<Collapsed, u16, ALLOCATOR, B4096, GuardSegfault>,
+    accepting: Array<Accepting, u16, ALLOCATOR, B4096, GuardSegfault>,
 }
 
-impl Builder {
-    fn new() -> Self {
-        Self { counter: 0, transitions: Graph::new(), epsilons: Collection::new(), collapsed: Array::new(), accepting: Array::new() }
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize> Builder<ALLOCATOR, SIZE> {
+    fn new(allocator: ALLOCATOR) -> Option<Self>
+    where
+        ALLOCATOR: Copy,
+    {
+        Some(Self {
+            counter: 0,
+            transitions: Graph::new(allocator)?,
+            epsilons: Collection::new(allocator)?,
+            collapsed: Array::new(allocator)?,
+            accepting: Array::new(allocator)?,
+        })
     }
 
     fn next(&mut self) -> u16 {
@@ -91,7 +106,7 @@ impl Builder {
         self.counter - 1
     }
 
-    fn handle_literal<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>, idx: u16) -> u16 {
+    fn handle_literal<RPN_SIZE: AllocatorSize>(&mut self, rpn: &RPN<ALLOCATOR, RPN_SIZE>, idx: u16) -> u16 {
         let index = idx + 1;
         let count = rpn.at(index) - b'0';
 
@@ -134,7 +149,7 @@ impl Builder {
         index + count as u16 + 1
     }
 
-    fn handle_positive_class<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>, idx: u16) -> u16 {
+    fn handle_positive_class<RPN_SIZE: AllocatorSize>(&mut self, rpn: &RPN<ALLOCATOR, RPN_SIZE>, idx: u16) -> u16 {
         let low = rpn.at(idx + 1);
         let high = rpn.at(idx + 2);
 
@@ -287,14 +302,14 @@ impl Builder {
         idx + 1
     }
 
-    fn handle_acceptance<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>, idx: u16) -> u16 {
+    fn handle_acceptance<RPN_SIZE: AllocatorSize>(&mut self, rpn: &RPN<ALLOCATOR, RPN_SIZE>, idx: u16) -> u16 {
         self.accepting.stack_push_front(rpn.at(idx + 1).into());
         self.accepting.stack_push_front(b'#' as u16);
 
         idx + 2
     }
 
-    fn build_transitions<const SIZE: usize>(&mut self, rpn: &RPN<SIZE>) {
+    fn build_transitions<RPN_SIZE: AllocatorSize>(&mut self, rpn: &RPN<ALLOCATOR, RPN_SIZE>) {
         let mut idx = 0u16;
 
         let start_state = self.next();
@@ -365,7 +380,7 @@ impl Builder {
         }
     }
 
-    fn build<const SIZE: usize>(mut self, rpn: RPN<SIZE>) -> Option<NFA> {
+    fn build<RPN_SIZE: AllocatorSize>(mut self, rpn: RPN<ALLOCATOR, RPN_SIZE>) -> Option<NFA<ALLOCATOR, SIZE>> {
         self.build_transitions(&rpn);
         self.propagate_accepting_states();
 
@@ -375,17 +390,16 @@ impl Builder {
 
 #[cfg(test)]
 mod tests {
+    use super::super::alloc::Naive64Pages;
     use super::*;
 
     #[test]
     fn handles_converting_rpn_seq_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"l5start");
+        let allocator = Naive64Pages::new();
+        let builder = Builder::<_, B4096>::new(&allocator).unwrap();
 
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
+        let rpn = RPN::from_bytes(&allocator, b"l5start").unwrap();
+        let nfa = builder.build::<B4096>(rpn).unwrap();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 0002
         // 0001 | 00 - 00 | 0000 | 0005 ->
@@ -429,13 +443,11 @@ mod tests {
 
     #[test]
     fn handles_converting_rpn_class_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"-09");
+        let allocator = Naive64Pages::new();
+        let builder = Builder::<_, B4096>::new(&allocator).unwrap();
 
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
+        let rpn = RPN::from_bytes(&allocator, b"-09").unwrap();
+        let nfa = builder.build::<B4096>(rpn).unwrap();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 0002
         // 0001 | 00 - 00 | 0000 | 0005 ->
@@ -472,13 +484,11 @@ mod tests {
 
     #[test]
     fn handles_converting_rpn_class_repeated_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"-09+");
+        let allocator = Naive64Pages::new();
+        let builder = Builder::<_, B4096>::new(&allocator).unwrap();
 
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
+        let rpn = RPN::from_bytes(&allocator, b"-09+").unwrap();
+        let nfa = builder.build::<B4096>(rpn).unwrap();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 0005
         // 0001 | 00 - 00 | 0000 | 0005 ->
@@ -534,13 +544,11 @@ mod tests {
 
     #[test]
     fn handles_converting_rpn_either_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"l5startl4stop|");
+        let allocator = Naive64Pages::new();
+        let builder = Builder::<_, B4096>::new(&allocator).unwrap();
 
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
+        let rpn = RPN::from_bytes(&allocator, b"l5startl4stop|").unwrap();
+        let nfa = builder.build::<B4096>(rpn).unwrap();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 000f
         // 0001 | 00 - 00 | 0000 | 0005 ->
@@ -619,13 +627,11 @@ mod tests {
 
     #[test]
     fn handles_converting_rpn_concat_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"l5startl4stop&");
+        let allocator = Naive64Pages::new();
+        let builder = Builder::<_, B4096>::new(&allocator).unwrap();
 
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
+        let rpn = RPN::from_bytes(&allocator, b"l5startl4stop&").unwrap();
+        let nfa = builder.build::<B4096>(rpn).unwrap();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 000f
         // 0001 | 00 - 00 | 0000 | 0005 ->
@@ -709,13 +715,11 @@ mod tests {
 
     #[test]
     fn handles_converting_rpn_optional_left_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"l2st?l2op&");
+        let allocator = Naive64Pages::new();
+        let builder = Builder::<_, B4096>::new(&allocator).unwrap();
 
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
+        let rpn = RPN::from_bytes(&allocator, b"l2st?l2op&").unwrap();
+        let nfa = builder.build::<B4096>(rpn).unwrap();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 000c
         // 0001 | 00 - 00 | 0000 | 0005 ->
@@ -802,13 +806,11 @@ mod tests {
 
     #[test]
     fn handles_converting_rpn_optional_right_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"l2stl2op?&");
+        let allocator = Naive64Pages::new();
+        let builder = Builder::<_, B4096>::new(&allocator).unwrap();
 
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
+        let rpn = RPN::from_bytes(&allocator, b"l2stl2op?&").unwrap();
+        let nfa = builder.build::<B4096>(rpn).unwrap();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 000c
         // 0001 | 00 - 00 | 0000 | 0005 ->
@@ -895,13 +897,11 @@ mod tests {
 
     #[test]
     fn handles_converting_rpn_repeat_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"l4stop+");
+        let allocator = Naive64Pages::new();
+        let builder = Builder::<_, B4096>::new(&allocator).unwrap();
 
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
+        let rpn = RPN::from_bytes(&allocator, b"l4stop+").unwrap();
+        let nfa = builder.build::<B4096>(rpn).unwrap();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 0008
         // 0001 | 00 - 00 | 0000 | 0005 ->
@@ -962,13 +962,11 @@ mod tests {
 
     #[test]
     fn handles_converting_rpn_zero_followed_by_two_optional_numbers_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"l10l11?&l12?&");
+        let allocator = Naive64Pages::new();
+        let builder = Builder::<_, B4096>::new(&allocator).unwrap();
 
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
+        let rpn = RPN::from_bytes(&allocator, b"l10l11?&l12?&").unwrap();
+        let nfa = builder.build::<B4096>(rpn).unwrap();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 0012
         // 0001 | 00 - 00 | 0000 | 0005 ->
@@ -1098,13 +1096,11 @@ mod tests {
 
     #[test]
     fn handles_converting_rpn_accept_to_nfa() {
-        let builder = Builder::new();
-        let rpn: RPN<4096> = RPN::from_bytes(b"l1s#x");
+        let allocator = Naive64Pages::new();
+        let builder = Builder::<_, B4096>::new(&allocator).unwrap();
 
-        let nfa = match builder.build(rpn) {
-            Some(nfa) => nfa,
-            None => return assert!(false),
-        };
+        let rpn = RPN::from_bytes(&allocator, b"l1s#x").unwrap();
+        let nfa = builder.build::<B4096>(rpn).unwrap();
 
         // 0000 | 00 - 00 | 0000 | 0000 -> 0002
         // 0001 | 00 - 00 | 0000 | 0005 ->

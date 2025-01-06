@@ -1,25 +1,36 @@
 use std::marker::PhantomData;
 use std::mem;
 
-use super::heap::*;
+use super::alloc::Allocator;
+use super::heap::AllocatorSize;
+use super::heap::Guard;
+use super::heap::Heap;
 
 pub trait ArrayLike {}
 pub trait StackLike {}
 
-pub struct Array<LIKE, T, const SIZE: usize, GUARD: Guard<T, SIZE>> {
-    heap: Heap<T, SIZE, GUARD>,
+pub struct Array<LIKE, T, ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<T, SIZE>> {
+    heap: Heap<T, ALLOCATOR, SIZE, GUARD>,
     like: PhantomData<LIKE>,
     head: u16,
     tail: u16,
 }
 
-impl<LIKE, T, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<LIKE, T, SIZE, GUARD> {
-    pub fn new() -> Self {
-        Self { heap: Heap::alloc(), like: PhantomData, head: 0, tail: (SIZE / mem::size_of::<T>()) as u16 - 1 }
+impl<LIKE, T, ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<T, SIZE>> Array<LIKE, T, ALLOCATOR, SIZE, GUARD> {
+    pub fn new(allocator: ALLOCATOR) -> Option<Self> {
+        let heap = match Heap::alloc(allocator) {
+            None => return None,
+            Some(heap) => heap,
+        };
+
+        let tail = (SIZE::measure() / mem::size_of::<T>()) as u16 - 1;
+        let result = Self { heap: heap, like: PhantomData, head: 0, tail: tail };
+
+        Some(result)
     }
 }
 
-impl<LIKE: StackLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<LIKE, T, SIZE, GUARD> {
+impl<LIKE: StackLike, T: Copy, ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<T, SIZE>> Array<LIKE, T, ALLOCATOR, SIZE, GUARD> {
     pub fn stack_push_front(&mut self, val: T) {
         self.heap.set0(val, self.head);
         self.head += 1;
@@ -45,7 +56,7 @@ impl<LIKE: StackLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<L
     }
 
     pub fn stack_size_back(&self) -> u16 {
-        (SIZE / size_of::<T>()) as u16 - self.tail
+        (SIZE::measure() / size_of::<T>()) as u16 - self.tail
     }
 
     pub fn stack_peek_front(&self) -> T {
@@ -56,7 +67,7 @@ impl<LIKE: StackLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<L
         self.heap.get0(self.tail + 1)
     }
 
-    // #[cfg(test)]
+    #[cfg(test)]
     pub fn as_bytes_front(&self) -> &[T] {
         self.heap.as_bytes(self.stack_size_front().into())
     }
@@ -67,7 +78,7 @@ impl<LIKE: StackLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<L
     }
 }
 
-impl<LIKE: ArrayLike, T: Copy, const SIZE: usize, GUARD: Guard<T, SIZE>> Array<LIKE, T, SIZE, GUARD> {
+impl<LIKE: ArrayLike, T: Copy, ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<T, SIZE>> Array<LIKE, T, ALLOCATOR, SIZE, GUARD> {
     pub fn array_get(&self, off: u16) -> T {
         self.heap.get0(off)
     }

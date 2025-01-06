@@ -1,20 +1,26 @@
+use super::alloc::Allocator;
 use super::bits::*;
 use super::graph::*;
-use super::heap::*;
+use super::heap::AllocatorSize;
+use super::heap::GuardSegfault;
+use super::heap::GuardWrapping;
 use super::list::*;
 use super::nfa::*;
 
-pub struct DFA {
-    transitions: Graph<4096, GuardSegfault>,
+pub struct DFA<ALLOCATOR: Allocator, SIZE: AllocatorSize> {
+    transitions: Graph<ALLOCATOR, SIZE, GuardSegfault>,
 }
 
-impl DFA {
-    fn from(transitions: Graph<4096, GuardSegfault>) -> Self {
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize> DFA<ALLOCATOR, SIZE> {
+    fn from(transitions: Graph<ALLOCATOR, SIZE, GuardSegfault>) -> Self {
         Self { transitions: transitions }
     }
 
-    pub fn build(nfa: NFA) -> Option<Self> {
-        Builder::new().build(nfa)
+    pub fn build(allocator: ALLOCATOR, nfa: NFA<ALLOCATOR, SIZE>) -> Option<Self>
+    where
+        ALLOCATOR: Copy,
+    {
+        Builder::new(allocator)?.build(nfa)
     }
 
     pub fn transition_count(&self) -> u16 {
@@ -85,16 +91,19 @@ impl DFA {
     }
 }
 
-struct Builder {
+struct Builder<ALLOCATOR: Allocator, SIZE: AllocatorSize> {
     counter: u16,
-    transitions: Graph<4096, GuardSegfault>,
-    worklist: Collection<4096, GuardWrapping>,
-    closures: Collection<4096, GuardSegfault>,
+    transitions: Graph<ALLOCATOR, SIZE, GuardSegfault>,
+    worklist: Collection<ALLOCATOR, SIZE, GuardWrapping>,
+    closures: Collection<ALLOCATOR, SIZE, GuardSegfault>,
 }
 
-impl Builder {
-    fn new() -> Self {
-        Self { counter: 1, transitions: Graph::new(), worklist: Collection::new(), closures: Collection::new() }
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize> Builder<ALLOCATOR, SIZE> {
+    fn new(allocator: ALLOCATOR) -> Option<Self>
+    where
+        ALLOCATOR: Copy,
+    {
+        Some(Self { counter: 1, transitions: Graph::new(allocator)?, worklist: Collection::new(allocator)?, closures: Collection::new(allocator)? })
     }
 
     fn next(&mut self) -> u16 {
@@ -106,12 +115,12 @@ impl Builder {
         self.counter -= 1;
     }
 
-    fn build(mut self, nfa: NFA) -> Option<DFA> {
+    fn build(mut self, nfa: NFA<ALLOCATOR, SIZE>) -> Option<DFA<ALLOCATOR, SIZE>> {
         self.nfa_to_dfa(nfa);
         Some(DFA::from(self.transitions))
     }
 
-    fn nfa_close_epsilon(&mut self, nfa: &NFA, worklist: u16) -> (u16, bool) {
+    fn nfa_close_epsilon(&mut self, nfa: &NFA<ALLOCATOR, SIZE>, worklist: u16) -> (u16, bool) {
         let mut changed = true;
         let mut epsilon = false;
 
@@ -204,7 +213,7 @@ impl Builder {
         (closure, epsilon)
     }
 
-    fn nfa_record_state(&mut self, nfa: &NFA, states: u16, worklist: u16) -> u16 {
+    fn nfa_record_state(&mut self, nfa: &NFA<ALLOCATOR, SIZE>, states: u16, worklist: u16) -> u16 {
         // find all transition via epsilon and find potentially available idx
         let (closure, epsilon) = self.nfa_close_epsilon(nfa, worklist);
         let length = self.closures.list_items_count(closure) - 1;
@@ -236,7 +245,7 @@ impl Builder {
         self.closures.list_items_get(closure, length)
     }
 
-    fn nfa_iteration(&mut self, current: u16, nfa: &NFA, via: (u8, u8)) {
+    fn nfa_iteration(&mut self, current: u16, nfa: &NFA<ALLOCATOR, SIZE>, via: (u8, u8)) {
         let dst = self.next();
         let mut accepting = 0x00;
         let worklist = self.worklist.list_push_head();
@@ -289,7 +298,7 @@ impl Builder {
         }
     }
 
-    fn merge_intervals(&mut self, worklist: u16, nfa: &NFA) -> Bits {
+    fn merge_intervals(&mut self, worklist: u16, nfa: &NFA<ALLOCATOR, SIZE>) -> Bits {
         let mut bits = Bits::new();
         print!("setting interval bits: ");
 
@@ -327,7 +336,7 @@ impl Builder {
         bits
     }
 
-    fn nfa_to_dfa(&mut self, nfa: NFA) {
+    fn nfa_to_dfa(&mut self, nfa: NFA<ALLOCATOR, SIZE>) {
         let starting = self.next();
         let states = self.closures.set_push_head(8);
         let worklist = self.worklist.list_push_head();
@@ -373,24 +382,27 @@ impl Builder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::regex::RPN;
+    use super::super::heap::B4096;
+    use super::super::rpn::RPN;
+    use super::super::alloc::Naive64Pages;
     use std::i16;
 
     #[test]
     fn handles_closing_nfa_from_epsilon_state() {
+        let allocator = Naive64Pages::new();
         let regex = b"start|stop\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let mut builder = Builder::new();
+        let mut builder = Builder::new(&allocator).unwrap();
         let worklist = builder.worklist.list_push_head();
 
         // 99 is a state followed by starting state as an epsilon
@@ -410,19 +422,20 @@ mod tests {
 
     #[test]
     fn handles_closing_nfa_from_non_epsilon_state() {
+        let allocator = Naive64Pages::new();
         let regex = b"start|stop\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let mut builder = Builder::new();
+        let mut builder = Builder::new(&allocator).unwrap();
         let worklist = builder.worklist.list_push_head();
 
         // 99 is a state followed by a non-epsilon 1 state
@@ -441,19 +454,20 @@ mod tests {
 
     #[test]
     fn handles_recording_nfa_state_not_repeated() {
+        let allocator = Naive64Pages::new();
         let regex = b"start|stop\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let mut builder = Builder::new();
+        let mut builder = Builder::new(&allocator).unwrap();
         let worklist = builder.worklist.list_push_head();
         let states = builder.closures.set_push_head(8);
 
@@ -466,19 +480,20 @@ mod tests {
 
     #[test]
     fn handles_recording_nfa_state_repeated() {
+        let allocator = Naive64Pages::new();
         let regex = b"start|stop\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let mut builder = Builder::new();
+        let mut builder = Builder::new(&allocator).unwrap();
         let states = builder.closures.set_push_head(8);
 
         let worklist = builder.worklist.list_push_head();
@@ -497,19 +512,20 @@ mod tests {
 
     #[test]
     fn handles_converting_nfa_to_dfa_either() {
+        let allocator = Naive64Pages::new();
         let regex = b"start#x|stop#y\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -535,19 +551,20 @@ mod tests {
 
     #[test]
     fn handles_converting_nfa_to_dfa_repeat() {
+        let allocator = Naive64Pages::new();
         let regex = b"(stop)+#x\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -567,14 +584,15 @@ mod tests {
 
     #[test]
     fn handles_converting_nfa_to_dfa_optional() {
+        let allocator = Naive64Pages::new();
         let regex = b"(st)?op\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
@@ -595,7 +613,7 @@ mod tests {
         // 000d | 00 - 00 | 0000 | 002d -> 0008
         // 000e | 00 - 00 | 0000 | 0032 -> 0001
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -619,21 +637,22 @@ mod tests {
 
     #[test]
     fn handles_converting_nfa_to_dfa_class() {
+        let allocator = Naive64Pages::new();
         let regex = b"[0-9]+\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
         nfa.print();
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -655,19 +674,20 @@ mod tests {
 
     #[test]
     fn handles_traversing_dfa_either() {
+        let allocator = Naive64Pages::new();
         let regex = b"start|stop\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -683,19 +703,20 @@ mod tests {
 
     #[test]
     fn handles_traversing_dfa_repeat() {
+        let allocator = Naive64Pages::new();
         let regex = b"(start|stop)+\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -717,19 +738,20 @@ mod tests {
 
     #[test]
     fn handles_traversing_dfa_optional_first() {
+        let allocator = Naive64Pages::new();
         let regex = b"(start)?stop\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -749,19 +771,20 @@ mod tests {
 
     #[test]
     fn handles_traversing_dfa_optional_last() {
+        let allocator = Naive64Pages::new();
         let regex = b"(start#x)(stop)?#y\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -780,19 +803,20 @@ mod tests {
 
     #[test]
     fn handles_dividing_by_three() {
+        let allocator = Naive64Pages::new();
         let regex = b"(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build::<B4096>(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -812,19 +836,20 @@ mod tests {
 
     #[test]
     fn handles_traversing_dfa_number_regex() {
+        let allocator = Naive64Pages::new();
         let regex = b"\\-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE](\\+|\\-)?[0-9]+)?\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn= match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build::<B4096>(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -851,19 +876,20 @@ mod tests {
 
     #[test]
     fn handles_traversing_dfa_ipv4_regex() {
+        let allocator = Naive64Pages::new();
         let regex = b"(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build::<B4096>(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -894,19 +920,20 @@ mod tests {
 
     #[test]
     fn handles_traversing_dfa_i16_regex() {
+        let allocator = Naive64Pages::new();
         let regex = b"\\-32768|\\-?3276[0-7]|\\-?327[0-5][0-9]|\\-?32[0-6][0-9][0-9]|\\-?3[0-1][0-9][0-9][0-9]|\\-?[12][0-9][0-9][0-9][0-9]|\\-?[1-9][0-9][0-9][0-9]|\\-?[1-9][0-9][0-9]|\\-?[1-9][0-9]|\\-?[1-9]|0\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::<_, B4096>::build::<B4096>(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };

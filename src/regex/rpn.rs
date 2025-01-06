@@ -1,8 +1,11 @@
 use super::array::*;
 use super::bits::*;
 use super::error::*;
-use super::heap::*;
 use super::lexer::*;
+
+use super::alloc::Allocator;
+use super::heap::AllocatorSize;
+use super::heap::GuardSegfault;
 
 struct ElementsMarker;
 struct OperatorsMarker;
@@ -11,29 +14,38 @@ impl ArrayLike for ElementsMarker {}
 impl StackLike for ElementsMarker {}
 impl StackLike for OperatorsMarker {}
 
-pub struct RPN<const SIZE: usize>(Array<ElementsMarker, u8, SIZE, GuardSegfault>);
+pub struct RPN<ALLOCATOR: Allocator, SIZE: AllocatorSize>(Array<ElementsMarker, u8, ALLOCATOR, SIZE, GuardSegfault>);
 
-impl<const SIZE: usize> RPN<SIZE> {
-    pub fn build(pattern: *const u8) -> Result<Self, Error> {
-        let mut builder = Builder::new();
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize> RPN<ALLOCATOR, SIZE> {
+    pub fn build(allocator: ALLOCATOR, pattern: *const u8) -> Result<Self, Error>
+    where
+        ALLOCATOR: Copy,
+    {
+        let mut builder = match Builder::new(allocator) {
+            None => return Err(Error::NotEnoughHeap {}),
+            Some(builder) => builder,
+        };
 
         builder.append(pattern)?;
         builder.build()
     }
 
-    pub fn builder() -> Builder<SIZE> {
-        Builder::new()
+    pub fn builder(allocator: ALLOCATOR) -> Option<Builder<ALLOCATOR, SIZE>>
+    where
+        ALLOCATOR: Copy,
+    {
+        Builder::new(allocator)
     }
 
     #[cfg(test)]
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        let mut elements = Array::new();
+    pub fn from_bytes(allocator: ALLOCATOR, bytes: &[u8]) -> Option<Self> {
+        let mut elements = Array::new(allocator)?;
 
         for &val in bytes.iter() {
             elements.stack_push_front(val);
         }
 
-        Self(elements)
+        Some(Self(elements))
     }
 
     #[cfg(test)]
@@ -62,7 +74,7 @@ impl BuilderState {
         BuilderState::InGroups { concatenation: false }
     }
 
-    fn pop_concatenation<const SIZE: usize>(builder: &mut Builder<SIZE>, condition: bool) {
+    fn pop_concatenation<ALLOCATOR: Allocator, SIZE: AllocatorSize>(builder: &mut Builder<ALLOCATOR, SIZE>, condition: bool) {
         if condition {
             while builder.operators.stack_size_front() > 0 {
                 match builder.operators.stack_peek_front() {
@@ -76,7 +88,7 @@ impl BuilderState {
         }
     }
 
-    fn handle_in_groups<const SIZE: usize>(builder: &mut Builder<SIZE>, token: Token, concatenation: bool) -> Self {
+    fn handle_in_groups<ALLOCATOR: Allocator, SIZE: AllocatorSize>(builder: &mut Builder<ALLOCATOR, SIZE>, token: Token, concatenation: bool) -> Self {
         match token {
             Token::OpenGroup {} => {
                 Self::pop_concatenation(builder, concatenation);
@@ -172,7 +184,12 @@ impl BuilderState {
         }
     }
 
-    fn handle_in_classes<const SIZE: usize>(builder: &mut Builder<SIZE>, token: Token, negation: bool, mut bits: Bits) -> Self {
+    fn handle_in_classes<ALLOCATOR: Allocator, SIZE: AllocatorSize>(
+        builder: &mut Builder<ALLOCATOR, SIZE>,
+        token: Token,
+        negation: bool,
+        mut bits: Bits,
+    ) -> Self {
         match token {
             Token::NegateClass {} => {
                 if negation || bits.any() {
@@ -221,7 +238,7 @@ impl BuilderState {
         }
     }
 
-    fn handle<const SIZE: usize>(self, builder: &mut Builder<SIZE>, token: Token) -> Self {
+    fn handle<ALLOCATOR: Allocator, SIZE: AllocatorSize>(self, builder: &mut Builder<ALLOCATOR, SIZE>, token: Token) -> Self {
         match self {
             Self::Invalid => Self::Invalid,
             Self::Completed => Self::Completed,
@@ -231,15 +248,18 @@ impl BuilderState {
     }
 }
 
-pub struct Builder<const SIZE: usize> {
+pub struct Builder<ALLOCATOR: Allocator, SIZE: AllocatorSize> {
     counter: usize,
-    elements: Array<ElementsMarker, u8, SIZE, GuardSegfault>,
-    operators: Array<OperatorsMarker, u8, 4096, GuardSegfault>,
+    elements: Array<ElementsMarker, u8, ALLOCATOR, SIZE, GuardSegfault>,
+    operators: Array<OperatorsMarker, u8, ALLOCATOR, SIZE, GuardSegfault>,
 }
 
-impl<const SIZE: usize> Builder<SIZE> {
-    fn new() -> Self {
-        Self { counter: 0, elements: Array::new(), operators: Array::new() }
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize> Builder<ALLOCATOR, SIZE> {
+    fn new(allocator: ALLOCATOR) -> Option<Self>
+    where
+        ALLOCATOR: Copy,
+    {
+        Some(Self { counter: 0, elements: Array::new(allocator)?, operators: Array::new(allocator)? })
     }
 
     pub fn append(&mut self, pattern: *const u8) -> Result<(), Error> {
@@ -273,7 +293,7 @@ impl<const SIZE: usize> Builder<SIZE> {
         Ok(())
     }
 
-    pub fn build(self) -> Result<RPN<SIZE>, Error> {
+    pub fn build(self) -> Result<RPN<ALLOCATOR, SIZE>, Error> {
         Ok(RPN(self.elements))
     }
 }
@@ -281,11 +301,15 @@ impl<const SIZE: usize> Builder<SIZE> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::heap::B4096;
+    use super::super::alloc::Naive64Pages;
 
     #[test]
     fn handles_rpn_from_seq_of_one_character() {
+        let allocator = Naive64Pages::new();
         let pattern = b"a\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -295,8 +319,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_seq_of_two_characters() {
+        let allocator = Naive64Pages::new();
         let pattern = b"ab\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -306,8 +332,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_seq_of_alphabet() {
+        let allocator = Naive64Pages::new();
         let pattern = b"abcdefghijklmnopqrstuvwxyz\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -317,8 +345,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_either() {
+        let allocator = Naive64Pages::new();
         let pattern = b"a|b\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -328,8 +358,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_star() {
+        let allocator = Naive64Pages::new();
         let pattern = b"ab*\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -339,8 +371,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_plus() {
+        let allocator = Naive64Pages::new();
         let pattern = b"ab+\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -350,8 +384,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_optional() {
+        let allocator = Naive64Pages::new();
         let pattern = b"ab?\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -361,8 +397,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_optional_concatenated() {
+        let allocator = Naive64Pages::new();
         let pattern = b"(st)?op\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -372,8 +410,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_either_and() {
+        let allocator = Naive64Pages::new();
         let pattern = b"abcdefghijkl|mnopqrstuvwx\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -383,8 +423,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_group() {
+        let allocator = Naive64Pages::new();
         let pattern = b"(ab)*|(cd)+\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -394,8 +436,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_class() {
+        let allocator = Naive64Pages::new();
         let pattern = b"(ab)*|[a-z]+\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -405,8 +449,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_class_multiple() {
+        let allocator = Naive64Pages::new();
         let pattern = b"(ab)*|[a-z0-9]+\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -416,8 +462,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_class_multiple_negated() {
+        let allocator = Naive64Pages::new();
         let pattern = b"(ab)*|[^a-z0-9]+\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -427,8 +475,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_nested_groups() {
+        let allocator = Naive64Pages::new();
         let pattern = b"(0|(0+1+)+)+\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -438,8 +488,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_dividing_by_three_regex() {
+        let allocator = Naive64Pages::new();
         let pattern = b"(0|(1(01*(00)*0)*1)*)*\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -449,8 +501,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_zero_followed_by_two_optional_numbers() {
+        let allocator = Naive64Pages::new();
         let pattern = b"01?2?\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -460,8 +514,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_number_regex() {
+        let allocator = Naive64Pages::new();
         let pattern = b"\\-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE](\\+|\\-)?[0-9]+)?\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -471,8 +527,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_accepting_byte() {
+        let allocator = Naive64Pages::new();
         let pattern = b"ab#x\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -482,8 +540,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_accepting_byte_multiple_group() {
+        let allocator = Naive64Pages::new();
         let pattern = b"(ab#x)|(cd#y)\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -493,8 +553,10 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_accepting_byte_multiple_either() {
+        let allocator = Naive64Pages::new();
         let pattern = b"ab#x|cd#y\0".as_ptr();
-        let regex = match RPN::<4096>::build(pattern) {
+
+        let regex = match RPN::<_, B4096>::build(&allocator, pattern) {
             Ok(regex) => regex,
             _ => return assert!(false),
         };
@@ -504,7 +566,8 @@ mod tests {
 
     #[test]
     fn handles_rpn_from_multiple_appends() {
-        let mut builder = RPN::<4096>::builder();
+        let allocator = Naive64Pages::new();
+        let mut builder = RPN::<_, B4096>::builder(&allocator).unwrap();
 
         builder.append(b"ab#x\0".as_ptr()).unwrap();
         builder.append(b"cd#y\0".as_ptr()).unwrap();
@@ -519,21 +582,23 @@ mod tests {
 
     #[test]
     fn handles_rpn_error_from_double_negated_class() {
+        let allocator = Naive64Pages::new();
         let pattern = b"[^^]\0".as_ptr();
 
-        match RPN::<4096>::build(pattern) {
+        match RPN::<_, B4096>::build(&allocator, pattern) {
             Err(Error::InvalidRegex {}) => {}
             _ => return assert!(false),
-        }
+        };
     }
 
     #[test]
     fn handles_rpn_error_from_negated_in_the_middle_class() {
+        let allocator = Naive64Pages::new();
         let pattern = b"[a-z^]\0".as_ptr();
 
-        match RPN::<4096>::build(pattern) {
+        match RPN::<_, B4096>::build(&allocator, pattern) {
             Err(Error::InvalidRegex {}) => {}
             _ => return assert!(false),
-        }
+        };
     }
 }

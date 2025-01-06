@@ -1,21 +1,22 @@
-use super::heap::*;
 use std::ops::{Shl, Shr};
 
-pub struct Graph<const SIZE: usize, GUARD: Guard<u64, SIZE>> {
-    heap: Heap<u64, SIZE, GUARD>,
+use super::alloc::Allocator;
+use super::heap::AllocatorSize;
+use super::heap::Guard;
+use super::heap::Heap;
+
+pub struct Graph<ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<u64, SIZE>> {
+    heap: Heap<u64, ALLOCATOR, SIZE, GUARD>,
     head: u16,
 }
 
-impl<const SIZE: usize, GUARD: Guard<u64, SIZE>> Graph<SIZE, GUARD> {
-    pub fn new() -> Self {
-        Self {
-            heap: Heap::alloc(),
-            head: 0,
-        }
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<u64, SIZE>> Graph<ALLOCATOR, SIZE, GUARD> {
+    pub fn new(allocator: ALLOCATOR) -> Option<Self> {
+        Some(Self { heap: Heap::alloc(allocator)?, head: 0 })
     }
 }
 
-impl<const SIZE: usize, GUARD: Guard<u64, SIZE>> Graph<SIZE, GUARD> {
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<u64, SIZE>> Graph<ALLOCATOR, SIZE, GUARD> {
     pub fn graph_count(&self) -> u16 {
         self.head
     }
@@ -201,16 +202,26 @@ impl<const SIZE: usize, GUARD: Guard<u64, SIZE>> Graph<SIZE, GUARD> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::heap::B4096;
+    use super::super::heap::GuardDisabled;
+    use super::super::alloc::Naive64Pages;
+
+    fn new_graph(allocator: &Naive64Pages) -> Graph<&Naive64Pages, B4096, GuardDisabled> {
+        Graph::new(allocator).unwrap()
+    }
 
     #[test]
     fn handles_working_with_empty_graph() {
-        let graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let graph = new_graph(&allocator);
+
         assert_eq!(graph.graph_count(), 0);
     }
 
     #[test]
     fn handles_adding_nodes_to_a_graph() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         graph.graph_add(13, (65, 66), 17, 99);
         graph.graph_add(29, (32, 32), 31, 98);
@@ -222,7 +233,8 @@ mod tests {
 
     #[test]
     fn handles_swapping_nodes_to_a_graph() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         graph.graph_add(13, (65, 66), 17, 99);
         graph.graph_add(29, (32, 32), 31, 98);
@@ -235,7 +247,8 @@ mod tests {
 
     #[test]
     fn handles_comparing_nodes_to_a_graph_negative() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         graph.graph_add(13, (65, 66), 17, 0);
         graph.graph_add(29, (32, 32), 31, 0);
@@ -245,7 +258,8 @@ mod tests {
 
     #[test]
     fn handles_comparing_nodes_to_a_graph_positive() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         graph.graph_add(13, (65, 66), 17, 0);
         graph.graph_add(29, (32, 32), 31, 0);
@@ -255,7 +269,8 @@ mod tests {
 
     #[test]
     fn handles_sorting_nodes_in_a_graph() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         graph.graph_add(29, (32, 32), 17, 97);
         graph.graph_add(13, (65, 66), 31, 98);
@@ -270,7 +285,8 @@ mod tests {
 
     #[test]
     fn handles_sorting_nodes_in_a_graph_with_more_data() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         for i in 0..64 {
             graph.graph_add(13u16.wrapping_shl((7 * i) % 16), (0, 0), 0, 0);
@@ -289,7 +305,8 @@ mod tests {
 
     #[test]
     fn handles_finding_existing_node_in_a_graph() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         graph.graph_add(13, (65, 66), 17, 97);
         graph.graph_add(17, (0, 0), 29, 98);
@@ -303,7 +320,8 @@ mod tests {
 
     #[test]
     fn handles_finding_non_existing_node_in_a_graph() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         graph.graph_add(13, (65, 66), 17, 0);
         graph.graph_add(17, (0, 0), 29, 0);
@@ -320,7 +338,8 @@ mod tests {
 
     #[test]
     fn handles_finding_all_existing_nodes_in_a_graph() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         graph.graph_add(13, (65, 66), 17, 97);
         graph.graph_add(17, (0, 0), 29, 98);
@@ -333,7 +352,8 @@ mod tests {
 
     #[test]
     fn handles_finding_all_non_existing_nodes_in_a_graph() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         graph.graph_add(13, (65, 66), 17, 0);
         graph.graph_add(17, (0, 0), 29, 0);
@@ -349,7 +369,8 @@ mod tests {
 
     #[test]
     fn handles_finding_all_existing_nodes_in_a_graph_seen_multiple_times() {
-        let mut graph = Graph::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut graph = new_graph(&allocator);
 
         graph.graph_add(13, (65, 66), 17, 97);
         graph.graph_add(13, (90, 99), 17, 97);

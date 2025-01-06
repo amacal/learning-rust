@@ -1,12 +1,15 @@
 use std::ptr;
 
+use super::alloc::Allocator;
 use super::dfa::DFA;
-use super::heap::{GuardSegfault, Heap};
+use super::heap::AllocatorSize;
+use super::heap::GuardSegfault;
+use super::heap::Heap;
 
 pub struct Matrix(*const u16);
 
-struct Builder<const SIZE: usize> {
-    heap: Heap<u16, SIZE, GuardSegfault>,
+struct Builder<ALLOCATOR: Allocator, SIZE: AllocatorSize> {
+    heap: Heap<u16, ALLOCATOR, SIZE, GuardSegfault>,
 }
 
 impl Matrix {
@@ -14,8 +17,8 @@ impl Matrix {
         Self(data)
     }
 
-    pub fn build<const SIZE: usize>(dfa: &DFA) -> Option<Heap<u16, SIZE, GuardSegfault>> {
-        Builder::new().build(&dfa)
+    pub fn build<ALLOCATOR: Allocator, SIZE: AllocatorSize>(allocator: ALLOCATOR, dfa: &DFA<ALLOCATOR, SIZE>) -> Option<Heap<u16, ALLOCATOR, SIZE, GuardSegfault>> {
+        Builder::new(allocator)?.build(&dfa)
     }
 
     pub fn traverse(&self, mut data: *const u8) -> (u16, usize) {
@@ -51,12 +54,12 @@ impl Matrix {
     }
 }
 
-impl<const SIZE: usize> Builder<SIZE> {
-    fn new() -> Self {
-        Self { heap: Heap::alloc() }
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize> Builder<ALLOCATOR, SIZE> {
+    fn new(allocator: ALLOCATOR) -> Option<Self> {
+        Some(Self { heap: Heap::alloc(allocator)? })
     }
 
-    pub fn build(mut self, dfa: &DFA) -> Option<Heap<u16, SIZE, GuardSegfault>> {
+    pub fn build(mut self, dfa: &DFA<ALLOCATOR, SIZE>) -> Option<Heap<u16, ALLOCATOR, SIZE, GuardSegfault>> {
         let size = dfa.transition_count();
         let high = dfa.transition_at(size - 1).0;
 
@@ -98,25 +101,29 @@ impl<const SIZE: usize> Builder<SIZE> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::alloc::Naive64Pages;
+    use super::super::heap::B4096;
+    use super::super::heap::B8192;
+    use super::super::nfa::NFA;
+    use super::super::rpn::RPN;
     use super::*;
-    use crate::regex::nfa::NFA;
-    use crate::regex::rpn::RPN;
 
     #[test]
     fn handles_building_from_regex_with_one_accepting_state() {
+        let allocator = Naive64Pages::new();
         let regex = b"(st)?op\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -128,7 +135,7 @@ mod tests {
         // 0004 | 6f - 6f | 0005 | 0000
         // 0005 | 70 - 70 | 0000 | 0001
 
-        let heap = match Matrix::build::<4096>(&dfa) {
+        let heap = match Matrix::build::<_, B4096>(&allocator, &dfa) {
             Some(heap) => heap,
             None => return assert!(false),
         };
@@ -159,24 +166,25 @@ mod tests {
 
     #[test]
     fn handles_traversing_from_regex_with_one_accepting_state() {
+        let allocator = Naive64Pages::new();
         let regex = b"(st)?op\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
 
-        let heap = match Matrix::build::<4096>(&dfa) {
+        let heap = match Matrix::build::<_, B4096>(&allocator, &dfa) {
             Some(heap) => heap,
             None => return assert!(false),
         };
@@ -196,19 +204,20 @@ mod tests {
 
     #[test]
     fn handles_building_from_regex_with_two_accepting_states() {
+        let allocator = Naive64Pages::new();
         let regex = b"(start#x)(stop)?#y\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
@@ -223,7 +232,7 @@ mod tests {
         // 0008 | 6f - 6f | 0009 | 0000
         // 0009 | 70 - 70 | 0000 | 0079
 
-        let heap = match Matrix::build::<8192>(&dfa) {
+        let heap = match Matrix::build::<_, B8192>(&allocator, &dfa) {
             Some(heap) => heap,
             None => return assert!(false),
         };
@@ -257,24 +266,25 @@ mod tests {
 
     #[test]
     fn handles_traversing_from_regex_with_two_accepting_states() {
+        let allocator = Naive64Pages::new();
         let regex = b"(start#x)(stop)?#y\0".as_ptr();
 
-        let rpn: RPN<4096> = match RPN::build(regex) {
+        let rpn = match RPN::<_, B4096>::build(&allocator, regex) {
             Ok(rpn) => rpn,
             _ => return assert!(false),
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::build(&allocator, rpn) {
             Some(nfa) => nfa,
             None => return assert!(false),
         };
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(&allocator, nfa) {
             Some(dfa) => dfa,
             None => return assert!(false),
         };
 
-        let heap = match Matrix::build::<8192>(&dfa) {
+        let heap = match Matrix::build::<_, B8192>(&allocator, &dfa) {
             Some(heap) => heap,
             None => return assert!(false),
         };
@@ -291,5 +301,4 @@ mod tests {
         assert_eq!(matrix.traverse(b"topp\0".as_ptr()), (0, 0));
         assert_eq!(matrix.traverse(b"star\0".as_ptr()), (0, 0));
     }
-
 }

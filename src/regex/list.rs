@@ -1,15 +1,18 @@
-use super::heap::*;
+use super::alloc::Allocator;
+use super::heap::AllocatorSize;
+use super::heap::Guard;
+use super::heap::Heap;
 
-pub struct Collection<const SIZE: usize, GUARD: Guard<u16, SIZE>> {
-    heap: Heap<u16, SIZE, GUARD>,
+pub struct Collection<ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<u16, SIZE>> {
+    heap: Heap<u16, ALLOCATOR, SIZE, GUARD>,
     count: u16,
     head: u16,
     tail: u16,
 }
 
-impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
-    pub fn new() -> Self {
-        Self { heap: Heap::alloc(), count: 0, head: 0, tail: 0 }
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<u16, SIZE>> Collection<ALLOCATOR, SIZE, GUARD> {
+    pub fn new(allocator: ALLOCATOR) -> Option<Self> {
+        Some(Self { heap: Heap::alloc(allocator)?, count: 0, head: 0, tail: 0 })
     }
 
     pub fn usage(&self) -> u16 {
@@ -57,7 +60,7 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
     }
 }
 
-impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<u16, SIZE>> Collection<ALLOCATOR, SIZE, GUARD> {
     pub fn list_count(&self) -> u16 {
         self.count
     }
@@ -296,7 +299,7 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
     }
 }
 
-impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<u16, SIZE>> Collection<ALLOCATOR, SIZE, GUARD> {
     fn set_depth(&self) -> u16 {
         let (mut idx, mut count) = (0u16, 0u16);
         let mut in_progress = true;
@@ -486,17 +489,26 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Collection<SIZE, GUARD> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::heap::B4096;
+    use super::super::heap::GuardDisabled;
+    use super::super::alloc::Naive64Pages;
+
+    fn new_collection(allocator: &Naive64Pages) -> Collection<&Naive64Pages, B4096, GuardDisabled> {
+        Collection::new(allocator).unwrap()
+    }
 
     #[test]
     fn handles_empty_data_structure() {
-        let collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let collection = new_collection(&allocator);
 
         assert_eq!(collection.list_count(), 0);
     }
 
     #[test]
     fn handles_adding_new_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
 
         let idx = collection.list_push_head();
         assert_eq!(idx, 0);
@@ -510,7 +522,9 @@ mod tests {
 
     #[test]
     fn handles_list_traversal() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
+
         let idx1 = collection.list_push_head();
         let idx2 = collection.list_push_head();
         let idx3 = collection.list_push_head();
@@ -526,7 +540,8 @@ mod tests {
 
     #[test]
     fn handles_adding_item_to_the_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -539,7 +554,8 @@ mod tests {
 
     #[test]
     fn handles_resizing_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_resize(idx, 2);
@@ -548,7 +564,8 @@ mod tests {
 
     #[test]
     fn handles_setting_item_in_the_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_resize(idx, 2);
@@ -561,7 +578,8 @@ mod tests {
 
     #[test]
     fn handles_removing_existing_list_from_the_head() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -583,7 +601,8 @@ mod tests {
 
     #[test]
     fn handles_removing_last_list_from_the_head() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -612,7 +631,8 @@ mod tests {
 
     #[test]
     fn handles_removing_existing_list_from_the_tail() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -633,7 +653,8 @@ mod tests {
 
     #[test]
     fn handles_removing_last_list_from_the_tail() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -661,7 +682,8 @@ mod tests {
 
     #[test]
     fn handles_sorting_of_an_empty_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_sort(idx);
@@ -670,7 +692,8 @@ mod tests {
 
     #[test]
     fn handles_sorting_of_single_item_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -682,7 +705,8 @@ mod tests {
 
     #[test]
     fn handles_sorting_of_four_item_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -701,7 +725,8 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_an_empty_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_distinct(idx);
@@ -710,7 +735,8 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_single_item_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -722,7 +748,8 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_list_with_zero() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 0);
@@ -735,7 +762,8 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_list_with_zero_only() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 0);
@@ -746,7 +774,8 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_list_with_zero_only_multiple() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 0);
@@ -758,7 +787,8 @@ mod tests {
 
     #[test]
     fn handles_distinct_of_six_item_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -782,7 +812,8 @@ mod tests {
 
     #[test]
     fn handles_finding_item_in_an_empty_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         assert_eq!(collection.list_items_contains(idx, 13, 0), false);
@@ -790,7 +821,8 @@ mod tests {
 
     #[test]
     fn handles_finding_existing_item_in_the_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -806,7 +838,8 @@ mod tests {
 
     #[test]
     fn handles_finding_non_existing_item_in_the_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_add(idx, 13);
@@ -822,7 +855,8 @@ mod tests {
 
     #[test]
     fn handles_hashing_of_an_empty_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.list_push_head();
 
         collection.list_items_hash(idx);
@@ -831,7 +865,8 @@ mod tests {
 
     #[test]
     fn handles_hashing_of_four_item_list() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx1 = collection.list_push_head();
 
         collection.list_items_add(idx1, 13);
@@ -857,7 +892,8 @@ mod tests {
 
     #[test]
     fn handles_adding_new_set() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
         let idx = collection.set_push_head(8);
 
         assert_eq!(idx, 0);
@@ -868,7 +904,8 @@ mod tests {
 
     #[test]
     fn handles_adding_a_list_to_an_empty_set() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
 
         let idx1 = collection.set_push_head(8);
         let idx2 = collection.list_push_head();
@@ -888,7 +925,8 @@ mod tests {
 
     #[test]
     fn handles_finding_existing_element_in_the_set() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
 
         let idx1 = collection.set_push_head(8);
         let idx2 = collection.list_push_head();
@@ -916,7 +954,8 @@ mod tests {
 
     #[test]
     fn handles_finding_non_existing_element_in_the_set() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
 
         let idx1 = collection.set_push_head(8);
         let idx2 = collection.list_push_head();
@@ -944,7 +983,9 @@ mod tests {
 
     #[test]
     fn handles_finding_bunch_of_items_in_the_set() {
-        let mut collection = Collection::<4096, GuardDisabled>::new();
+        let allocator = Naive64Pages::new();
+        let mut collection = new_collection(&allocator);
+
         let idx = collection.set_push_head(8);
         let mut lists = [0; 16];
 

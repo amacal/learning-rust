@@ -1,8 +1,49 @@
-use std::arch::asm;
 use std::marker::PhantomData;
 use std::ptr;
 
-pub trait Guard<T, const SIZE: usize> {
+use super::alloc::Allocator;
+use super::alloc::AllocatorBytes;
+
+pub trait AllocatorSize {
+    fn measure() -> usize;
+    fn encode() -> AllocatorBytes;
+}
+
+pub struct B4096 {}
+pub struct B8192 {}
+pub struct B16384 {}
+
+impl AllocatorSize for B4096 {
+    fn measure() -> usize {
+        4096
+    }
+
+    fn encode() -> AllocatorBytes {
+        AllocatorBytes::B4096
+    }
+}
+
+impl AllocatorSize for B8192 {
+    fn measure() -> usize {
+        8192
+    }
+
+    fn encode() -> AllocatorBytes {
+        AllocatorBytes::B8192
+    }
+}
+
+impl AllocatorSize for B16384 {
+    fn measure() -> usize {
+        16384
+    }
+
+    fn encode() -> AllocatorBytes {
+        AllocatorBytes::B16384
+    }
+}
+
+pub trait Guard<T, SIZE: AllocatorSize> {
     fn apply<U: Into<usize>>(off: U) -> usize;
 
     fn deref_get(ptr: *const T, off: usize) -> T
@@ -16,9 +57,9 @@ pub struct GuardWrapping;
 pub struct GuardDisabled;
 pub struct GuardSegfault;
 
-impl<T, const SIZE: usize> Guard<T, SIZE> for GuardWrapping {
+impl<T, SIZE: AllocatorSize> Guard<T, SIZE> for GuardWrapping {
     fn apply<U: Into<usize>>(off: U) -> usize {
-        off.into() & (SIZE / size_of::<T>() - 1)
+        off.into() & (SIZE::measure() / size_of::<T>() - 1)
     }
 
     fn deref_get(ptr: *const T, off: usize) -> T
@@ -33,7 +74,7 @@ impl<T, const SIZE: usize> Guard<T, SIZE> for GuardWrapping {
     }
 }
 
-impl<T, const SIZE: usize> Guard<T, SIZE> for GuardDisabled {
+impl<T, SIZE: AllocatorSize> Guard<T, SIZE> for GuardDisabled {
     fn apply<U: Into<usize>>(off: U) -> usize {
         off.into()
     }
@@ -50,7 +91,7 @@ impl<T, const SIZE: usize> Guard<T, SIZE> for GuardDisabled {
     }
 }
 
-impl<T, const SIZE: usize> Guard<T, SIZE> for GuardSegfault {
+impl<T, SIZE: AllocatorSize> Guard<T, SIZE> for GuardSegfault {
     fn apply<U: Into<usize>>(off: U) -> usize {
         off.into()
     }
@@ -60,7 +101,7 @@ impl<T, const SIZE: usize> Guard<T, SIZE> for GuardSegfault {
         T: Copy,
     {
         unsafe {
-            let src = if off < SIZE / size_of::<T>() { ptr.add(off) } else { ptr::null() };
+            let src = if off < SIZE::measure() / size_of::<T>() { ptr.add(off) } else { ptr::null() };
 
             ptr::read_volatile(src)
         }
@@ -68,39 +109,19 @@ impl<T, const SIZE: usize> Guard<T, SIZE> for GuardSegfault {
 
     fn deref_set(ptr: *mut T, off: usize, val: T) {
         unsafe {
-            let dst = if off < SIZE / size_of::<T>() { ptr.add(off) } else { ptr::null_mut() };
+            let dst = if off < SIZE::measure() / size_of::<T>() { ptr.add(off) } else { ptr::null_mut() };
 
             ptr::write_volatile(dst, val);
         }
     }
 }
 
-pub struct Heap<T, const SIZE: usize, GUARD: Guard<T, SIZE>>(*mut T, PhantomData<GUARD>);
+pub struct Heap<T, ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<T, SIZE>>(*mut T, ALLOCATOR, PhantomData<SIZE>, PhantomData<GUARD>);
 
-impl<T, const SIZE: usize, GUARD: Guard<T, SIZE>> Heap<T, SIZE, GUARD> {
-    pub fn alloc() -> Self {
-        let ptr = unsafe {
-            let ret: isize;
-
-            asm!(
-                "syscall",
-                in("rax") 9,
-                in("rdi") 0,
-                in("rsi") SIZE,
-                in("rdx") 0x00000001 | 0x00000002,
-                in("r10") 0x00000002 | 0x00000020,
-                in("r8") 0,
-                in("r9") 0,
-                lateout("rcx") _,
-                lateout("r11") _,
-                lateout("rax") ret,
-                options(nostack)
-            );
-
-            ret
-        };
-
-        Self(ptr as *mut T, PhantomData)
+impl<T, ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<T, SIZE>> Heap<T, ALLOCATOR, SIZE, GUARD> {
+    pub fn alloc(allocator: ALLOCATOR) -> Option<Self> {
+        let ptr = allocator.alloc(SIZE::encode())?;
+        Some(Self(ptr as *mut T, allocator, PhantomData, PhantomData))
     }
 
     pub fn as_bytes(&self, len: usize) -> &[T] {
@@ -179,7 +200,7 @@ impl<T, const SIZE: usize, GUARD: Guard<T, SIZE>> Heap<T, SIZE, GUARD> {
     }
 }
 
-impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Heap<u16, SIZE, GUARD> {
+impl<ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<u16, SIZE>> Heap<u16, ALLOCATOR, SIZE, GUARD> {
     pub fn as_string(&self, len: usize) -> String {
         let bytes = self.as_bytes(len);
         let mut out = String::from("[");
@@ -196,19 +217,8 @@ impl<const SIZE: usize, GUARD: Guard<u16, SIZE>> Heap<u16, SIZE, GUARD> {
     }
 }
 
-impl<T, const SIZE: usize, GUARD: Guard<T, SIZE>> Drop for Heap<T, SIZE, GUARD> {
+impl<T, ALLOCATOR: Allocator, SIZE: AllocatorSize, GUARD: Guard<T, SIZE>> Drop for Heap<T, ALLOCATOR, SIZE, GUARD> {
     fn drop(&mut self) {
-        unsafe {
-            asm!(
-                "syscall",
-                in("rax") 11,
-                in("rdi") self.0,
-                in("rsi") SIZE,
-                lateout("rcx") _,
-                lateout("r11") _,
-                lateout("rax") _,
-                options(nostack)
-            );
-        }
+        self.1.free(self.0 as *mut u8, SIZE::encode());
     }
 }

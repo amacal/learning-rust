@@ -1,15 +1,18 @@
 use crate::regex::*;
 
-pub struct Lexer {
+pub struct Lexer<ALLOCATOR: Allocator> {
     data: *const u8,
     offset: usize,
     mask: usize,
-    dfa: DFA,
+    dfa: DFA<ALLOCATOR, B4096>,
 }
 
-impl Lexer {
-    pub fn new(data: *const u8, mask: usize) -> Option<Self> {
-        let mut builder = RPN::<4096>::builder();
+impl<ALLOCATOR: Allocator> Lexer<ALLOCATOR> {
+    pub fn new(allocator: ALLOCATOR, data: *const u8, mask: usize) -> Option<Self>
+    where
+        ALLOCATOR: Copy,
+    {
+        let mut builder = RPN::<_, B4096>::builder(allocator)?;
 
         // catch {, }, [, ], comma and colon
         builder.append(b"{#\x01\0".as_ptr());
@@ -33,31 +36,26 @@ impl Lexer {
         builder.append(b"(true)#\x0b\0".as_ptr());
         builder.append(b"(null)#\x0c\0".as_ptr());
 
-        let rpn: RPN<4096> = match builder.build() {
+        let rpn= match builder.build() {
             Ok(rpn) => rpn,
             _ => return None,
         };
 
-        let nfa = match NFA::build(rpn) {
+        let nfa = match NFA::build(allocator, rpn) {
             Some(nfa) => nfa,
             None => return None,
         };
 
         nfa.print();
 
-        let dfa = match DFA::build(nfa) {
+        let dfa = match DFA::build(allocator, nfa) {
             Some(dfa) => dfa,
             None => return None,
         };
 
         dfa.print();
 
-        Some(Self {
-            data: data,
-            mask: mask,
-            dfa: dfa,
-            offset: 0,
-        })
+        Some(Self { data: data, mask: mask, dfa: dfa, offset: 0 })
     }
 
     pub fn process(&mut self, length: usize) -> Option<(u16, usize)> {

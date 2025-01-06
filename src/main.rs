@@ -2,13 +2,16 @@ mod json;
 mod regex;
 
 use json::Lexer;
+use regex::Naive64Pages;
+
 use std::fs::File;
 use std::io::Read;
 
 fn main() {
     let mut data = [0u8; 1024];
+    let allocator = Naive64Pages::new();
 
-    let mut lexer = match Lexer::new(data.as_ptr(), 1023) {
+    let mut lexer = match Lexer::new(&allocator, data.as_ptr(), 1023) {
         None => return,
         Some(lexer) => lexer,
     };
