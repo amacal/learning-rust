@@ -28,11 +28,11 @@ extern "C" {
     fn alloc_one_bit(data: *const u8, bitmap: *const u64) -> *mut u8;
     fn free_one_bit(data: *const u8, bitmap: *const u64, ptr: *const u8);
 
-    fn alloc_two_bits(date: *const u8, bitmap: *const u64, mask: u8) -> *mut u8;
-    fn free_two_bits(data: *const u8, bitmap: *const u64, mask: u8, ptr: *const u8);
+    fn alloc_two_bits(data: *const u8, bitmap: *const u64) -> *mut u8;
+    fn free_two_bits(data: *const u8, bitmap: *const u64, ptr: *const u8);
 
-    fn alloc_n_bits(date: *const u8, bitmap: *const u64, mask: u8) -> *mut u8;
-    fn free_n_bits(data: *const u8, bitmap: *const u64, mask: u8, ptr: *const u8);
+    fn alloc_four_bits(data: *const u8, bitmap: *const u64) -> *mut u8;
+    fn free_four_bits(data: *const u8, bitmap: *const u64, ptr: *const u8);
 }
 
 global_asm!(
@@ -67,33 +67,31 @@ global_asm!(
 
         alloc_two_bits:
             mov rax, [rsi]
-            mov r9, rax
-            shl r9, 0x01
-            and rax, r9
+            mov rdx, rax
+            shr rdx, 0x01
+            and rax, rdx
 
             bsf rcx, rax
             jz no_slot_two_bits
 
-            sub rcx, 0x01
-            mov r9, rdx
-            shl r9, cl
+            mov rdx, 0x03
+            shl rdx, cl
 
-            not r9
-            and [rsi], r9
+            not rdx
+            and [rsi], rdx
 
             shl rcx, 0x0c
             lea rax, [rdi + rcx]
             ret
 
         free_two_bits:
+            mov rcx, rdx
             sub rcx, rdi
             shr rcx, 0x0c
+            mov rdx, 0x03
             shl rdx, cl
             or [rsi], rdx
             ret
-
-        no_slot_two_overflow:
-            mov rax, 0x00
 
         no_slot_two_bits:
             ret
@@ -102,47 +100,45 @@ global_asm!(
 
 global_asm!(
     r#"
-        .global alloc_n_bits
-        .global free_n_bits
+        .global alloc_four_bits
+        .global free_four_bits
 
-        alloc_n_bits:
+        alloc_four_bits:
             mov rax, [rsi]
+            mov rcx, rax
 
-        find_n_bits:
+            shr rcx, 0x01
+            and rax, rcx
+
+            shr rcx, 0x01
+            and rax, rcx
+
+            shr rcx, 0x01
+            and rax, rcx
+
             bsf rcx, rax
-            jz no_slot_n_bits
+            jz no_slot_four_bits
 
-            mov r9, rdx
-            shl r9, cl
-            jc no_slot_n_overflow
+            mov rdx, 0x0f
+            shl rdx, cl
 
-            mov r8, rax
-            and r8, r9
-            cmp r8, r9
-            jne next_n_bits
-
-            not r9
-            and [rsi], r9
+            not rdx
+            and [rsi], rdx
 
             shl rcx, 0x0c
             lea rax, [rdi + rcx]
             ret
 
-        next_n_bits:
-            btr rax, rcx
-            jmp find_n_bits
-
-        free_n_bits:
+        free_four_bits:
+            mov rcx, rdx
             sub rcx, rdi
             shr rcx, 0x0c
+            mov rdx, 0x0f
             shl rdx, cl
             or [rsi], rdx
             ret
 
-        no_slot_n_overflow:
-            mov rax, 0x00
-
-        no_slot_n_bits:
+        no_slot_four_bits:
             ret
     "#
 );
@@ -152,8 +148,8 @@ impl Allocator for &Naive64Pages {
         unsafe {
             let ptr = match size {
                 AllocatorBytes::B4096 => alloc_one_bit(self.data.as_ptr(), &self.bitmap as *const u64),
-                AllocatorBytes::B8192 => alloc_two_bits(self.data.as_ptr(), &self.bitmap as *const u64,0b11),
-                AllocatorBytes::B16384 => alloc_n_bits(self.data.as_ptr(), &self.bitmap as *const u64,0b1111),
+                AllocatorBytes::B8192 => alloc_two_bits(self.data.as_ptr(), &self.bitmap as *const u64),
+                AllocatorBytes::B16384 => alloc_four_bits(self.data.as_ptr(), &self.bitmap as *const u64),
             };
 
             if ptr == core::ptr::null_mut() {
@@ -168,8 +164,8 @@ impl Allocator for &Naive64Pages {
         unsafe {
             match size {
                 AllocatorBytes::B4096 => free_one_bit(self.data.as_ptr(), &self.bitmap as *const u64, ptr),
-                AllocatorBytes::B8192 => free_two_bits(self.data.as_ptr(), &self.bitmap as *const u64, 0b11, ptr),
-                AllocatorBytes::B16384 => free_n_bits(self.data.as_ptr(), &self.bitmap as *const u64, 0b1111, ptr),
+                AllocatorBytes::B8192 => free_two_bits(self.data.as_ptr(), &self.bitmap as *const u64, ptr),
+                AllocatorBytes::B16384 => free_four_bits(self.data.as_ptr(), &self.bitmap as *const u64, ptr),
             }
         }
     }
@@ -246,10 +242,6 @@ mod tests {
         for i in 0..32 {
             let ptr = allocator.alloc(size);
             let data = pages.data.as_ptr() as usize;
-
-            println!("{:08x}", data);
-            println!("{:08x}", ptr.unwrap() as usize);
-            println!("{:08x}", data + i as usize * 8192);
 
             assert_eq!(ptr.unwrap() as usize, data + i as usize * 8192);
         }
