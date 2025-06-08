@@ -24,12 +24,20 @@ union Node<K: Copy + PartialOrd, V: Copy> {
 pub struct AvlNode<K: Copy + PartialOrd, V: Copy>(Node<K, V>);
 
 impl<K: Copy + PartialOrd, V: Copy> Node<K, V> {
-    fn new(key: K, value: V) -> AvlNode<K, V> {
+    fn node(key: K, value: V) -> AvlNode<K, V> {
         AvlNode(Node { item: Item { key, value, left: 0, right: 0 } })
+    }
+
+    fn tree(root: u32) -> AvlNode<K, V> {
+        AvlNode(Node { tree: Tree { root } })
     }
 
     fn get_root(&self) -> u32 {
         unsafe { self.tree.root }
+    }
+
+    fn set_root(&mut self, root: u32) {
+        self.tree.root = root;
     }
 
     fn get_key(&self) -> K {
@@ -106,26 +114,41 @@ impl<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> AvlForest<K, V,
 impl<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> AvlForest<K, V, A> {
     pub fn append(&mut self, key: K, value: V) -> Option<u32> {
         // allocate a new node in the arena
-        let idx = self.arena.insert(Node::new(key, value))?;
+        let idx = self.arena.insert(Node::node(key, value))?;
 
         // return the index of the newly inserted node as the root of the tree
-        return Some(idx);
+        if let Some(root) = self.arena.insert(Node::tree(idx)) {
+            return Some(root);
+        }
+
+        // if we failed to insert the tree, release the allocated node
+        unsafe { self.arena.release_unchecked(idx) };
+
+        return None;
     }
 
     pub fn insert(&mut self, tree: u32, key: K, value: V) -> Option<u32> {
         // allocate a new node in the arena
-        let idx = self.arena.insert(Node::new(key, value))?;
+        let idx = self.arena.insert(Node::node(key, value))?;
 
-        // trigger recursive insertion
-        let root = unsafe { self.insert_recursive(tree, idx, key) };
+        // find the root of the tree
+        let parent = unsafe { self.arena.get_unchecked(tree).0.get_root() };
+
+        // trigger recursive insertion, may rotate the root
+        let rotated = unsafe { self.insert_recursive(parent, idx, key) };
+
+        // update the root of the tree if it was rotated
+        if parent != rotated {
+            unsafe { self.arena.get_unchecked_mut(tree).0.set_root(rotated) };
+        }
 
         // return the index of the newly inserted node
-        return Some(root);
+        return Some(idx);
     }
 
     pub fn height(&self, tree: u32) -> u32 {
-        let mut idx = tree;
         let mut height = 0;
+        let mut idx = unsafe { self.arena.get_unchecked(tree).0.get_root() };
 
         unsafe {
             while idx > 0 {
@@ -141,8 +164,6 @@ impl<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> AvlForest<K, V,
     }
 
     unsafe fn insert_recursive(&mut self, parent: u32, node: u32, key: K) -> u32 {
-        println!("Inserting node, parent {}, node {}", parent, node);
-
         // recursion base case
         if parent == 0 {
             return node;
@@ -157,15 +178,12 @@ impl<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> AvlForest<K, V,
 
             match self.arena.get_unchecked(idx).0.get_balance() {
                 Ordering::Equal => {
-                    println!("Setting balance to Less for node {}", idx);
                     self.arena.get_unchecked_mut(idx).0.set_balance(Ordering::Less);
                 }
                 Ordering::Greater => {
-                    println!("Setting balance to Equal for node {}", idx);
                     self.arena.get_unchecked_mut(idx).0.set_balance(Ordering::Equal);
                 }
                 Ordering::Less => {
-                    println!("Node {} is already left heavy, rotating", idx);
                     return self.rotate_ll(idx);
                 }
             }
@@ -177,11 +195,16 @@ impl<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> AvlForest<K, V,
         return idx;
     }
 
-    //         z (-2)           y (0)
-    //        /                / \
-    //       y (-1 or 0)  (0) x   z (-1 or 0)
-    //      / \                  /
-    // (0) x   a (?)            a (?)
+    // Rotate left-left case; z is known to be left-heavy (balance == -2).
+    // This implies:
+    // - b must be null (right subtree of z has height 0)
+    // - a is either null or a leaf (max height 1), otherwise this wouldn’t be LL.
+    //
+    //              z (-2)                        y (0)
+    //             / \                           / \
+    //  (-1 or 0) y   b (null)     =>       (0) x   z (-1 or 0)
+    //           / \                               / \
+    //      (0) x   a (null or 0)      (null or 0) a   b (null)
     unsafe fn rotate_ll(&mut self, z: u32) -> u32 {
         let y = self.arena.get_unchecked(z).0.get_left();
         let a = self.arena.get_unchecked(y).0.get_right();
@@ -221,8 +244,8 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let root = forest.append(30, 300).unwrap();
-        let root = forest.insert(root, 20, 200).unwrap();
-        let root = forest.insert(root, 10, 100).unwrap();
+        let _ = forest.insert(root, 20, 200).unwrap();
+        let _ = forest.insert(root, 10, 100).unwrap();
 
         let height = forest.height(root);
         assert_eq!(height, 2);
