@@ -1,4 +1,7 @@
-use std::cell::UnsafeCell;
+use std::{
+    cell::UnsafeCell,
+    mem::{self, MaybeUninit},
+};
 
 #[derive(Copy, Clone)]
 struct Root {
@@ -42,7 +45,19 @@ pub struct NodeArray<T: Copy, const U: usize> {
 
 impl<T: Copy, const U: usize> NodeArray<T, U> {
     pub fn new() -> Self {
-        NodeArray { entries: Box::new([const { Node { free: Free { next: 0 } } }; U]), counter: 0 }
+        // allocate an array of nodes with uninitialized memory
+        // the first node is a root node, the rest are free nodes
+        // we don't want to touch the memory until we actually need it
+        // because it will trigger unnecessary allocation in OS
+        let mut entries = unsafe {
+            let uninitialized = Box::new_uninit().assume_init();
+            let initialized = mem::transmute::<Box<[MaybeUninit<Node<T>>; U]>, Box<[Node<T>; U]>>(uninitialized);
+
+            initialized
+        };
+
+        entries[0] = Node { root: Root { next: 0 } };
+        NodeArray { entries: entries, counter: 0 }
     }
 
     pub fn capacity(&self) -> usize {
