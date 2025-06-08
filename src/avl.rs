@@ -2,8 +2,9 @@ use super::arena::NodeArena;
 use std::{cmp::Ordering, marker::PhantomData};
 
 #[derive(Copy, Clone)]
-struct Tree {
+struct Tree<T: Copy> {
     root: u32,
+    value: T,
 }
 
 #[derive(Copy, Clone)]
@@ -15,21 +16,21 @@ struct Item<K: Copy + PartialOrd, V: Copy> {
 }
 
 #[derive(Copy, Clone)]
-union Node<K: Copy + PartialOrd, V: Copy> {
-    tree: Tree,
+union Node<T: Copy, K: Copy + PartialOrd, V: Copy> {
+    tree: Tree<T>,
     item: Item<K, V>,
 }
 
 #[derive(Copy, Clone)]
-pub struct AvlNode<K: Copy + PartialOrd, V: Copy>(Node<K, V>);
+pub struct AvlNode<T: Copy, K: Copy + PartialOrd, V: Copy>(Node<T, K, V>);
 
-impl<K: Copy + PartialOrd, V: Copy> Node<K, V> {
-    fn node(key: K, value: V) -> AvlNode<K, V> {
+impl<T: Copy, K: Copy + PartialOrd, V: Copy> Node<T, K, V> {
+    fn node(key: K, value: V) -> AvlNode<T, K, V> {
         AvlNode(Node { item: Item { key, value, left: 0, right: 0 } })
     }
 
-    fn tree() -> AvlNode<K, V> {
-        AvlNode(Node { tree: Tree { root: 0 } })
+    fn tree(value: T) -> AvlNode<T, K, V> {
+        AvlNode(Node { tree: Tree { root: 0, value } })
     }
 
     fn get_root(&self) -> u32 {
@@ -99,22 +100,23 @@ impl<K: Copy + PartialOrd, V: Copy> Node<K, V> {
     }
 }
 
-pub struct AvlForest<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> {
+pub struct AvlForest<T: Copy, K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<T, K, V>>> {
     arena: A,
     key: PhantomData<K>,
     value: PhantomData<V>,
+    tree: PhantomData<T>,
 }
 
-impl<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> AvlForest<K, V, A> {
+impl<T: Copy, K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<T, K, V>>> AvlForest<T, K, V, A> {
     pub fn new(arena: A) -> Self {
-        AvlForest { arena, key: PhantomData, value: PhantomData }
+        AvlForest { arena, key: PhantomData, value: PhantomData, tree: PhantomData }
     }
 }
 
-impl<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> AvlForest<K, V, A> {
-    pub fn append(&mut self) -> Option<u32> {
+impl<T: Copy, K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<T, K, V>>> AvlForest<T, K, V, A> {
+    pub fn append(&mut self, value: T) -> Option<u32> {
         // return the index of the newly inserted node as the root of the tree
-        self.arena.insert(Node::tree())
+        self.arena.insert(Node::tree(value))
     }
 
     pub fn insert(&mut self, tree: u32, key: K, value: V) -> Option<u32> {
@@ -362,10 +364,10 @@ mod tests {
 
     #[test]
     fn can_create_avl_forest_with_a_new_root() {
-        let arena: NodeArray<AvlNode<i32, i32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, i32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append();
+        let tree = forest.append(13);
         assert!(tree.is_some());
 
         let root = forest.insert(tree.unwrap(), 1, 2);
@@ -377,10 +379,10 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_ll() {
-        let arena: NodeArray<AvlNode<i32, i32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, i32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append().unwrap();
+        let tree = forest.append(13).unwrap();
         let _ = forest.insert(tree, 30, 300).unwrap();
         let _ = forest.insert(tree, 20, 200).unwrap();
         let _ = forest.insert(tree, 10, 100).unwrap();
@@ -391,10 +393,10 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_lr() {
-        let arena: NodeArray<AvlNode<i32, i32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, i32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append().unwrap();
+        let tree = forest.append(13).unwrap();
         let _ = forest.insert(tree, 30, 300).unwrap();
         let _ = forest.insert(tree, 20, 200).unwrap();
         let _ = forest.insert(tree, 25, 250).unwrap();
@@ -405,10 +407,10 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_rr() {
-        let arena: NodeArray<AvlNode<i32, i32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, i32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append().unwrap();
+        let tree = forest.append(13).unwrap();
         let _ = forest.insert(tree, 10, 100).unwrap();
         let _ = forest.insert(tree, 20, 200).unwrap();
         let _ = forest.insert(tree, 30, 300).unwrap();
@@ -419,10 +421,10 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_rl() {
-        let arena: NodeArray<AvlNode<i32, i32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, i32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append().unwrap();
+        let tree = forest.append(13).unwrap();
         let _ = forest.insert(tree, 10, 100).unwrap();
         let _ = forest.insert(tree, 20, 200).unwrap();
         let _ = forest.insert(tree, 15, 150).unwrap();
