@@ -1,6 +1,8 @@
 mod arena;
 mod avl;
 
+use std::cmp::Ordering;
+
 use arena::NodeArray;
 use avl::{AvlForest, AvlNode};
 
@@ -28,20 +30,52 @@ impl AvlNode for TestNode {
         self.value
     }
 
+    fn get_balance(&self) -> Ordering {
+        let left = self.left & 0x80000000;
+        let right = self.right & 0x80000000;
+
+        if left == right {
+            return Ordering::Equal;
+        }
+
+        if left > 0 {
+            return Ordering::Less;
+        }
+
+        return Ordering::Greater;
+    }
+
+    fn set_balance(&mut self, balance: Ordering) {
+        match balance {
+            Ordering::Equal => {
+                self.left &= 0x7fffffff;
+                self.right &= 0x7fffffff;
+            }
+            Ordering::Less => {
+                self.left |= 0x80000000;
+                self.right &= 0x7fffffff;
+            }
+            Ordering::Greater => {
+                self.left &= 0x7fffffff;
+                self.right |= 0x80000000;
+            }
+        }
+    }
+
     fn get_left(&self) -> u32 {
-        self.left
+        self.left & 0x7fffffff
     }
 
     fn set_left(&mut self, left: u32) {
-        self.left = left;
+        self.left = left | self.left & 0x80000000;
     }
 
     fn get_right(&self) -> u32 {
-        self.right
+        self.right & 0x7fffffff
     }
 
     fn set_right(&mut self, right: u32) {
-        self.right = right;
+        self.right = right | self.right & 0x80000000;
     }
 }
 

@@ -1,5 +1,5 @@
 use super::arena::NodeArena;
-use std::marker::PhantomData;
+use std::{cmp::Ordering, marker::PhantomData};
 
 pub trait AvlNode {
     type KeyType: Copy + PartialOrd;
@@ -9,6 +9,9 @@ pub trait AvlNode {
 
     fn get_key(&self) -> Self::KeyType;
     fn get_value(&self) -> Self::ValueType;
+
+    fn get_balance(&self) -> Ordering;
+    fn set_balance(&mut self, balance: Ordering);
 
     fn get_left(&self) -> u32;
     fn set_left(&mut self, left: u32);
@@ -42,31 +45,94 @@ impl<T: AvlNode + Copy, A: NodeArena<T>> AvlForest<T, A> {
         let idx = self.arena.insert(T::new(key, value))?;
 
         // trigger recursive insertion
-        unsafe { self.insert_recursive(tree, idx, key) };
+        let root = unsafe { self.insert_recursive(tree, idx, key) };
 
         // return the index of the newly inserted node
-        return Some(idx);
+        return Some(root);
     }
 
-    unsafe fn insert_recursive(&mut self, parent: u32, node: u32, key: T::KeyType) {
-        let (idx, parent) = (parent, self.arena.get_unchecked(parent));
+    pub fn height(&self, tree: u32) -> u32 {
+        let mut idx = tree;
+        let mut height = 0;
 
-        if key <= parent.get_key() {
-            match parent.get_left() {
-                0 => self.arena.get_unchecked_mut(idx).set_left(node),
-                left => self.insert_recursive(left, node, key),
-            }
-        } else {
-            match parent.get_right() {
-                0 => self.arena.get_unchecked_mut(idx).set_right(node),
-                right => self.insert_recursive(right, node, key),
+        unsafe {
+            while idx > 0 {
+                height += 1;
+                idx = match self.arena.get_unchecked(idx).get_balance() {
+                    Ordering::Equal | Ordering::Less => self.arena.get_unchecked(idx).get_left(),
+                    Ordering::Greater => self.arena.get_unchecked(idx).get_right(),
+                }
             }
         }
+
+        return height;
+    }
+
+    unsafe fn insert_recursive(&mut self, parent: u32, node: u32, key: T::KeyType) -> u32 {
+        println!("Inserting node, parent {}, node {}", parent, node);
+
+        // recursion base case
+        if parent == 0 {
+            return node;
+        }
+
+        // we are ok with copying the parent node here, the variable is read-only
+        let (idx, parent) = (parent, self.arena.get_unchecked(parent).clone());
+
+        if key <= parent.get_key() {
+            let left = self.insert_recursive(parent.get_left(), node, key);
+            self.arena.get_unchecked_mut(idx).set_left(left);
+
+            match self.arena.get_unchecked(idx).get_balance() {
+                Ordering::Equal => {
+                    println!("Setting balance to Less for node {}", idx);
+                    self.arena.get_unchecked_mut(idx).set_balance(Ordering::Less);
+                }
+                Ordering::Greater => {
+                    println!("Setting balance to Equal for node {}", idx);
+                    self.arena.get_unchecked_mut(idx).set_balance(Ordering::Equal);
+                }
+                Ordering::Less => {
+                    println!("Node {} is already left heavy, rotating", idx);
+                    return self.rotate_ll(idx);
+                }
+            }
+        } else {
+            let right = self.insert_recursive(parent.get_right(), node, key);
+            self.arena.get_unchecked_mut(idx).set_right(right);
+        }
+
+        return idx;
+    }
+
+    //         z (-2)           y (0)
+    //        /                / \
+    //       y (-1 or 0)  (0) x   z (-1 or 0)
+    //      / \                  /
+    // (0) x   a (?)            a (?)
+    unsafe fn rotate_ll(&mut self, z: u32) -> u32 {
+        let y = self.arena.get_unchecked(z).get_left();
+        let a = self.arena.get_unchecked(y).get_right();
+        let x = self.arena.get_unchecked(y).get_left();
+        let balance = if a != 0 { Ordering::Less } else { Ordering::Equal };
+
+        println!("Rotating LL at node {} {} {}", z, y, x);
+
+        self.arena.get_unchecked_mut(z).set_left(a);
+        self.arena.get_unchecked_mut(z).set_balance(balance);
+
+        self.arena.get_unchecked_mut(y).set_right(z);
+        self.arena.get_unchecked_mut(y).set_balance(Ordering::Equal);
+
+        // return new root
+        return y;
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cmp::Ordering;
+
     use super::*;
     use crate::arena::NodeArray;
 
@@ -94,20 +160,54 @@ mod tests {
             self.value
         }
 
+        fn get_balance(&self) -> Ordering {
+            let left = self.left & 0x80000000;
+            let right = self.right & 0x80000000;
+
+            if left == right {
+                return Ordering::Equal;
+            }
+
+            // left heavy
+            if left > 0 {
+                return Ordering::Less;
+            }
+
+            // right heavy
+            return Ordering::Greater;
+        }
+
+        fn set_balance(&mut self, balance: Ordering) {
+            match balance {
+                Ordering::Equal => {
+                    self.left &= 0x7fffffff;
+                    self.right &= 0x7fffffff;
+                }
+                Ordering::Less => {
+                    self.left |= 0x80000000;
+                    self.right &= 0x7fffffff;
+                }
+                Ordering::Greater => {
+                    self.left &= 0x7fffffff;
+                    self.right |= 0x80000000;
+                }
+            }
+        }
+
         fn get_left(&self) -> u32 {
-            self.left
+            self.left & 0x7fffffff
         }
 
         fn set_left(&mut self, left: u32) {
-            self.left = left;
+            self.left = left | self.left & 0x80000000;
         }
 
         fn get_right(&self) -> u32 {
-            self.right
+            self.right & 0x7fffffff
         }
 
         fn set_right(&mut self, right: u32) {
-            self.right = right;
+            self.right = right | self.right & 0x80000000;
         }
     }
 
@@ -116,9 +216,23 @@ mod tests {
         let arena: NodeArray<TestNode, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let node = TestNode::new(1, 2);
-        let idx = forest.append(node.get_key(), node.get_value());
+        let root = forest.append(1, 2);
+        assert!(root.is_some());
 
-        assert!(idx.is_some());
+        let height = forest.height(root.unwrap());
+        assert_eq!(height, 1);
+    }
+
+    #[test]
+    fn can_insert_nodes_into_avl_forest_ll() {
+        let arena: NodeArray<TestNode, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let root = forest.append(30, 300).unwrap();
+        let root = forest.insert(root, 20, 200).unwrap();
+        let root = forest.insert(root, 10, 100).unwrap();
+
+        let height = forest.height(root);
+        assert_eq!(height, 2);
     }
 }

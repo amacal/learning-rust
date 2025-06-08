@@ -216,6 +216,54 @@ mod tests {
     }
 
     #[test]
+    fn cannot_insert_too_many_nodes_after_few_releases() {
+        let mut arena: NodeArray<i32, 10> = NodeArray::new();
+
+        // following inserts should succeed
+        for i in 0..arena.capacity() {
+            let node = TestNode { value: i as i32 };
+            let idx = arena.insert(node.value);
+
+            assert!(idx.is_some());
+        }
+
+        assert_eq!(arena.capacity(), 9);
+        assert_eq!(arena.allocated(), 9);
+
+        // release every second node
+        for i in 0..arena.capacity() {
+            if i % 2 == 0 {
+                unsafe { arena.release_unchecked(i as u32 + 1) };
+            }
+        }
+
+        assert_eq!(arena.capacity(), 9);
+        assert_eq!(arena.allocated(), 9);
+
+        // following inserts should also succeed
+        // because we released every second node
+        for i in 0..arena.capacity() {
+            if i % 2 == 0 {
+                let node = TestNode { value: i as i32 };
+                let idx = arena.insert(node.value);
+
+                assert!(idx.is_some());
+            }
+        }
+
+        assert_eq!(arena.capacity(), 9);
+        assert_eq!(arena.allocated(), 9);
+
+        // the next one will fail
+        let node = TestNode { value: 42 };
+        let idx = arena.insert(node.value);
+
+        assert_eq!(idx, None);
+        assert_eq!(arena.capacity(), 9);
+        assert_eq!(arena.allocated(), 9);
+    }
+
+    #[test]
     fn can_release_existing_node() {
         let mut arena: NodeArray<i32, 10> = NodeArray::new();
         let node = TestNode { value: 42 };
