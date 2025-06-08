@@ -173,9 +173,14 @@ impl<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> AvlForest<K, V,
                 Ordering::Greater => {
                     self.arena.get_unchecked_mut(idx).0.set_balance(Ordering::Equal);
                 }
-                Ordering::Less => {
-                    return self.rotate_ll(idx);
-                }
+                Ordering::Less => match self.arena.get_unchecked(left).0.get_balance() {
+                    Ordering::Less | Ordering::Equal => {
+                        return self.rotate_ll(idx);
+                    }
+                    Ordering::Greater => {
+                        return self.rotate_lr(idx);
+                    }
+                },
             }
         } else {
             let right = self.insert_recursive(parent.0.get_right(), node, key);
@@ -197,16 +202,15 @@ impl<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> AvlForest<K, V,
         return idx;
     }
 
-    // Rotate left-left case; z is known to be left-heavy (balance == -2).
-    // This implies:
-    // - b must be null (right subtree of z has height 0)
-    // - a is either null or a leaf (max height 1), otherwise this wouldn’t be LL.
+    // Rotate left-left case:
+    // - z is left-heavy (-2).
+    // - y is either balanced (0) or right-heavy (+1).
     //
-    //              z (-2)                         y (0)
-    //             / \                            / \
-    //  (-1 or 0) y   b (null)     =>        (0) x   z (-1 or 0)
-    //           / \                                / \
-    //      (0) x   a (null or 0)      (null or 0) a   b (null)
+    //              z (-2)                 y (0)
+    //             / \                    / \
+    //  (-1 or 0) y   b (?)    =>    (0) x   z (-1 or 0)
+    //           / \                        / \
+    //      (0) x   a (?)              (?) a   b (?)
     //
     unsafe fn rotate_ll(&mut self, z: u32) -> u32 {
         let y = self.arena.get_unchecked(z).0.get_left();
@@ -223,16 +227,65 @@ impl<K: Copy + PartialOrd, V: Copy, A: NodeArena<AvlNode<K, V>>> AvlForest<K, V,
         return y;
     }
 
-    // Rotate right-right case; z is known to be right-heavy (balance == 2).
-    // This implies:
-    // - b must be null (left subtree of z has height 0)
-    // - a is either null or a leaf (max height 1), otherwise this wouldn’t be RR.
+    // Rotate left-right case:
+    // - z is left-heavy (-2)
+    // - y is right-heavy (+1)
     //
-    //                z (2)                        y (0)
-    //               / \                          / \
-    //       (null) b   y (1 or 0)  =>  (1 or 0) z   x (0)
-    //             / \                          / \
-    // (null or 0) a   x (0)            (null) b   a (null or 0)
+    //            z (-2)                 x (0)
+    //           / \                    / \
+    //     (+1) y   b (?)    =>    (0) y   z (0)
+    //         / \                      \   \
+    //    (?) c   x (?)              (?) a   b (?)
+    //           / \
+    //      (?) a   b (?)
+    //
+    unsafe fn rotate_lr(&mut self, z: u32) -> u32 {
+        // extract all nodes involved in the rotations
+        let y = self.arena.get_unchecked(z).0.get_left();
+        let x = self.arena.get_unchecked(y).0.get_right();
+        let a = self.arena.get_unchecked(x).0.get_left();
+        let b = self.arena.get_unchecked(x).0.get_right();
+
+        // first rotation: y becomes left child of x
+        self.arena.get_unchecked_mut(y).0.set_right(a);
+        self.arena.get_unchecked_mut(x).0.set_left(y);
+
+        // second rotation: x becomes new root of the subtree
+        self.arena.get_unchecked_mut(z).0.set_left(b);
+        self.arena.get_unchecked_mut(x).0.set_right(z);
+
+        // adjust all balances
+        match self.arena.get_unchecked(x).0.get_balance() {
+            Ordering::Less => {
+                self.arena.get_unchecked_mut(z).0.set_balance(Ordering::Greater);
+                self.arena.get_unchecked_mut(y).0.set_balance(Ordering::Equal);
+            }
+            Ordering::Greater => {
+                self.arena.get_unchecked_mut(z).0.set_balance(Ordering::Equal);
+                self.arena.get_unchecked_mut(y).0.set_balance(Ordering::Less);
+            }
+            Ordering::Equal => {
+                self.arena.get_unchecked_mut(z).0.set_balance(Ordering::Equal);
+                self.arena.get_unchecked_mut(y).0.set_balance(Ordering::Equal);
+            }
+        }
+
+        // not forget about the balance of x
+        self.arena.get_unchecked_mut(x).0.set_balance(Ordering::Equal);
+
+        // and x becomes the new root of the subtree
+        return x;
+    }
+
+    // Rotate right-right case:
+    // - z is right-heavy (+2).
+    // - y is left-heavy (+1) or balanced (0).
+    //
+    //          z (2)                          y (0)
+    //         / \                            / \
+    //    (?) b   y (+1 or 0)  =>  (+1 or 0) z   x (0)
+    //           / \                            / \
+    //      (?) a   x (0)                  (?) b   a (?)
     //
     unsafe fn rotate_rr(&mut self, z: u32) -> u32 {
         let y = self.arena.get_unchecked(z).0.get_right();
@@ -279,6 +332,20 @@ mod tests {
         let _ = forest.insert(tree, 30, 300).unwrap();
         let _ = forest.insert(tree, 20, 200).unwrap();
         let _ = forest.insert(tree, 10, 100).unwrap();
+
+        let height = forest.height(tree);
+        assert_eq!(height, 2);
+    }
+
+    #[test]
+    fn can_insert_nodes_into_avl_forest_lr() {
+        let arena: NodeArray<AvlNode<i32, i32>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.append().unwrap();
+        let _ = forest.insert(tree, 30, 300).unwrap();
+        let _ = forest.insert(tree, 20, 200).unwrap();
+        let _ = forest.insert(tree, 25, 250).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 2);
