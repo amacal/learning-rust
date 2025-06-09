@@ -2,10 +2,16 @@ mod arena;
 mod avl;
 
 use arena::NodeArray;
-use avl::{AvlForest, AvlNode};
+use avl::{AvlForest, AvlNode, AvlAugment};
+
+impl AvlAugment<i32, i32> for i32 {
+    fn augment(value: &i32, left: Option<&i32>, right: Option<&i32>) -> i32 {
+        value + left.unwrap_or(&0) + right.unwrap_or(&0)
+    }
+}
 
 fn main() {
-    let arena: NodeArray<AvlNode<i32, i32, i32>, 2_000_000_000> = NodeArray::new();
+    let arena: NodeArray<AvlNode<i32, i32, i32, i32>, 2_000_000_000> = NodeArray::new();
     let mut forest = AvlForest::new(arena);
 
     let root = forest.append(13).unwrap();
