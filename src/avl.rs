@@ -159,28 +159,28 @@ where
         let idx = self.arena.insert(N::from(Node::node(key, value)))?;
 
         // find the root of the tree
-        let parent = unsafe { self.arena.get_unchecked(tree).into().0.get_root() };
+        let parent = unsafe { self.get_ref(tree).get_root() };
 
         // trigger recursive insertion, may rotate the root
         let rotated = unsafe { self.insert_recursive(parent, idx, key) & !GREW_MASK };
 
         // update the root of the tree if it was rotated
-        unsafe { self.arena.get_unchecked_mut(tree).into().0.set_root(rotated) };
+        unsafe { self.get_mut(tree).set_root(rotated) };
 
         // return the index of the newly inserted node
         return Some(idx);
     }
 
     pub fn root(&self, tree: u32) -> u32 {
-        unsafe { self.arena.get_unchecked(tree).into().0.get_root() }
+        unsafe { self.get_ref(tree).get_root() }
     }
 
     pub fn value(&self, node: u32) -> V {
-        unsafe { self.arena.get_unchecked(node).into().0.get_value() }
+        unsafe { self.get_ref(node).get_value() }
     }
 
     pub fn augmented(&self, node: u32) -> G {
-        unsafe { self.arena.get_unchecked(node).into().0.get_augmented() }
+        unsafe { self.get_ref(node).get_augmented() }
     }
 
     pub fn height(&self, tree: u32) -> u32 {
@@ -188,7 +188,7 @@ where
         let mut height = 0;
 
         // and the root of the tree
-        let mut idx = unsafe { self.arena.get_unchecked(tree).into().0.get_root() };
+        let mut idx = unsafe { self.get_ref(tree).get_root() };
 
         unsafe {
             while idx > 0 {
@@ -196,9 +196,9 @@ where
                 height += 1;
 
                 // we are always picking up the longer branch relying on the balance
-                idx = match self.arena.get_unchecked(idx).into().0.get_balance() {
-                    Balance::Equal | Balance::LeftHeavy => self.arena.get_unchecked(idx).into().0.get_left(),
-                    Balance::RightHeavy => self.arena.get_unchecked(idx).into().0.get_right(),
+                idx = match self.get_ref(idx).get_balance() {
+                    Balance::Equal | Balance::LeftHeavy => self.get_ref(idx).get_left(),
+                    Balance::RightHeavy => self.get_ref(idx).get_right(),
                 }
             }
         }
@@ -206,25 +206,35 @@ where
         return height;
     }
 
+    unsafe fn get_ref(&self, node: u32) -> &Node<T, K, V, G> {
+        let node: &N = unsafe { self.arena.get_unchecked(node) };
+        let avl: &AvlNode<T, K, V, G> = node.into();
+
+        return &avl.0;
+    }
+
+    unsafe fn get_mut(&mut self, node: u32) -> &mut Node<T, K, V, G> {
+        let node: &mut N = unsafe { self.arena.get_unchecked_mut(node) };
+        let avl: &mut AvlNode<T, K, V, G> = node.into();
+
+        return &mut avl.0;
+    }
+
     unsafe fn update_augmented(&mut self, node: u32) {
         // we need to find left and right children indices
-        let left: u32 = unsafe { self.arena.get_unchecked(node).into().0.get_left() };
-        let right: u32 = unsafe { self.arena.get_unchecked(node).into().0.get_right() };
+        let left: u32 = unsafe { self.get_ref(node).get_left() };
+        let right: u32 = unsafe { self.get_ref(node).get_right() };
 
-        // if the left or right index is not 0, we can get the nodes
-        let left: Option<&N> = if left == 0 { None } else { Some(unsafe { self.arena.get_unchecked(left) }) };
-        let right: Option<&N> = if right == 0 { None } else { Some(unsafe { self.arena.get_unchecked(right) }) };
-
-        // if the left or right node is not None, we can get augmented values
-        let left: Option<G> = if let Some(left) = left { Some(left.into().0.get_augmented()) } else { None };
-        let right: Option<G> = if let Some(right) = right { Some(right.into().0.get_augmented()) } else { None };
+        // if the left or right index is not 0, we can get the values
+        let left = if left == 0 { None } else { Some(unsafe { self.get_ref(left).get_augmented() }) };
+        let right = if right == 0 { None } else { Some(unsafe { self.get_ref(right).get_augmented() }) };
 
         // now we can get the value of the current node and augment it
-        let value = unsafe { self.arena.get_unchecked(node).into().0.get_value() };
+        let value = unsafe { self.get_ref(node).get_value() };
         let augmented = G::augment(&value, left.as_ref(), right.as_ref());
 
         // and finally we can set the augmented value of the current node
-        unsafe { self.arena.get_unchecked_mut(node).into().0.set_augmented(augmented) };
+        unsafe { self.get_mut(node).set_augmented(augmented) };
     }
 
     unsafe fn insert_recursive(&mut self, parent: u32, node: u32, key: K) -> u32 {
@@ -235,32 +245,32 @@ where
         }
 
         // we are ok with copying the parent node here, the variable is read-only
-        let (idx, parent) = (parent, unsafe { self.arena.get_unchecked(parent) });
+        let (idx, parent) = (parent, unsafe { self.get_ref(parent) });
 
         unsafe {
-            if key <= parent.into().0.get_key() {
-                println!("Inserting {:?} into left subtree of {:?}", node, parent.into().0.get_value());
-                let left = self.insert_recursive(parent.into().0.get_left(), node, key);
+            if key <= parent.get_key() {
+                println!("Inserting {:?} into left subtree of {:?}", node, parent.get_value());
+                let left = self.insert_recursive(parent.get_left(), node, key);
                 let (left, grew) = (left & !GREW_MASK, left & GREW_MASK);
 
-                self.arena.get_unchecked_mut(idx).into().0.set_left(left);
+                self.get_mut(idx).set_left(left);
                 self.update_augmented(idx);
 
                 if grew == 0 {
                     return idx;
                 }
 
-                match self.arena.get_unchecked(idx).into().0.get_balance() {
+                match self.get_ref(idx).get_balance() {
                     Balance::Equal => {
                         println!("Setting balance to Less for node {:?}", idx);
-                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Balance::LeftHeavy);
+                        self.get_mut(idx).set_balance(Balance::LeftHeavy);
                         return idx | GREW_MASK;
                     }
                     Balance::RightHeavy => {
                         println!("Setting balance to Equal for node {:?}", idx);
-                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Balance::Equal);
+                        self.get_mut(idx).set_balance(Balance::Equal);
                     }
-                    Balance::LeftHeavy => match self.arena.get_unchecked(left).into().0.get_balance() {
+                    Balance::LeftHeavy => match self.get_ref(left).get_balance() {
                         Balance::LeftHeavy => {
                             println!("Rotating left-left case at node {:?}", idx);
                             return self.rotate_ll(idx);
@@ -272,28 +282,28 @@ where
                     },
                 }
             } else {
-                println!("Inserting {:?} into right subtree of {:?}", node, parent.into().0.get_value());
-                let right = self.insert_recursive(parent.into().0.get_right(), node, key);
+                println!("Inserting {:?} into right subtree of {:?}", node, parent.get_value());
+                let right = self.insert_recursive(parent.get_right(), node, key);
                 let (right, grew) = (right & !GREW_MASK, right & GREW_MASK);
 
-                self.arena.get_unchecked_mut(idx).into().0.set_right(right);
+                self.get_mut(idx).set_right(right);
                 self.update_augmented(idx);
 
                 if grew == 0 {
                     return idx;
                 }
 
-                match self.arena.get_unchecked(idx).into().0.get_balance() {
+                match self.get_ref(idx).get_balance() {
                     Balance::Equal => {
                         println!("Setting balance to Greater for node {:?}", idx);
-                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Balance::RightHeavy);
+                        self.get_mut(idx).set_balance(Balance::RightHeavy);
                         return idx | GREW_MASK;
                     }
                     Balance::LeftHeavy => {
                         println!("Setting balance to Equal for node {:?}", idx);
-                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Balance::Equal);
+                        self.get_mut(idx).set_balance(Balance::Equal);
                     }
-                    Balance::RightHeavy => match self.arena.get_unchecked(right).into().0.get_balance() {
+                    Balance::RightHeavy => match self.get_ref(right).get_balance() {
                         Balance::RightHeavy => {
                             println!("Rotating right-right case at node {:?}", idx);
                             return self.rotate_rr(idx);
@@ -321,29 +331,16 @@ where
     fn rotate_ll(&mut self, z: u32) -> u32 {
         unsafe {
             // get indices of the nodes involved in the rotation
-            let y = self.arena.get_unchecked(z).into().0.get_left();
-            let a = self.arena.get_unchecked(y).into().0.get_right();
+            let y = self.get_ref(z).get_left();
+            let a = self.get_ref(y).get_right();
 
             // relink the nodes
-            self.arena.get_unchecked_mut(z).into().0.set_left(a);
-            self.arena.get_unchecked_mut(y).into().0.set_right(z);
+            self.get_mut(z).set_left(a);
+            self.get_mut(y).set_right(z);
 
             // adjust balances of z and y
-            self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
-            self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
-
-            // match self.arena.get_unchecked(y).into().0.get_balance() {
-            //     Balance::Equal => {
-            //     }
-            //     Balance::RightHeavy => {
-            //         assert!(false);
-            //         self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::LeftHeavy);
-            //         self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::RightHeavy);
-            //     }
-            //     Balance::LeftHeavy => {
-            //         assert!(false);
-            //     }
-            // }
+            self.get_mut(z).set_balance(Balance::Equal);
+            self.get_mut(y).set_balance(Balance::Equal);
 
             // update the augmented values of the nodes
             self.update_augmented(z);
@@ -367,37 +364,37 @@ where
     unsafe fn rotate_lr(&mut self, z: u32) -> u32 {
         unsafe {
             // extract all nodes involved in the rotations
-            let y = self.arena.get_unchecked(z).into().0.get_left();
-            let x = self.arena.get_unchecked(y).into().0.get_right();
-            let a = self.arena.get_unchecked(x).into().0.get_left();
-            let b = self.arena.get_unchecked(x).into().0.get_right();
+            let y = self.get_ref(z).get_left();
+            let x = self.get_ref(y).get_right();
+            let a = self.get_ref(x).get_left();
+            let b = self.get_ref(x).get_right();
 
             // first rotation: y becomes left child of x
-            self.arena.get_unchecked_mut(y).into().0.set_right(a);
-            self.arena.get_unchecked_mut(x).into().0.set_left(y);
+            self.get_mut(y).set_right(a);
+            self.get_mut(x).set_left(y);
 
             // second rotation: x becomes new root of the subtree
-            self.arena.get_unchecked_mut(z).into().0.set_left(b);
-            self.arena.get_unchecked_mut(x).into().0.set_right(z);
+            self.get_mut(z).set_left(b);
+            self.get_mut(x).set_right(z);
 
             // adjust all balances
-            match self.arena.get_unchecked(x).into().0.get_balance() {
+            match self.get_ref(x).get_balance() {
                 Balance::LeftHeavy => {
-                    self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::RightHeavy);
-                    self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
+                    self.get_mut(z).set_balance(Balance::RightHeavy);
+                    self.get_mut(y).set_balance(Balance::Equal);
                 }
                 Balance::RightHeavy => {
-                    self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
-                    self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::LeftHeavy);
+                    self.get_mut(z).set_balance(Balance::Equal);
+                    self.get_mut(y).set_balance(Balance::LeftHeavy);
                 }
                 Balance::Equal => {
-                    self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
-                    self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
+                    self.get_mut(z).set_balance(Balance::Equal);
+                    self.get_mut(y).set_balance(Balance::Equal);
                 }
             }
 
             // not forget about the balance of x
-            self.arena.get_unchecked_mut(x).into().0.set_balance(Balance::Equal);
+            self.get_mut(x).set_balance(Balance::Equal);
 
             // update the augmented values of the nodes
             self.update_augmented(z);
@@ -420,29 +417,16 @@ where
     fn rotate_rr(&mut self, z: u32) -> u32 {
         unsafe {
             // get indices of the nodes involved in the rotation
-            let y = self.arena.get_unchecked(z).into().0.get_right();
-            let a = self.arena.get_unchecked(y).into().0.get_left();
+            let y = self.get_ref(z).get_right();
+            let a = self.get_ref(y).get_left();
 
             // relink the nodes
-            self.arena.get_unchecked_mut(z).into().0.set_right(a);
-            self.arena.get_unchecked_mut(y).into().0.set_left(z);
+            self.get_mut(z).set_right(a);
+            self.get_mut(y).set_left(z);
 
             // adjust balances of z and y
-            self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
-            self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
-
-            // match self.arena.get_unchecked(y).into().0.get_balance() {
-            //     Balance::RightHeavy => {
-            //     }
-            //     Balance::Equal => {
-            //         assert!(false);
-            //         self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::RightHeavy);
-            //         self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::LeftHeavy);
-            //     }
-            //     Balance::LeftHeavy => {
-            //         assert!(false);
-            //     }
-            // }
+            self.get_mut(z).set_balance(Balance::Equal);
+            self.get_mut(y).set_balance(Balance::Equal);
 
             // update the augmented values of the nodes
             self.update_augmented(z);
@@ -467,37 +451,37 @@ where
     //
     unsafe fn rotate_rl(&mut self, z: u32) -> u32 {
         // extract all nodes involved in the rotations
-        let y = self.arena.get_unchecked(z).into().0.get_right();
-        let x = self.arena.get_unchecked(y).into().0.get_left();
-        let a = self.arena.get_unchecked(x).into().0.get_left();
-        let b = self.arena.get_unchecked(x).into().0.get_right();
+        let y = self.get_ref(z).get_right();
+        let x = self.get_ref(y).get_left();
+        let a = self.get_ref(x).get_left();
+        let b = self.get_ref(x).get_right();
 
         // first rotation: y becomes right child of x
-        self.arena.get_unchecked_mut(y).into().0.set_left(b);
-        self.arena.get_unchecked_mut(x).into().0.set_right(y);
+        self.get_mut(y).set_left(b);
+        self.get_mut(x).set_right(y);
 
         // second rotation: x becomes new root of subtree
-        self.arena.get_unchecked_mut(z).into().0.set_right(a);
-        self.arena.get_unchecked_mut(x).into().0.set_left(z);
+        self.get_mut(z).set_right(a);
+        self.get_mut(x).set_left(z);
 
         // adjust balances
-        match self.arena.get_unchecked(x).into().0.get_balance() {
+        match self.get_ref(x).get_balance() {
             Balance::LeftHeavy => {
-                self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
-                self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::RightHeavy);
+                self.get_mut(z).set_balance(Balance::Equal);
+                self.get_mut(y).set_balance(Balance::RightHeavy);
             }
             Balance::RightHeavy => {
-                self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::LeftHeavy);
-                self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
+                self.get_mut(z).set_balance(Balance::LeftHeavy);
+                self.get_mut(y).set_balance(Balance::Equal);
             }
             Balance::Equal => {
-                self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
-                self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
+                self.get_mut(z).set_balance(Balance::Equal);
+                self.get_mut(y).set_balance(Balance::Equal);
             }
         }
 
         // not forget about the balance of x
-        self.arena.get_unchecked_mut(x).into().0.set_balance(Balance::Equal);
+        self.get_mut(x).set_balance(Balance::Equal);
 
         // update the augmented values of the nodes
         self.update_augmented(z);
@@ -531,13 +515,13 @@ where
             return;
         }
 
-        let node_ref = unsafe { self.arena.get_unchecked(node).into() };
-        let key = node_ref.0.get_key();
-        let value = node_ref.0.get_value();
-        let aug = node_ref.0.get_augmented();
-        let balance = node_ref.0.get_balance();
-        let left = node_ref.0.get_left();
-        let right = node_ref.0.get_right();
+        let node_ref = unsafe { self.get_ref(node) };
+        let key = node_ref.get_key();
+        let value = node_ref.get_value();
+        let aug = node_ref.get_augmented();
+        let balance = node_ref.get_balance();
+        let left = node_ref.get_left();
+        let right = node_ref.get_right();
 
         println!("- key: {:?}, val: {:?}, aug: {:?}, bal: {:?}, idx: {}", key, value, aug, balance, node);
 
