@@ -3,10 +3,10 @@ use super::arena::NodeArena;
 use std::{fmt::Debug, marker::PhantomData};
 
 // Indicates that the tree grew by one node
-const GREW_MASK : u32 = 0x80000000;
+const GREW_MASK: u32 = 0x80000000;
 
 // Indicates the balance factor of the node
-const BALANCE_MASK : u32 = 0x80000000;
+const BALANCE_MASK: u32 = 0x80000000;
 
 #[derive(Debug)]
 enum Balance {
@@ -273,11 +273,11 @@ where
                     Balance::LeftHeavy => match self.get_ref(left).get_balance() {
                         Balance::LeftHeavy => {
                             println!("Rotating left-left case at node {:?}", idx);
-                            return self.rotate_ll(idx);
+                            return self.rotate_ll(idx); // didn't grow
                         }
                         Balance::Equal | Balance::RightHeavy => {
                             println!("Rotating left-right case at node {:?}", idx);
-                            return self.rotate_lr(idx);
+                            return self.rotate_lr(idx); // didn't grow
                         }
                     },
                 }
@@ -306,11 +306,11 @@ where
                     Balance::RightHeavy => match self.get_ref(right).get_balance() {
                         Balance::RightHeavy => {
                             println!("Rotating right-right case at node {:?}", idx);
-                            return self.rotate_rr(idx);
+                            return self.rotate_rr(idx); // didn't grow
                         }
                         Balance::Equal | Balance::LeftHeavy => {
                             println!("Rotating right-left case at node {:?}", idx);
-                            return self.rotate_rl(idx);
+                            return self.rotate_rl(idx); // didn't grow
                         }
                     },
                 }
@@ -438,58 +438,58 @@ where
     }
 
     // Rotate right-left case:
-    // - z is right-heavy (+2)
-    // - y is left-heavy (-1)
     //
     //            z (+2)                    x (0)
-    //             \                       / \
+    //     (?) d / \                       / \
     //              y (-1)    =>   (-1/0) z   y (+1/0)
-    //             / \                    \   /
-    //        (?) x   c (?)            (?) a b (?)
+    //             / \                   /\   /\
+    //        (?) x   c (?)             d  a b  c
     //           / \
     //      (?) a   b (?)
     //
     unsafe fn rotate_rl(&mut self, z: u32) -> u32 {
-        // extract all nodes involved in the rotations
-        let y = self.get_ref(z).get_right();
-        let x = self.get_ref(y).get_left();
-        let a = self.get_ref(x).get_left();
-        let b = self.get_ref(x).get_right();
+        unsafe {
+            // extract all nodes involved in the rotations
+            let y = self.get_ref(z).get_right();
+            let x = self.get_ref(y).get_left();
+            let a = self.get_ref(x).get_left();
+            let b = self.get_ref(x).get_right();
 
-        // first rotation: y becomes right child of x
-        self.get_mut(y).set_left(b);
-        self.get_mut(x).set_right(y);
+            // first rotation: y becomes right child of x
+            self.get_mut(y).set_left(b);
+            self.get_mut(x).set_right(y);
 
-        // second rotation: x becomes new root of subtree
-        self.get_mut(z).set_right(a);
-        self.get_mut(x).set_left(z);
+            // second rotation: x becomes new root of subtree
+            self.get_mut(z).set_right(a);
+            self.get_mut(x).set_left(z);
 
-        // adjust balances
-        match self.get_ref(x).get_balance() {
-            Balance::LeftHeavy => {
-                self.get_mut(z).set_balance(Balance::Equal);
-                self.get_mut(y).set_balance(Balance::RightHeavy);
+            // adjust balances
+            match self.get_ref(x).get_balance() {
+                Balance::LeftHeavy => {
+                    self.get_mut(z).set_balance(Balance::Equal);
+                    self.get_mut(y).set_balance(Balance::RightHeavy);
+                }
+                Balance::RightHeavy => {
+                    self.get_mut(z).set_balance(Balance::LeftHeavy);
+                    self.get_mut(y).set_balance(Balance::Equal);
+                }
+                Balance::Equal => {
+                    self.get_mut(z).set_balance(Balance::Equal);
+                    self.get_mut(y).set_balance(Balance::Equal);
+                }
             }
-            Balance::RightHeavy => {
-                self.get_mut(z).set_balance(Balance::LeftHeavy);
-                self.get_mut(y).set_balance(Balance::Equal);
-            }
-            Balance::Equal => {
-                self.get_mut(z).set_balance(Balance::Equal);
-                self.get_mut(y).set_balance(Balance::Equal);
-            }
+
+            // not forget about the balance of x
+            self.get_mut(x).set_balance(Balance::Equal);
+
+            // update the augmented values of the nodes
+            self.update_augmented(z);
+            self.update_augmented(y);
+            self.update_augmented(x);
+
+            // and x becomes the new root of the subtree
+            return x;
         }
-
-        // not forget about the balance of x
-        self.get_mut(x).set_balance(Balance::Equal);
-
-        // update the augmented values of the nodes
-        self.update_augmented(z);
-        self.update_augmented(y);
-        self.update_augmented(x);
-
-        // and x becomes the new root of the subtree
-        return x;
     }
 }
 
@@ -792,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn can_insert_nodes_into_avl_forest_rl() {
+    fn can_insert_nodes_into_avl_forest_rl_pure() {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
@@ -807,6 +807,48 @@ mod tests {
         let root = forest.root(tree);
         assert_eq!(forest.value(root), 150);
         assert_eq!(forest.augmented(root).0, 450);
+    }
+
+    #[test]
+    fn can_insert_nodes_into_avl_forest_rl_grew_case_1() {
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.append(13).unwrap();
+        let _ = forest.insert(tree, 70, 300u32.into()).unwrap();
+        let _ = forest.insert(tree, 65, 350u32.into()).unwrap();
+        let _ = forest.insert(tree, 80, 200u32.into()).unwrap();
+        let _ = forest.insert(tree, 85, 150u32.into()).unwrap();
+        let _ = forest.insert(tree, 75, 250u32.into()).unwrap();
+        let _ = forest.insert(tree, 77, 230u32.into()).unwrap();
+
+        let height = forest.height(tree);
+        assert_eq!(height, 3);
+
+        let root = forest.root(tree);
+        assert_eq!(forest.value(root), 250);
+        assert_eq!(forest.augmented(root).0, 1480);
+    }
+
+    #[test]
+    fn can_insert_nodes_into_avl_forest_rl_grew_case_2() {
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.append(13).unwrap();
+        let _ = forest.insert(tree, 70, 300u32.into()).unwrap();
+        let _ = forest.insert(tree, 65, 350u32.into()).unwrap();
+        let _ = forest.insert(tree, 80, 200u32.into()).unwrap();
+        let _ = forest.insert(tree, 85, 150u32.into()).unwrap();
+        let _ = forest.insert(tree, 75, 250u32.into()).unwrap();
+        let _ = forest.insert(tree, 73, 270u32.into()).unwrap();
+
+        let height = forest.height(tree);
+        assert_eq!(height, 3);
+
+        let root = forest.root(tree);
+        assert_eq!(forest.value(root), 250);
+        assert_eq!(forest.augmented(root).0, 1520);
     }
 
     #[test]
