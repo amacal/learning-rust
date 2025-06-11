@@ -1,12 +1,19 @@
 use super::arena::NodeArena;
 
-use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
+use std::{fmt::Debug, marker::PhantomData};
 
 // Indicates that the tree grew by one node
 const GREW_MASK : u32 = 0x80000000;
 
 // Indicates the balance factor of the node
 const BALANCE_MASK : u32 = 0x80000000;
+
+#[derive(Debug)]
+enum Balance {
+    LeftHeavy,
+    Equal,
+    RightHeavy,
+}
 
 #[derive(Copy, Clone)]
 struct Tree<T: Copy> {
@@ -69,33 +76,33 @@ impl<T: Copy, K: Copy + PartialOrd, V: Copy, G: Copy + AvlAugment<V, G>> Node<T,
         self.item.augment = augment;
     }
 
-    fn get_balance(&self) -> Ordering {
+    fn get_balance(&self) -> Balance {
         let left = unsafe { self.item.left & BALANCE_MASK };
         let right = unsafe { self.item.right & BALANCE_MASK };
 
         if left == right {
-            return Ordering::Equal;
+            return Balance::Equal;
         }
 
         if left > 0 {
-            return Ordering::Less;
+            return Balance::LeftHeavy;
         }
 
-        return Ordering::Greater;
+        return Balance::RightHeavy;
     }
 
-    fn set_balance(&mut self, balance: Ordering) {
+    fn set_balance(&mut self, balance: Balance) {
         unsafe {
             match balance {
-                Ordering::Equal => {
+                Balance::Equal => {
                     self.item.left &= !BALANCE_MASK;
                     self.item.right &= !BALANCE_MASK;
                 }
-                Ordering::Less => {
+                Balance::LeftHeavy => {
                     self.item.left |= BALANCE_MASK;
                     self.item.right &= !BALANCE_MASK;
                 }
-                Ordering::Greater => {
+                Balance::RightHeavy => {
                     self.item.left &= !BALANCE_MASK;
                     self.item.right |= BALANCE_MASK;
                 }
@@ -190,8 +197,8 @@ where
 
                 // we are always picking up the longer branch relying on the balance
                 idx = match self.arena.get_unchecked(idx).into().0.get_balance() {
-                    Ordering::Equal | Ordering::Less => self.arena.get_unchecked(idx).into().0.get_left(),
-                    Ordering::Greater => self.arena.get_unchecked(idx).into().0.get_right(),
+                    Balance::Equal | Balance::LeftHeavy => self.arena.get_unchecked(idx).into().0.get_left(),
+                    Balance::RightHeavy => self.arena.get_unchecked(idx).into().0.get_right(),
                 }
             }
         }
@@ -244,21 +251,21 @@ where
                 }
 
                 match self.arena.get_unchecked(idx).into().0.get_balance() {
-                    Ordering::Equal => {
+                    Balance::Equal => {
                         println!("Setting balance to Less for node {:?}", idx);
-                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Ordering::Less);
+                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Balance::LeftHeavy);
                         return idx | GREW_MASK;
                     }
-                    Ordering::Greater => {
+                    Balance::RightHeavy => {
                         println!("Setting balance to Equal for node {:?}", idx);
-                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Ordering::Equal);
+                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Balance::Equal);
                     }
-                    Ordering::Less => match self.arena.get_unchecked(left).into().0.get_balance() {
-                        Ordering::Less => {
+                    Balance::LeftHeavy => match self.arena.get_unchecked(left).into().0.get_balance() {
+                        Balance::LeftHeavy => {
                             println!("Rotating left-left case at node {:?}", idx);
                             return self.rotate_ll(idx);
                         }
-                        Ordering::Equal | Ordering::Greater => {
+                        Balance::Equal | Balance::RightHeavy => {
                             println!("Rotating left-right case at node {:?}", idx);
                             return self.rotate_lr(idx);
                         }
@@ -277,21 +284,21 @@ where
                 }
 
                 match self.arena.get_unchecked(idx).into().0.get_balance() {
-                    Ordering::Equal => {
+                    Balance::Equal => {
                         println!("Setting balance to Greater for node {:?}", idx);
-                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Ordering::Greater);
+                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Balance::RightHeavy);
                         return idx | GREW_MASK;
                     }
-                    Ordering::Less => {
+                    Balance::LeftHeavy => {
                         println!("Setting balance to Equal for node {:?}", idx);
-                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Ordering::Equal);
+                        self.arena.get_unchecked_mut(idx).into().0.set_balance(Balance::Equal);
                     }
-                    Ordering::Greater => match self.arena.get_unchecked(right).into().0.get_balance() {
-                        Ordering::Greater => {
+                    Balance::RightHeavy => match self.arena.get_unchecked(right).into().0.get_balance() {
+                        Balance::RightHeavy => {
                             println!("Rotating right-right case at node {:?}", idx);
                             return self.rotate_rr(idx);
                         }
-                        Ordering::Equal | Ordering::Less => {
+                        Balance::Equal | Balance::LeftHeavy => {
                             println!("Rotating right-left case at node {:?}", idx);
                             return self.rotate_rl(idx);
                         }
@@ -322,18 +329,18 @@ where
             self.arena.get_unchecked_mut(y).into().0.set_right(z);
 
             // adjust balances of z and y
-            self.arena.get_unchecked_mut(z).into().0.set_balance(Ordering::Equal);
-            self.arena.get_unchecked_mut(y).into().0.set_balance(Ordering::Equal);
+            self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
+            self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
 
             // match self.arena.get_unchecked(y).into().0.get_balance() {
-            //     Ordering::Equal => {
+            //     Balance::Equal => {
             //     }
-            //     Ordering::Greater => {
+            //     Balance::RightHeavy => {
             //         assert!(false);
-            //         self.arena.get_unchecked_mut(z).into().0.set_balance(Ordering::Less);
-            //         self.arena.get_unchecked_mut(y).into().0.set_balance(Ordering::Greater);
+            //         self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::LeftHeavy);
+            //         self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::RightHeavy);
             //     }
-            //     Ordering::Less => {
+            //     Balance::LeftHeavy => {
             //         assert!(false);
             //     }
             // }
@@ -375,22 +382,22 @@ where
 
             // adjust all balances
             match self.arena.get_unchecked(x).into().0.get_balance() {
-                Ordering::Less => {
-                    self.arena.get_unchecked_mut(z).into().0.set_balance(Ordering::Greater);
-                    self.arena.get_unchecked_mut(y).into().0.set_balance(Ordering::Equal);
+                Balance::LeftHeavy => {
+                    self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::RightHeavy);
+                    self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
                 }
-                Ordering::Greater => {
-                    self.arena.get_unchecked_mut(z).into().0.set_balance(Ordering::Equal);
-                    self.arena.get_unchecked_mut(y).into().0.set_balance(Ordering::Less);
+                Balance::RightHeavy => {
+                    self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
+                    self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::LeftHeavy);
                 }
-                Ordering::Equal => {
-                    self.arena.get_unchecked_mut(z).into().0.set_balance(Ordering::Equal);
-                    self.arena.get_unchecked_mut(y).into().0.set_balance(Ordering::Equal);
+                Balance::Equal => {
+                    self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
+                    self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
                 }
             }
 
             // not forget about the balance of x
-            self.arena.get_unchecked_mut(x).into().0.set_balance(Ordering::Equal);
+            self.arena.get_unchecked_mut(x).into().0.set_balance(Balance::Equal);
 
             // update the augmented values of the nodes
             self.update_augmented(z);
@@ -421,18 +428,18 @@ where
             self.arena.get_unchecked_mut(y).into().0.set_left(z);
 
             // adjust balances of z and y
-            self.arena.get_unchecked_mut(z).into().0.set_balance(Ordering::Equal);
-            self.arena.get_unchecked_mut(y).into().0.set_balance(Ordering::Equal);
+            self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
+            self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
 
             // match self.arena.get_unchecked(y).into().0.get_balance() {
-            //     Ordering::Greater => {
+            //     Balance::RightHeavy => {
             //     }
-            //     Ordering::Equal => {
+            //     Balance::Equal => {
             //         assert!(false);
-            //         self.arena.get_unchecked_mut(z).into().0.set_balance(Ordering::Greater);
-            //         self.arena.get_unchecked_mut(y).into().0.set_balance(Ordering::Less);
+            //         self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::RightHeavy);
+            //         self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::LeftHeavy);
             //     }
-            //     Ordering::Less => {
+            //     Balance::LeftHeavy => {
             //         assert!(false);
             //     }
             // }
@@ -475,22 +482,22 @@ where
 
         // adjust balances
         match self.arena.get_unchecked(x).into().0.get_balance() {
-            Ordering::Less => {
-                self.arena.get_unchecked_mut(z).into().0.set_balance(Ordering::Equal);
-                self.arena.get_unchecked_mut(y).into().0.set_balance(Ordering::Greater);
+            Balance::LeftHeavy => {
+                self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
+                self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::RightHeavy);
             }
-            Ordering::Greater => {
-                self.arena.get_unchecked_mut(z).into().0.set_balance(Ordering::Less);
-                self.arena.get_unchecked_mut(y).into().0.set_balance(Ordering::Equal);
+            Balance::RightHeavy => {
+                self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::LeftHeavy);
+                self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
             }
-            Ordering::Equal => {
-                self.arena.get_unchecked_mut(z).into().0.set_balance(Ordering::Equal);
-                self.arena.get_unchecked_mut(y).into().0.set_balance(Ordering::Equal);
+            Balance::Equal => {
+                self.arena.get_unchecked_mut(z).into().0.set_balance(Balance::Equal);
+                self.arena.get_unchecked_mut(y).into().0.set_balance(Balance::Equal);
             }
         }
 
         // not forget about the balance of x
-        self.arena.get_unchecked_mut(x).into().0.set_balance(Ordering::Equal);
+        self.arena.get_unchecked_mut(x).into().0.set_balance(Balance::Equal);
 
         // update the augmented values of the nodes
         self.update_augmented(z);
