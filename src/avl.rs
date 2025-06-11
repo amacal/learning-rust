@@ -22,7 +22,7 @@ struct Tree<T: Copy> {
 }
 
 #[derive(Copy, Clone)]
-struct Item<K: Copy + PartialOrd, V: Copy, G: Copy> {
+struct Item<K: Copy, V: Copy, G: Copy> {
     key: K,
     value: V,
     augment: G,
@@ -31,20 +31,45 @@ struct Item<K: Copy + PartialOrd, V: Copy, G: Copy> {
 }
 
 #[derive(Copy, Clone)]
-union Node<T: Copy, K: Copy + PartialOrd, V: Copy, G: Copy> {
+union Node<T: Copy, K: Copy, V: Copy, G: Copy> {
     tree: Tree<T>,
     item: Item<K, V, G>,
 }
 
 #[derive(Copy, Clone)]
-pub struct AvlNode<T: Copy, K: Copy + PartialOrd, V: Copy, G: Copy>(Node<T, K, V, G>);
+pub struct AvlNode<T: Copy, K: Copy, V: Copy, G: Copy>(Node<T, K, V, G>);
 
 pub trait AvlAugment<V, G> {
     fn augment(value: &V, left: Option<&G>, right: Option<&G>) -> G;
 }
 
-impl<T: Copy, K: Copy + PartialOrd, V: Copy, G: Copy + AvlAugment<V, G>> Node<T, K, V, G> {
-    fn node(key: K, value: V) -> AvlNode<T, K, V, G> {
+pub trait AvlLogger<K, V> {
+    fn left_insert(parent: (u32, K), node: (u32, K));
+    fn right_insert(parent: (u32, K), node: (u32, K));
+}
+
+pub struct NoLogger {}
+impl<K, V> AvlLogger<K, V> for NoLogger {
+    fn left_insert(_parent: (u32, K), _node: (u32, K)) {}
+    fn right_insert(_parent: (u32, K), _node: (u32, K)) {}
+}
+
+pub struct DebugLogger {}
+impl<K: Debug, V: Debug> AvlLogger<K, V> for DebugLogger {
+    fn left_insert(parent: (u32, K), node: (u32, K)) {
+        println!("left insert node idx={} -> key={:?} under parent idx={} -> key={:?}", node.0, node.1, parent.0, parent.1);
+    }
+
+    fn right_insert(parent: (u32, K), node: (u32, K)) {
+        println!("right insert node idx={} -> key={:?} under parent idx={} -> key={:?}", node.0, node.1, parent.0, parent.1);
+    }
+}
+
+impl<T: Copy, K: Copy, V: Copy, G: Copy> Node<T, K, V, G> {
+    fn node(key: K, value: V) -> AvlNode<T, K, V, G>
+    where
+        G: AvlAugment<V, G>,
+    {
         AvlNode(Node { item: Item { key, value, left: 0, right: 0, augment: G::augment(&value, None, None) } })
     }
 
@@ -80,15 +105,11 @@ impl<T: Copy, K: Copy + PartialOrd, V: Copy, G: Copy + AvlAugment<V, G>> Node<T,
         let left = unsafe { self.item.left & BALANCE_MASK };
         let right = unsafe { self.item.right & BALANCE_MASK };
 
-        if left == right {
-            return Balance::Equal;
+        match (left, right) {
+            (_, BALANCE_MASK) => return Balance::RightHeavy,
+            (BALANCE_MASK, _) => return Balance::LeftHeavy,
+            (_, _) => return Balance::Equal,
         }
-
-        if left > 0 {
-            return Balance::LeftHeavy;
-        }
-
-        return Balance::RightHeavy;
     }
 
     fn set_balance(&mut self, balance: Balance) {
@@ -127,48 +148,47 @@ impl<T: Copy, K: Copy + PartialOrd, V: Copy, G: Copy + AvlAugment<V, G>> Node<T,
     }
 }
 
-pub struct AvlForest<T: Copy, K: Copy + PartialOrd, V: Copy, G: Copy, N: Copy, A: NodeArena<N>> {
+pub struct AvlForest<T: Copy, K: Copy, V: Copy, G: Copy, N: Copy, A: NodeArena<N>, L: AvlLogger<K, V>> {
     arena: A,
     key: PhantomData<K>,
     value: PhantomData<V>,
     augment: PhantomData<G>,
     tree: PhantomData<T>,
     into: PhantomData<N>,
+    logger: PhantomData<L>,
 }
 
-impl<T: Copy, K: Copy + PartialOrd, V: Copy, G: Copy, N: Copy, A: NodeArena<N>> AvlForest<T, K, V, G, N, A> {
+impl<T: Copy, K: Copy, V: Copy, G: Copy, N: Copy, A: NodeArena<N>> AvlForest<T, K, V, G, N, A, NoLogger> {
     pub fn new(arena: A) -> Self {
-        AvlForest { arena, key: PhantomData, value: PhantomData, augment: PhantomData, tree: PhantomData, into: PhantomData }
+        AvlForest { arena, key: PhantomData, value: PhantomData, augment: PhantomData, tree: PhantomData, into: PhantomData, logger: PhantomData }
     }
 }
 
-impl<T: Copy, K: Copy + PartialOrd, V: Copy + Debug, N, G, A: NodeArena<N>> AvlForest<T, K, V, G, N, A>
+impl<T: Copy, K: Copy + Debug, V: Copy + Debug, G: Copy, N: Copy, A: NodeArena<N>> AvlForest<T, K, V, G, N, A, DebugLogger> {
+    pub fn debug(arena: A) -> Self {
+        AvlForest { arena, key: PhantomData, value: PhantomData, augment: PhantomData, tree: PhantomData, into: PhantomData, logger: PhantomData }
+    }
+}
+
+impl<T: Copy, K: Copy, V: Copy, N, G, A: NodeArena<N>, L: AvlLogger<K, V>> AvlForest<T, K, V, G, N, A, L>
 where
-    G: Copy + AvlAugment<V, G>,
-    N: Copy + From<AvlNode<T, K, V, G>> + Into<AvlNode<T, K, V, G>>,
+    G: Copy,
+    N: Copy + Into<AvlNode<T, K, V, G>>,
     for<'a> &'a N: Into<&'a AvlNode<T, K, V, G>>,
     for<'a> &'a mut N: Into<&'a mut AvlNode<T, K, V, G>>,
 {
-    pub fn append(&mut self, value: T) -> Option<u32> {
-        // return the index of the newly inserted node as the root of the tree
-        self.arena.insert(N::from(Node::tree(value)))
+    unsafe fn get_ref(&self, node: u32) -> &Node<T, K, V, G> {
+        let node: &N = unsafe { self.arena.get_unchecked(node) };
+        let avl: &AvlNode<T, K, V, G> = node.into();
+
+        return &avl.0;
     }
 
-    pub fn insert(&mut self, tree: u32, key: K, value: V) -> Option<u32> {
-        // allocate a new node in the arena
-        let idx = self.arena.insert(N::from(Node::node(key, value)))?;
+    unsafe fn get_mut(&mut self, node: u32) -> &mut Node<T, K, V, G> {
+        let node: &mut N = unsafe { self.arena.get_unchecked_mut(node) };
+        let avl: &mut AvlNode<T, K, V, G> = node.into();
 
-        // find the root of the tree
-        let parent = unsafe { self.get_ref(tree).get_root() };
-
-        // trigger recursive insertion, may rotate the root
-        let rotated = unsafe { self.insert_recursive(parent, idx, key) & !GREW_MASK };
-
-        // update the root of the tree if it was rotated
-        unsafe { self.get_mut(tree).set_root(rotated) };
-
-        // return the index of the newly inserted node
-        return Some(idx);
+        return &mut avl.0;
     }
 
     pub fn root(&self, tree: u32) -> u32 {
@@ -184,11 +204,9 @@ where
     }
 
     pub fn height(&self, tree: u32) -> u32 {
-        // initially we start with the height of 0
+        // initially we start with the height of 0 and the root of the tree
         let mut height = 0;
-
-        // and the root of the tree
-        let mut idx = unsafe { self.get_ref(tree).get_root() };
+        let mut idx = self.root(tree);
 
         unsafe {
             while idx > 0 {
@@ -205,25 +223,44 @@ where
 
         return height;
     }
+}
 
-    unsafe fn get_ref(&self, node: u32) -> &Node<T, K, V, G> {
-        let node: &N = unsafe { self.arena.get_unchecked(node) };
-        let avl: &AvlNode<T, K, V, G> = node.into();
-
-        return &avl.0;
+impl<T: Copy, K: Copy, V: Copy, N, G, A: NodeArena<N>, L: AvlLogger<K, V>> AvlForest<T, K, V, G, N, A, L>
+where
+    G: Copy + AvlAugment<V, G>,
+    N: Copy + From<AvlNode<T, K, V, G>> + Into<AvlNode<T, K, V, G>>,
+    for<'a> &'a N: Into<&'a AvlNode<T, K, V, G>>,
+    for<'a> &'a mut N: Into<&'a mut AvlNode<T, K, V, G>>,
+{
+    pub fn append(&mut self, value: T) -> Option<u32> {
+        // return the index of the newly inserted node as the root of the tree
+        self.arena.insert(N::from(Node::tree(value)))
     }
 
-    unsafe fn get_mut(&mut self, node: u32) -> &mut Node<T, K, V, G> {
-        let node: &mut N = unsafe { self.arena.get_unchecked_mut(node) };
-        let avl: &mut AvlNode<T, K, V, G> = node.into();
+    pub fn insert(&mut self, tree: u32, key: K, value: V) -> Option<u32>
+    where
+        K: PartialOrd,
+    {
+        // allocate a new node in the arena
+        let idx = self.arena.insert(N::from(Node::node(key, value)))?;
 
-        return &mut avl.0;
+        // find the root of the tree
+        let parent = unsafe { self.get_ref(tree).get_root() };
+
+        // trigger recursive insertion, may rotate the root
+        let rotated = unsafe { self.insert_recursive(parent, idx, key) & !GREW_MASK };
+
+        // update the root of the tree if it was rotated
+        unsafe { self.get_mut(tree).set_root(rotated) };
+
+        // return the index of the newly inserted node
+        return Some(idx);
     }
 
     unsafe fn update_augmented(&mut self, node: u32) {
         // we need to find left and right children indices
-        let left: u32 = unsafe { self.get_ref(node).get_left() };
-        let right: u32 = unsafe { self.get_ref(node).get_right() };
+        let left = unsafe { self.get_ref(node).get_left() };
+        let right = unsafe { self.get_ref(node).get_right() };
 
         // if the left or right index is not 0, we can get the values
         let left = if left == 0 { None } else { Some(unsafe { self.get_ref(left).get_augmented() }) };
@@ -237,7 +274,10 @@ where
         unsafe { self.get_mut(node).set_augmented(augmented) };
     }
 
-    unsafe fn insert_recursive(&mut self, parent: u32, node: u32, key: K) -> u32 {
+    unsafe fn insert_recursive(&mut self, parent: u32, node: u32, key: K) -> u32
+    where
+        K: PartialOrd,
+    {
         // recursion base case
         if parent == 0 {
             // the subtree grew by one node
@@ -249,7 +289,7 @@ where
 
         unsafe {
             if key <= parent.get_key() {
-                println!("Inserting {:?} into left subtree of {:?}", node, parent.get_value());
+                L::left_insert((idx, parent.get_key()), (node, key));
                 let left = self.insert_recursive(parent.get_left(), node, key);
                 let (left, grew) = (left & !GREW_MASK, left & GREW_MASK);
 
@@ -282,7 +322,7 @@ where
                     },
                 }
             } else {
-                println!("Inserting {:?} into right subtree of {:?}", node, parent.get_value());
+                L::right_insert((idx, parent.get_key()), (node, key));
                 let right = self.insert_recursive(parent.get_right(), node, key);
                 let (right, grew) = (right & !GREW_MASK, right & GREW_MASK);
 
@@ -493,7 +533,7 @@ where
     }
 }
 
-impl<T: Copy + Debug, K: Copy + Debug + PartialOrd, V: Copy + Debug, N, G, A: NodeArena<N>> AvlForest<T, K, V, G, N, A>
+impl<T: Copy + Debug, K: Copy + Debug + PartialOrd, V: Copy + Debug, N, G, A: NodeArena<N>> AvlForest<T, K, V, G, N, A, DebugLogger>
 where
     G: Copy + Debug + AvlAugment<V, G>,
     N: Copy + From<AvlNode<T, K, V, G>> + Into<AvlNode<T, K, V, G>>,
@@ -861,7 +901,7 @@ mod tests {
 
         for _ in 0..number_of_trials {
             let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
-            let mut forest = AvlForest::new(arena);
+            let mut forest = AvlForest::debug(arena);
 
             let mut rng = rand::rng();
             let tree = forest.append(13).unwrap();
@@ -892,7 +932,7 @@ mod tests {
 
         for _ in 0..number_of_trials {
             let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
-            let mut forest = AvlForest::new(arena);
+            let mut forest = AvlForest::debug(arena);
 
             let mut rng = rand::rng();
             let tree = forest.append(13).unwrap();
@@ -923,7 +963,7 @@ mod tests {
 
         for _ in 0..number_of_trials {
             let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
-            let mut forest = AvlForest::new(arena);
+            let mut forest = AvlForest::debug(arena);
 
             let mut rng = rand::rng();
             let tree = forest.append(13).unwrap();
@@ -992,7 +1032,7 @@ mod tests {
     #[test]
     fn can_build_avl_tree_of_sixty_three_nodes_case_1() {
         let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 200> = NodeArray::new();
-        let mut forest = AvlForest::new(arena);
+        let mut forest = AvlForest::debug(arena);
 
         let items: [i16; 63] = [
             5070, -8319, -17104, -24662, -28470, -28597, -31027, -26592, -21682, -22041, -24460, -22552, -21841, -18621, -17183, -15431, -16194, -16420,
