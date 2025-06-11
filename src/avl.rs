@@ -1,6 +1,5 @@
 use super::arena::NodeArena;
 
-use rand::Rng;
 use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
 
 #[derive(Copy, Clone)]
@@ -540,69 +539,102 @@ where
 mod tests {
     use super::*;
     use crate::arena::NodeArray;
+    use rand::Rng;
 
     #[derive(Copy, Clone, Debug)]
-    struct TestI32(i32);
+    struct TestU32(u32);
 
-    impl AvlAugment<i32, TestI32> for TestI32 {
-        fn augment(value: &i32, left: Option<&TestI32>, right: Option<&TestI32>) -> TestI32 {
+    impl AvlAugment<u32, TestU32> for TestU32 {
+        fn augment(value: &u32, left: Option<&TestU32>, right: Option<&TestU32>) -> TestU32 {
             let left = left.map_or(0, |l| l.0);
             let right = right.map_or(0, |r| r.0);
 
-            return TestI32(left + right + value);
+            return TestU32(left + right + value);
         }
     }
 
-    impl Default for TestI32 {
+    impl Default for TestU32 {
         fn default() -> Self {
-            TestI32(0)
+            TestU32(0)
         }
     }
 
-    impl From<i32> for TestI32 {
-        fn from(value: i32) -> Self {
-            TestI32(value)
+    impl From<u32> for TestU32 {
+        fn from(value: u32) -> Self {
+            TestU32(value)
         }
     }
 
     #[derive(Copy, Clone)]
     union Foreign {
-        avl: AvlNode<i32, i32, i32, TestI32>,
+        avl: AvlNode<i32, i32, u32, TestU32>,
     }
 
-    impl From<AvlNode<i32, i32, i32, TestI32>> for Foreign {
-        fn from(node: AvlNode<i32, i32, i32, TestI32>) -> Self {
+    impl From<AvlNode<i32, i32, u32, TestU32>> for Foreign {
+        fn from(node: AvlNode<i32, i32, u32, TestU32>) -> Self {
             Foreign { avl: node }
         }
     }
 
-    impl Into<AvlNode<i32, i32, i32, TestI32>> for Foreign {
-        fn into(self) -> AvlNode<i32, i32, i32, TestI32> {
+    impl Into<AvlNode<i32, i32, u32, TestU32>> for Foreign {
+        fn into(self) -> AvlNode<i32, i32, u32, TestU32> {
             unsafe { self.avl }
         }
     }
 
-    impl<'a> Into<&'a AvlNode<i32, i32, i32, TestI32>> for &'a Foreign {
-        fn into(self) -> &'a AvlNode<i32, i32, i32, TestI32> {
+    impl<'a> Into<&'a AvlNode<i32, i32, u32, TestU32>> for &'a Foreign {
+        fn into(self) -> &'a AvlNode<i32, i32, u32, TestU32> {
             unsafe { &self.avl }
         }
     }
 
-    impl<'a> Into<&'a mut AvlNode<i32, i32, i32, TestI32>> for &'a mut Foreign {
-        fn into(self) -> &'a mut AvlNode<i32, i32, i32, TestI32> {
+    impl<'a> Into<&'a mut AvlNode<i32, i32, u32, TestU32>> for &'a mut Foreign {
+        fn into(self) -> &'a mut AvlNode<i32, i32, u32, TestU32> {
             unsafe { &mut self.avl }
         }
     }
 
+    fn avl_max_height(nodes: u32) -> u32 {
+        if nodes == 0 {
+            return 0;
+        }
+
+        let (mut prev1, mut prev2) = (0, 1);
+        let mut height = 1;
+
+        loop {
+            let next = prev1 + prev2 + 1;
+            if next > nodes {
+                break;
+            }
+
+            prev1 = prev2;
+            prev2 = next;
+            height += 1;
+        }
+
+        return height;
+    }
+
+    #[test]
+    fn can_compute_max_height() {
+        assert_eq!(avl_max_height(0), 0);
+        assert_eq!(avl_max_height(1), 1);
+        assert_eq!(avl_max_height(3), 2);
+        assert_eq!(avl_max_height(7), 4);
+        assert_eq!(avl_max_height(15), 5);
+        assert_eq!(avl_max_height(63), 8);
+    }
+
     #[test]
     fn can_create_avl_forest_with_a_new_root() {
-        let arena: NodeArray<AvlNode<i32, i32, i32, TestI32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13);
         assert!(tree.is_some());
 
-        let root = forest.insert(tree.unwrap(), 1, 2.into());
+        let root = forest.insert(tree.unwrap(), 1, 2u32.into());
         assert!(root.is_some());
 
         let height = forest.height(tree.unwrap());
@@ -617,7 +649,7 @@ mod tests {
         let tree = forest.append(13);
         assert!(tree.is_some());
 
-        let root = forest.insert(tree.unwrap(), 1, 2.into());
+        let root = forest.insert(tree.unwrap(), 1, 2u32.into());
         assert!(root.is_some());
 
         let height = forest.height(tree.unwrap());
@@ -626,13 +658,13 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_ll_pure() {
-        let arena: NodeArray<AvlNode<i32, i32, i32, TestI32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 30, 300.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200.into()).unwrap();
-        let _ = forest.insert(tree, 10, 100.into()).unwrap();
+        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert(tree, 10, 100u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 2);
@@ -644,16 +676,16 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_ll_grew() {
-        let arena: NodeArray<AvlNode<i32, i32, i32, TestI32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 30, 300.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200.into()).unwrap();
-        let _ = forest.insert(tree, 35, 350.into()).unwrap();
-        let _ = forest.insert(tree, 10, 100.into()).unwrap();
-        let _ = forest.insert(tree, 25, 250.into()).unwrap();
-        let _ = forest.insert(tree, 5, 50.into()).unwrap();
+        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert(tree, 35, 350u32.into()).unwrap();
+        let _ = forest.insert(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert(tree, 25, 250u32.into()).unwrap();
+        let _ = forest.insert(tree, 5, 50u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 3);
@@ -665,13 +697,13 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_lr_pure() {
-        let arena: NodeArray<AvlNode<i32, i32, i32, TestI32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 30, 300.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200.into()).unwrap();
-        let _ = forest.insert(tree, 25, 250.into()).unwrap();
+        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert(tree, 25, 250u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 2);
@@ -683,16 +715,16 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_lr_grew_case_1() {
-        let arena: NodeArray<AvlNode<i32, i32, i32, TestI32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 30, 300.into()).unwrap();
-        let _ = forest.insert(tree, 35, 350.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200.into()).unwrap();
-        let _ = forest.insert(tree, 15, 150.into()).unwrap();
-        let _ = forest.insert(tree, 25, 250.into()).unwrap();
-        let _ = forest.insert(tree, 23, 230.into()).unwrap();
+        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert(tree, 35, 350u32.into()).unwrap();
+        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert(tree, 15, 150u32.into()).unwrap();
+        let _ = forest.insert(tree, 25, 250u32.into()).unwrap();
+        let _ = forest.insert(tree, 23, 230u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 3);
@@ -704,16 +736,16 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_lr_grew_case_2() {
-        let arena: NodeArray<AvlNode<i32, i32, i32, TestI32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 30, 300.into()).unwrap();
-        let _ = forest.insert(tree, 35, 350.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200.into()).unwrap();
-        let _ = forest.insert(tree, 15, 150.into()).unwrap();
-        let _ = forest.insert(tree, 25, 250.into()).unwrap();
-        let _ = forest.insert(tree, 27, 270.into()).unwrap();
+        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert(tree, 35, 350u32.into()).unwrap();
+        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert(tree, 15, 150u32.into()).unwrap();
+        let _ = forest.insert(tree, 25, 250u32.into()).unwrap();
+        let _ = forest.insert(tree, 27, 270u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 3);
@@ -725,13 +757,13 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_rr_pure() {
-        let arena: NodeArray<AvlNode<i32, i32, i32, TestI32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 10, 100.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200.into()).unwrap();
-        let _ = forest.insert(tree, 30, 300.into()).unwrap();
+        let _ = forest.insert(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 2);
@@ -743,16 +775,16 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_rr_grew() {
-        let arena: NodeArray<AvlNode<i32, i32, i32, TestI32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 10, 100.into()).unwrap();
-        let _ = forest.insert(tree, 5, 50.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200.into()).unwrap();
-        let _ = forest.insert(tree, 15, 150.into()).unwrap();
-        let _ = forest.insert(tree, 25, 250.into()).unwrap();
-        let _ = forest.insert(tree, 23, 230.into()).unwrap();
+        let _ = forest.insert(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert(tree, 5, 50u32.into()).unwrap();
+        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert(tree, 15, 150u32.into()).unwrap();
+        let _ = forest.insert(tree, 25, 250u32.into()).unwrap();
+        let _ = forest.insert(tree, 23, 230u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 3);
@@ -764,13 +796,13 @@ mod tests {
 
     #[test]
     fn can_insert_nodes_into_avl_forest_rl() {
-        let arena: NodeArray<AvlNode<i32, i32, i32, TestI32>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 10, 100.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200.into()).unwrap();
-        let _ = forest.insert(tree, 15, 150.into()).unwrap();
+        let _ = forest.insert(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert(tree, 15, 150u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 2);
@@ -782,23 +814,29 @@ mod tests {
 
     #[test]
     fn can_augment_sum_of_thousand_nodes_of_fiften_nodes() {
-        for _ in 0..10000 {
-            let arena: NodeArray<AvlNode<i32, i16, i32, TestI32>, 2000000> = NodeArray::new();
+        let number_of_nodes = 15;
+        let number_of_trials = 10000;
+
+        let expected_height = avl_max_height(number_of_nodes);
+        let expected_sum: u32 = (0..number_of_nodes).sum();
+
+        for _ in 0..number_of_trials {
+            let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
             let mut forest = AvlForest::new(arena);
 
             let mut rng = rand::rng();
             let tree = forest.append(13).unwrap();
 
-            for i in 0..15 {
-                let _ = forest.insert(tree, rng.random(), i.into()).unwrap();
+            for i in 0..number_of_nodes {
+                let _ = forest.insert(tree, rng.random(), i).unwrap();
             }
 
-            if forest.height(tree) > 5 {
+            if forest.height(tree) > expected_height {
                 forest.print(tree);
                 assert!(false);
             }
 
-            if forest.augmented(forest.root(tree)).0 != 105 {
+            if forest.augmented(forest.root(tree)).0 != expected_sum {
                 forest.print(tree);
                 assert!(false);
             }
@@ -807,23 +845,29 @@ mod tests {
 
     #[test]
     fn can_augment_sum_of_thousand_nodes_of_thirty_one_nodes() {
-        for _ in 0..10000 {
-            let arena: NodeArray<AvlNode<i32, i16, i32, TestI32>, 2000000> = NodeArray::new();
+        let number_of_nodes = 31;
+        let number_of_trials = 10000;
+
+        let expected_height = avl_max_height(number_of_nodes);
+        let expected_sum: u32 = (0..number_of_nodes).sum();
+
+        for _ in 0..number_of_trials {
+            let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
             let mut forest = AvlForest::new(arena);
 
             let mut rng = rand::rng();
             let tree = forest.append(13).unwrap();
 
-            for i in 0..31 {
-                let _ = forest.insert(tree, rng.random(), i.into()).unwrap();
+            for i in 0..number_of_nodes {
+                let _ = forest.insert(tree, rng.random(), i).unwrap();
             }
 
-            if forest.height(tree) > 6 {
+            if forest.height(tree) > expected_height {
                 forest.print(tree);
                 assert!(false);
             }
 
-            if forest.augmented(forest.root(tree)).0 != 465 {
+            if forest.augmented(forest.root(tree)).0 != expected_sum {
                 forest.print(tree);
                 assert!(false);
             }
@@ -832,25 +876,30 @@ mod tests {
 
     #[test]
     fn can_augment_sum_of_thousand_nodes_of_sixty_three_nodes() {
-        for _ in 0..10000 {
-            let arena: NodeArray<AvlNode<i32, i16, i32, TestI32>, 2000000> = NodeArray::new();
+        let number_of_nodes = 63;
+        let number_of_trials = 10000;
+
+        let expected_height = avl_max_height(number_of_nodes);
+        let expected_sum: u32 = (0..number_of_nodes).sum();
+
+        for _ in 0..number_of_trials {
+            let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
             let mut forest = AvlForest::new(arena);
 
             let mut rng = rand::rng();
             let tree = forest.append(13).unwrap();
 
-            for i in 0..63 {
-                let _ = forest.insert(tree, rng.random(), i.into()).unwrap();
+            for i in 0..number_of_nodes {
+                let _ = forest.insert(tree, rng.random(), i).unwrap();
             }
 
-            if forest.height(tree) > 8 {
+            if forest.height(tree) > expected_height {
                 forest.print(tree);
                 assert!(false);
             }
 
-            if forest.augmented(forest.root(tree)).0 != 1953 {
+            if forest.augmented(forest.root(tree)).0 != expected_sum {
                 forest.print(tree);
-                assert_eq!(forest.augmented(forest.root(tree)).0, 1953);
                 assert!(false);
             }
         }
@@ -858,17 +907,14 @@ mod tests {
 
     #[test]
     fn can_build_avl_tree_of_seven_nodes() {
-        let arena: NodeArray<AvlNode<i32, i16, i32, TestI32>, 200> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 200> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let items: [i16; 7] = [17032, -22888, 30521, -27236, 20409, -11128, -4109];
         let tree = forest.append(13).unwrap();
 
         for (i, item) in items.iter().enumerate() {
-            let _ = forest.insert(tree, *item, i as i32).unwrap();
-
-            println!();
-            forest.print(tree);
+            let _ = forest.insert(tree, *item, i as u32).unwrap();
         }
 
         assert_eq!(forest.height(tree), 4);
@@ -876,14 +922,14 @@ mod tests {
 
     #[test]
     fn can_build_avl_tree_of_fifteen_nodes_case_1() {
-        let arena: NodeArray<AvlNode<i32, i16, i32, TestI32>, 200> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 200> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let items: [i16; 15] = [12887, -17025, -17760, 25232, 1731, 28198, 16485, -29386, -2389, 14664, -12411, 5699, -4286, 27501, 19256];
         let tree = forest.append(13).unwrap();
 
         for (i, key) in items.iter().enumerate() {
-            let _ = forest.insert(tree, *key, i as i32).unwrap();
+            let _ = forest.insert(tree, *key, i as u32).unwrap();
         }
 
         assert_eq!(forest.height(tree), 5);
@@ -891,14 +937,14 @@ mod tests {
 
     #[test]
     fn can_build_avl_tree_of_fifteen_nodes_case_2() {
-        let arena: NodeArray<AvlNode<i32, i16, i32, TestI32>, 200> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 200> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let items: [i16; 15] = [-24585, 9045, -17767, 17675, -8874, 21324, -27870, 22546, -28679, -15606, 29562, 2519, -17342, 1152, 19778];
         let tree = forest.append(13).unwrap();
 
         for (i, key) in items.iter().enumerate() {
-            let _ = forest.insert(tree, *key, i as i32).unwrap();
+            let _ = forest.insert(tree, *key, i as u32).unwrap();
         }
 
         assert_eq!(forest.height(tree), 5);
@@ -906,7 +952,7 @@ mod tests {
 
     #[test]
     fn can_build_avl_tree_of_sixty_three_nodes_case_1() {
-        let arena: NodeArray<AvlNode<i32, i16, i32, TestI32>, 200> = NodeArray::new();
+        let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 200> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let items: [i16; 63] = [
@@ -918,7 +964,7 @@ mod tests {
         let tree = forest.append(13).unwrap();
 
         for (i, key) in items.iter().enumerate() {
-            let _ = forest.insert(tree, *key, i as i32).unwrap();
+            let _ = forest.insert(tree, *key, i as u32).unwrap();
         }
 
         assert_eq!(forest.height(tree), 7);
