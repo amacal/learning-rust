@@ -2,6 +2,12 @@ use super::arena::NodeArena;
 
 use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
 
+// Indicates that the tree grew by one node
+const GREW_MASK : u32 = 0x80000000;
+
+// Indicates the balance factor of the node
+const BALANCE_MASK : u32 = 0x80000000;
+
 #[derive(Copy, Clone)]
 struct Tree<T: Copy> {
     root: u32,
@@ -64,8 +70,8 @@ impl<T: Copy, K: Copy + PartialOrd, V: Copy, G: Copy + AvlAugment<V, G>> Node<T,
     }
 
     fn get_balance(&self) -> Ordering {
-        let left = unsafe { self.item.left & 0x80000000 };
-        let right = unsafe { self.item.right & 0x80000000 };
+        let left = unsafe { self.item.left & BALANCE_MASK };
+        let right = unsafe { self.item.right & BALANCE_MASK };
 
         if left == right {
             return Ordering::Equal;
@@ -82,35 +88,35 @@ impl<T: Copy, K: Copy + PartialOrd, V: Copy, G: Copy + AvlAugment<V, G>> Node<T,
         unsafe {
             match balance {
                 Ordering::Equal => {
-                    self.item.left &= 0x7fffffff;
-                    self.item.right &= 0x7fffffff;
+                    self.item.left &= !BALANCE_MASK;
+                    self.item.right &= !BALANCE_MASK;
                 }
                 Ordering::Less => {
-                    self.item.left |= 0x80000000;
-                    self.item.right &= 0x7fffffff;
+                    self.item.left |= BALANCE_MASK;
+                    self.item.right &= !BALANCE_MASK;
                 }
                 Ordering::Greater => {
-                    self.item.left &= 0x7fffffff;
-                    self.item.right |= 0x80000000;
+                    self.item.left &= !BALANCE_MASK;
+                    self.item.right |= BALANCE_MASK;
                 }
             }
         }
     }
 
     fn get_left(&self) -> u32 {
-        unsafe { self.item.left & 0x7fffffff }
+        unsafe { self.item.left & !BALANCE_MASK }
     }
 
     fn set_left(&mut self, left: u32) {
-        unsafe { self.item.left = left | self.item.left & 0x80000000 };
+        unsafe { self.item.left = left | self.item.left & BALANCE_MASK };
     }
 
     fn get_right(&self) -> u32 {
-        unsafe { self.item.right & 0x7fffffff }
+        unsafe { self.item.right & !BALANCE_MASK }
     }
 
     fn set_right(&mut self, right: u32) {
-        unsafe { self.item.right = right | self.item.right & 0x80000000 };
+        unsafe { self.item.right = right | self.item.right & BALANCE_MASK };
     }
 }
 
@@ -149,7 +155,7 @@ where
         let parent = unsafe { self.arena.get_unchecked(tree).into().0.get_root() };
 
         // trigger recursive insertion, may rotate the root
-        let rotated = unsafe { self.insert_recursive(parent, idx, key) & 0x7fffffff };
+        let rotated = unsafe { self.insert_recursive(parent, idx, key) & !GREW_MASK };
 
         // update the root of the tree if it was rotated
         unsafe { self.arena.get_unchecked_mut(tree).into().0.set_root(rotated) };
@@ -218,7 +224,7 @@ where
         // recursion base case
         if parent == 0 {
             // the subtree grew by one node
-            return node | 0x80000000;
+            return node | GREW_MASK;
         }
 
         // we are ok with copying the parent node here, the variable is read-only
@@ -228,7 +234,7 @@ where
             if key <= parent.into().0.get_key() {
                 println!("Inserting {:?} into left subtree of {:?}", node, parent.into().0.get_value());
                 let left = self.insert_recursive(parent.into().0.get_left(), node, key);
-                let (left, grew) = (left & 0x7fffffff, left & 0x80000000);
+                let (left, grew) = (left & !GREW_MASK, left & GREW_MASK);
 
                 self.arena.get_unchecked_mut(idx).into().0.set_left(left);
                 self.update_augmented(idx);
@@ -241,7 +247,7 @@ where
                     Ordering::Equal => {
                         println!("Setting balance to Less for node {:?}", idx);
                         self.arena.get_unchecked_mut(idx).into().0.set_balance(Ordering::Less);
-                        return idx | 0x80000000;
+                        return idx | GREW_MASK;
                     }
                     Ordering::Greater => {
                         println!("Setting balance to Equal for node {:?}", idx);
@@ -261,7 +267,7 @@ where
             } else {
                 println!("Inserting {:?} into right subtree of {:?}", node, parent.into().0.get_value());
                 let right = self.insert_recursive(parent.into().0.get_right(), node, key);
-                let (right, grew) = (right & 0x7fffffff, right & 0x80000000);
+                let (right, grew) = (right & !GREW_MASK, right & GREW_MASK);
 
                 self.arena.get_unchecked_mut(idx).into().0.set_right(right);
                 self.update_augmented(idx);
@@ -274,7 +280,7 @@ where
                     Ordering::Equal => {
                         println!("Setting balance to Greater for node {:?}", idx);
                         self.arena.get_unchecked_mut(idx).into().0.set_balance(Ordering::Greater);
-                        return idx | 0x80000000;
+                        return idx | GREW_MASK;
                     }
                     Ordering::Less => {
                         println!("Setting balance to Equal for node {:?}", idx);
