@@ -12,7 +12,7 @@ const SHRANK_BIT: u32 = 0x80000000;
 const BALANCE_BIT: u32 = 0x80000000;
 
 #[derive(Debug)]
-enum Balance {
+pub enum Balance {
     LeftHeavy,
     Equal,
     RightHeavy,
