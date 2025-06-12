@@ -12,12 +12,15 @@ impl AvlAugment<i32, i32> for i32 {
 
 fn main() {
     let arena: NodeArray<AvlNode<i32, i32, i32, i32>, 2_000_000_000> = NodeArray::new();
-    let mut forest = AvlForest::new(arena);
+    let mut forest = AvlForest::debug(arena);
 
     let root = forest.append(13).unwrap();
-    let _ = forest.insert(root, 10, 100).unwrap();
-    let _ = forest.insert(root, 20, 200).unwrap();
-    let _ = forest.insert(root, 5, 50).unwrap();
+    let _ = forest.insert_element(root, 10, 100).unwrap();
+    let _ = forest.insert_element(root, 20, 200).unwrap();
+    let _ = forest.insert_element(root, 5, 50).unwrap();
+    let _ = forest.remove_element(root, 5);
+
+    forest.print(root);
 
     println!("AVL Forest created with nodes inserted.");
     loop {};

@@ -109,13 +109,13 @@ impl<T: Copy, const U: usize> NodeArena<T> for NodeArray<T, U> {
 
     unsafe fn release_unchecked(&mut self, idx: u32) {
         // find the head of the linked list (if available)
-        let next = self.entries.get_unchecked_mut(0).root.next;
+        let next = unsafe { self.entries.get_unchecked_mut(0).root.next };
 
         // change the head of the list
-        self.entries.get_unchecked_mut(0).root.next = idx;
+        unsafe { self.entries.get_unchecked_mut(0).root.next = idx };
 
         // point at the previous head
-        self.entries.get_unchecked_mut(idx as usize).free.next = next;
+        unsafe { self.entries.get_unchecked_mut(idx as usize).free.next = next };
     }
 }
 
@@ -125,15 +125,15 @@ impl<'a, T: Copy, A: NodeArena<T>> NodeArena<T> for &UnsafeCell<A> {
     }
 
     unsafe fn get_unchecked(&self, idx: u32) -> &T {
-        (&*self.get()).get_unchecked(idx)
+        unsafe { (&*self.get()).get_unchecked(idx) }
     }
 
     unsafe fn get_unchecked_mut(&mut self, idx: u32) -> &mut T {
-        (&mut *self.get()).get_unchecked_mut(idx)
+        unsafe { (&mut *self.get()).get_unchecked_mut(idx) }
     }
 
     unsafe fn release_unchecked(&mut self, idx: u32) {
-        (&mut *self.get()).release_unchecked(idx)
+        unsafe { (&mut *self.get()).release_unchecked(idx) }
     }
 }
 

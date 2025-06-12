@@ -3,10 +3,13 @@ use super::arena::NodeArena;
 use std::{fmt::Debug, marker::PhantomData};
 
 // Indicates that the tree grew by one node
-const GREW_MASK: u32 = 0x80000000;
+const GREW_BIT: u32 = 0x80000000;
+
+// Indicates that the tree shrank by one node
+const SHRANK_BIT: u32 = 0x80000000;
 
 // Indicates the balance factor of the node
-const BALANCE_MASK: u32 = 0x80000000;
+const BALANCE_BIT: u32 = 0x80000000;
 
 #[derive(Debug)]
 enum Balance {
@@ -44,24 +47,36 @@ pub trait AvlAugment<V, G> {
 }
 
 pub trait AvlLogger<K, V> {
-    fn left_insert(parent: (u32, K), node: (u32, K));
-    fn right_insert(parent: (u32, K), node: (u32, K));
+    fn left_insert_element(parent: (u32, K), node: (u32, K));
+    fn right_insert_element(parent: (u32, K), node: (u32, K));
+    fn left_remove_element(parent: (u32, K), node: (u32, K));
+    fn right_remove_element(parent: (u32, K), node: (u32, K));
 }
 
 pub struct NoLogger {}
 impl<K, V> AvlLogger<K, V> for NoLogger {
-    fn left_insert(_parent: (u32, K), _node: (u32, K)) {}
-    fn right_insert(_parent: (u32, K), _node: (u32, K)) {}
+    fn left_insert_element(_parent: (u32, K), _node: (u32, K)) {}
+    fn right_insert_element(_parent: (u32, K), _node: (u32, K)) {}
+    fn left_remove_element(_parent: (u32, K), _node: (u32, K)) {}
+    fn right_remove_element(_parent: (u32, K), _node: (u32, K)) {}
 }
 
 pub struct DebugLogger {}
 impl<K: Debug, V: Debug> AvlLogger<K, V> for DebugLogger {
-    fn left_insert(parent: (u32, K), node: (u32, K)) {
-        println!("left insert node idx={} -> key={:?} under parent idx={} -> key={:?}", node.0, node.1, parent.0, parent.1);
+    fn left_insert_element(parent: (u32, K), node: (u32, K)) {
+        println!("left insert node idx={}:key={:?} under parent idx={}:key={:?}", node.0, node.1, parent.0, parent.1);
     }
 
-    fn right_insert(parent: (u32, K), node: (u32, K)) {
-        println!("right insert node idx={} -> key={:?} under parent idx={} -> key={:?}", node.0, node.1, parent.0, parent.1);
+    fn right_insert_element(parent: (u32, K), node: (u32, K)) {
+        println!("right insert node idx={}:key={:?} under parent idx={}:key={:?}", node.0, node.1, parent.0, parent.1);
+    }
+
+    fn left_remove_element(parent: (u32, K), node: (u32, K)) {
+        println!("left remove node idx={}:key={:?} under parent idx={}:key={:?}", node.0, node.1, parent.0, parent.1);
+    }
+
+    fn right_remove_element(parent: (u32, K), node: (u32, K)) {
+        println!("right remove node idx={}:key={:?} under parent idx={}:key={:?}", node.0, node.1, parent.0, parent.1);
     }
 }
 
@@ -89,8 +104,16 @@ impl<T: Copy, K: Copy, V: Copy, G: Copy> Node<T, K, V, G> {
         unsafe { self.item.key }
     }
 
+    fn set_key(&mut self, key: K) {
+        self.item.key = key;
+    }
+
     fn get_value(&self) -> V {
         unsafe { self.item.value }
+    }
+
+    fn set_value(&mut self, value: V) {
+        self.item.value = value;
     }
 
     fn get_augmented(&self) -> G {
@@ -102,12 +125,14 @@ impl<T: Copy, K: Copy, V: Copy, G: Copy> Node<T, K, V, G> {
     }
 
     fn get_balance(&self) -> Balance {
-        let left = unsafe { self.item.left & BALANCE_MASK };
-        let right = unsafe { self.item.right & BALANCE_MASK };
+        // balance is stored in the left and right fields of the item
+        // because each side can only sacrifice one bit for balance
+        let left = unsafe { self.item.left & BALANCE_BIT };
+        let right = unsafe { self.item.right & BALANCE_BIT };
 
         match (left, right) {
-            (_, BALANCE_MASK) => return Balance::RightHeavy,
-            (BALANCE_MASK, _) => return Balance::LeftHeavy,
+            (_, BALANCE_BIT) => return Balance::RightHeavy,
+            (BALANCE_BIT, _) => return Balance::LeftHeavy,
             (_, _) => return Balance::Equal,
         }
     }
@@ -116,35 +141,35 @@ impl<T: Copy, K: Copy, V: Copy, G: Copy> Node<T, K, V, G> {
         unsafe {
             match balance {
                 Balance::Equal => {
-                    self.item.left &= !BALANCE_MASK;
-                    self.item.right &= !BALANCE_MASK;
+                    self.item.left &= !BALANCE_BIT;
+                    self.item.right &= !BALANCE_BIT;
                 }
                 Balance::LeftHeavy => {
-                    self.item.left |= BALANCE_MASK;
-                    self.item.right &= !BALANCE_MASK;
+                    self.item.left |= BALANCE_BIT;
+                    self.item.right &= !BALANCE_BIT;
                 }
                 Balance::RightHeavy => {
-                    self.item.left &= !BALANCE_MASK;
-                    self.item.right |= BALANCE_MASK;
+                    self.item.left &= !BALANCE_BIT;
+                    self.item.right |= BALANCE_BIT;
                 }
             }
         }
     }
 
     fn get_left(&self) -> u32 {
-        unsafe { self.item.left & !BALANCE_MASK }
+        unsafe { self.item.left & !BALANCE_BIT }
     }
 
     fn set_left(&mut self, left: u32) {
-        unsafe { self.item.left = left | self.item.left & BALANCE_MASK };
+        unsafe { self.item.left = left | self.item.left & BALANCE_BIT };
     }
 
     fn get_right(&self) -> u32 {
-        unsafe { self.item.right & !BALANCE_MASK }
+        unsafe { self.item.right & !BALANCE_BIT }
     }
 
     fn set_right(&mut self, right: u32) {
-        unsafe { self.item.right = right | self.item.right & BALANCE_MASK };
+        unsafe { self.item.right = right | self.item.right & BALANCE_BIT };
     }
 }
 
@@ -237,7 +262,7 @@ where
         self.arena.insert(N::from(Node::tree(value)))
     }
 
-    pub fn insert(&mut self, tree: u32, key: K, value: V) -> Option<u32>
+    pub fn insert_element(&mut self, tree: u32, key: K, value: V) -> Option<u32>
     where
         K: PartialOrd,
     {
@@ -248,13 +273,304 @@ where
         let parent = unsafe { self.get_ref(tree).get_root() };
 
         // trigger recursive insertion, may rotate the root
-        let rotated = unsafe { self.insert_recursive(parent, idx, key) & !GREW_MASK };
+        let rotated = unsafe { self.insert_recursive(parent, idx, key) & !GREW_BIT };
 
         // update the root of the tree if it was rotated
         unsafe { self.get_mut(tree).set_root(rotated) };
 
         // return the index of the newly inserted node
         return Some(idx);
+    }
+
+    unsafe fn insert_recursive(&mut self, parent: u32, node: u32, key: K) -> u32
+    where
+        K: PartialOrd,
+    {
+        // recursion base case
+        if parent == 0 {
+            return node | GREW_BIT;
+        }
+
+        let idx = parent;
+        let parent = unsafe { self.get_ref(idx) };
+
+        unsafe {
+            if key < parent.get_key() {
+                L::left_insert_element((idx, parent.get_key()), (node, key));
+                let left = self.insert_recursive(parent.get_left(), node, key);
+                let (left, grew) = (left & !GREW_BIT, left & GREW_BIT);
+
+                self.get_mut(idx).set_left(left);
+                self.update_augmented(idx);
+
+                if grew == 0 {
+                    return idx;
+                }
+
+                match self.get_ref(idx).get_balance() {
+                    Balance::Equal => {
+                        println!("Setting balance to Less for node {:?}", idx);
+                        self.get_mut(idx).set_balance(Balance::LeftHeavy);
+                        return idx | GREW_BIT;
+                    }
+                    Balance::RightHeavy => {
+                        println!("Setting balance to Equal for node {:?}", idx);
+                        self.get_mut(idx).set_balance(Balance::Equal);
+                    }
+                    Balance::LeftHeavy => match self.get_ref(left).get_balance() {
+                        Balance::LeftHeavy => {
+                            println!("Rotating left-left case at node {:?}", idx);
+                            return self.rotate_ll(idx, true); // didn't grow
+                        }
+                        Balance::Equal | Balance::RightHeavy => {
+                            println!("Rotating left-right case at node {:?}", idx);
+                            return self.rotate_lr(idx); // didn't grow
+                        }
+                    },
+                }
+
+                return idx; // didn't grow
+            }
+        }
+
+        unsafe {
+            if key > parent.get_key() {
+                L::right_insert_element((idx, parent.get_key()), (node, key));
+                let right = self.insert_recursive(parent.get_right(), node, key);
+                let (right, grew) = (right & !GREW_BIT, right & GREW_BIT);
+
+                self.get_mut(idx).set_right(right);
+                self.update_augmented(idx);
+
+                if grew == 0 {
+                    return idx;
+                }
+
+                match self.get_ref(idx).get_balance() {
+                    Balance::Equal => {
+                        println!("Setting balance to Greater for node {:?}", idx);
+                        self.get_mut(idx).set_balance(Balance::RightHeavy);
+                        return idx | GREW_BIT;
+                    }
+                    Balance::LeftHeavy => {
+                        println!("Setting balance to Equal for node {:?}", idx);
+                        self.get_mut(idx).set_balance(Balance::Equal);
+                    }
+                    Balance::RightHeavy => match self.get_ref(right).get_balance() {
+                        Balance::RightHeavy => {
+                            println!("Rotating right-right case at node {:?}", idx);
+                            return self.rotate_rr(idx, true); // didn't grow
+                        }
+                        Balance::Equal | Balance::LeftHeavy => {
+                            println!("Rotating right-left case at node {:?}", idx);
+                            return self.rotate_rl(idx); // didn't grow
+                        }
+                    },
+                }
+
+                return idx; // didn't grow
+            }
+        }
+
+        // we do knowing, but disposing already allocated node
+        unsafe { self.arena.release_unchecked(node) };
+        return idx;
+    }
+
+    pub fn remove_element(&mut self, tree: u32, key: K)
+    where
+        K: PartialOrd,
+    {
+        // find the root of the tree
+        let parent = unsafe { self.get_ref(tree).get_root() };
+
+        // trigger recursive removal, may rotate the root
+        let rotated = unsafe { self.remove_recursive(parent, key) & !SHRANK_BIT };
+
+        // update the root of the tree if it was rotated
+        unsafe { self.get_mut(tree).set_root(rotated) };
+    }
+
+    unsafe fn remove_recursive(&mut self, parent: u32, key: K) -> u32
+    where
+        K: PartialOrd,
+    {
+        // recursion base case
+        if parent == 0 {
+            return 0;
+        }
+
+        let idx = parent;
+        let parent = unsafe { self.get_ref(idx) };
+
+        unsafe {
+            if key < parent.get_key() {
+                L::left_remove_element((idx, parent.get_key()), (parent.get_left(), key));
+                let left = self.remove_recursive(parent.get_left(), key);
+                let (left, shrank) = (left & !SHRANK_BIT, left & SHRANK_BIT);
+
+                self.get_mut(idx).set_left(left);
+                self.update_augmented(idx);
+
+                if shrank == 0 {
+                    return idx;
+                }
+
+                match self.get_ref(idx).get_balance() {
+                    Balance::LeftHeavy => {
+                        println!("Setting balance to Equal for node {:?}", idx);
+                        self.get_mut(idx).set_balance(Balance::Equal);
+                        return idx | SHRANK_BIT;
+                    }
+                    Balance::Equal => {
+                        println!("Setting balance to RightHeavy for node {:?}", idx);
+                        self.get_mut(idx).set_balance(Balance::RightHeavy);
+                    }
+                    Balance::RightHeavy => {
+                        let right = self.get_ref(idx).get_right();
+                        match self.get_ref(right).get_balance() {
+                            Balance::Equal => {
+                                println!("Rotating right-right case at node {:?}", idx);
+                                return self.rotate_rr(idx, false); // didn't shrink
+                            }
+                            Balance::RightHeavy => {
+                                println!("Rotating right-right case at node {:?}", idx);
+                                return self.rotate_rr(idx, true) | SHRANK_BIT;
+                            }
+                            Balance::LeftHeavy => {
+                                println!("Rotating right-left case at node {:?}", idx);
+                                return self.rotate_rl(idx) | SHRANK_BIT;
+                            }
+                        }
+                    }
+                }
+
+                return idx;
+            }
+        }
+
+        unsafe {
+            if key > parent.get_key() {
+                L::right_remove_element((idx, parent.get_key()), (parent.get_right(), key));
+                let right = self.remove_recursive(parent.get_right(), key);
+                let (right, shrank) = (right & !SHRANK_BIT, right & SHRANK_BIT);
+
+                self.get_mut(idx).set_right(right);
+                self.update_augmented(idx);
+
+                if shrank == 0 {
+                    return idx;
+                }
+
+                match self.get_ref(idx).get_balance() {
+                    Balance::RightHeavy => {
+                        println!("Setting balance to Equal for node {:?}", idx);
+                        self.get_mut(idx).set_balance(Balance::Equal);
+                        return idx | SHRANK_BIT;
+                    }
+                    Balance::Equal => {
+                        println!("Setting balance to LeftHeavy for node {:?}", idx);
+                        self.get_mut(idx).set_balance(Balance::LeftHeavy);
+                    }
+                    Balance::LeftHeavy => {
+                        let left = self.get_ref(idx).get_left();
+                        match self.get_ref(left).get_balance() {
+                            Balance::Equal => {
+                                println!("Rotating left-left case at node {:?}", idx);
+                                return self.rotate_ll(idx, false); // didn't shrink
+                            }
+                            Balance::LeftHeavy => {
+                                println!("Rotating left-left case at node {:?}", idx);
+                                return self.rotate_ll(idx, true) | SHRANK_BIT;
+                            }
+                            Balance::RightHeavy => {
+                                println!("Rotating left-right case at node {:?}", idx);
+                                return self.rotate_lr(idx) | SHRANK_BIT;
+                            }
+                        }
+                    }
+                }
+
+                return idx;
+            }
+        }
+
+        unsafe {
+            let left = parent.get_left();
+            let right = parent.get_right();
+
+            // if the node is a leaf, we can just remove it
+            if left == 0 && right == 0 {
+                self.arena.release_unchecked(idx);
+                return 0 | SHRANK_BIT; // we shrank the tree
+            }
+
+            // we can just replace the node with its right child
+            if left == 0 {
+                self.arena.release_unchecked(idx);
+                return right | SHRANK_BIT; // we shrank the tree
+            }
+
+            // we can just replace the node with its left child
+            if right == 0 {
+                self.arena.release_unchecked(idx);
+                return left | SHRANK_BIT; // we shrank the tree
+            }
+
+            // we need to find the rightmost node in the left subtree
+            let mut rightmost = left;
+            while self.get_ref(rightmost).get_right() > 0 {
+                rightmost = self.get_ref(rightmost).get_right();
+            }
+
+            // we can replace the current node with the rightmost node
+            let key = self.get_ref(rightmost).get_key();
+            let value = self.get_ref(rightmost).get_value();
+
+            self.get_mut(idx).set_key(key);
+            self.get_mut(idx).set_value(value);
+
+            // we can remove the rightmost node from the left subtree
+            let left = self.remove_recursive(left, key);
+            let (left, shrank) = (left & !SHRANK_BIT, left & SHRANK_BIT);
+
+            self.get_mut(idx).set_left(left);
+            self.update_augmented(idx);
+
+            if shrank == 0 {
+                return idx; // didn't shrink
+            }
+
+            match self.get_ref(idx).get_balance() {
+                Balance::LeftHeavy => {
+                    println!("Setting balance to Equal for node {:?}", idx);
+                    self.get_mut(idx).set_balance(Balance::Equal);
+                    return idx | SHRANK_BIT; // we shrank the tree
+                }
+                Balance::Equal => {
+                    println!("Setting balance to RightHeavy for node {:?}", idx);
+                    self.get_mut(idx).set_balance(Balance::RightHeavy);
+                    return idx; // didn't shrink
+                }
+                Balance::RightHeavy => {
+                    let right = self.get_ref(idx).get_right();
+                    match self.get_ref(right).get_balance() {
+                        Balance::Equal => {
+                            println!("Rotating right-right case at node {:?}", idx);
+                            return self.rotate_rr(idx, false); // didn't shrink
+                        }
+                        Balance::RightHeavy => {
+                            println!("Rotating right-right case at node {:?}", idx);
+                            return self.rotate_rr(idx, true) | SHRANK_BIT; // we shrank the tree
+                        }
+                        Balance::LeftHeavy => {
+                            println!("Rotating right-left case at node {:?}", idx);
+                            return self.rotate_rl(idx) | SHRANK_BIT; // we shrank the tree
+                        }
+                    }
+                }
+            }
+        }
     }
 
     unsafe fn update_augmented(&mut self, node: u32) {
@@ -274,92 +590,6 @@ where
         unsafe { self.get_mut(node).set_augmented(augmented) };
     }
 
-    unsafe fn insert_recursive(&mut self, parent: u32, node: u32, key: K) -> u32
-    where
-        K: PartialOrd,
-    {
-        // recursion base case
-        if parent == 0 {
-            // the subtree grew by one node
-            return node | GREW_MASK;
-        }
-
-        // we are ok with copying the parent node here, the variable is read-only
-        let (idx, parent) = (parent, unsafe { self.get_ref(parent) });
-
-        unsafe {
-            if key <= parent.get_key() {
-                L::left_insert((idx, parent.get_key()), (node, key));
-                let left = self.insert_recursive(parent.get_left(), node, key);
-                let (left, grew) = (left & !GREW_MASK, left & GREW_MASK);
-
-                self.get_mut(idx).set_left(left);
-                self.update_augmented(idx);
-
-                if grew == 0 {
-                    return idx;
-                }
-
-                match self.get_ref(idx).get_balance() {
-                    Balance::Equal => {
-                        println!("Setting balance to Less for node {:?}", idx);
-                        self.get_mut(idx).set_balance(Balance::LeftHeavy);
-                        return idx | GREW_MASK;
-                    }
-                    Balance::RightHeavy => {
-                        println!("Setting balance to Equal for node {:?}", idx);
-                        self.get_mut(idx).set_balance(Balance::Equal);
-                    }
-                    Balance::LeftHeavy => match self.get_ref(left).get_balance() {
-                        Balance::LeftHeavy => {
-                            println!("Rotating left-left case at node {:?}", idx);
-                            return self.rotate_ll(idx); // didn't grow
-                        }
-                        Balance::Equal | Balance::RightHeavy => {
-                            println!("Rotating left-right case at node {:?}", idx);
-                            return self.rotate_lr(idx); // didn't grow
-                        }
-                    },
-                }
-            } else {
-                L::right_insert((idx, parent.get_key()), (node, key));
-                let right = self.insert_recursive(parent.get_right(), node, key);
-                let (right, grew) = (right & !GREW_MASK, right & GREW_MASK);
-
-                self.get_mut(idx).set_right(right);
-                self.update_augmented(idx);
-
-                if grew == 0 {
-                    return idx;
-                }
-
-                match self.get_ref(idx).get_balance() {
-                    Balance::Equal => {
-                        println!("Setting balance to Greater for node {:?}", idx);
-                        self.get_mut(idx).set_balance(Balance::RightHeavy);
-                        return idx | GREW_MASK;
-                    }
-                    Balance::LeftHeavy => {
-                        println!("Setting balance to Equal for node {:?}", idx);
-                        self.get_mut(idx).set_balance(Balance::Equal);
-                    }
-                    Balance::RightHeavy => match self.get_ref(right).get_balance() {
-                        Balance::RightHeavy => {
-                            println!("Rotating right-right case at node {:?}", idx);
-                            return self.rotate_rr(idx); // didn't grow
-                        }
-                        Balance::Equal | Balance::LeftHeavy => {
-                            println!("Rotating right-left case at node {:?}", idx);
-                            return self.rotate_rl(idx); // didn't grow
-                        }
-                    },
-                }
-            }
-        }
-
-        return idx;
-    }
-
     // Rotate left-left case:
     //
     //           z (-2)                 y (+1/0)
@@ -368,7 +598,7 @@ where
     //        / \                        / \
     //   (0) x   a (?)              (?) a   b (?)
     //
-    fn rotate_ll(&mut self, z: u32) -> u32 {
+    fn rotate_ll(&mut self, z: u32, zero: bool) -> u32 {
         unsafe {
             // get indices of the nodes involved in the rotation
             let y = self.get_ref(z).get_left();
@@ -379,8 +609,13 @@ where
             self.get_mut(y).set_right(z);
 
             // adjust balances of z and y
-            self.get_mut(z).set_balance(Balance::Equal);
-            self.get_mut(y).set_balance(Balance::Equal);
+            if zero {
+                self.get_mut(z).set_balance(Balance::Equal);
+                self.get_mut(y).set_balance(Balance::Equal);
+            } else {
+                self.get_mut(z).set_balance(Balance::LeftHeavy);
+                self.get_mut(y).set_balance(Balance::RightHeavy);
+            }
 
             // update the augmented values of the nodes
             self.update_augmented(z);
@@ -454,7 +689,7 @@ where
     //           / \                  / \
     //      (?) a   x (0)        (?) b   a (?)
     //
-    fn rotate_rr(&mut self, z: u32) -> u32 {
+    fn rotate_rr(&mut self, z: u32, zero: bool) -> u32 {
         unsafe {
             // get indices of the nodes involved in the rotation
             let y = self.get_ref(z).get_right();
@@ -464,9 +699,15 @@ where
             self.get_mut(z).set_right(a);
             self.get_mut(y).set_left(z);
 
-            // adjust balances of z and y
-            self.get_mut(z).set_balance(Balance::Equal);
-            self.get_mut(y).set_balance(Balance::Equal);
+            if zero {
+                // adjust balances of z and y in basic case
+                self.get_mut(z).set_balance(Balance::Equal);
+                self.get_mut(y).set_balance(Balance::Equal);
+            } else {
+                // adjust balances of z and y in delete case
+                self.get_mut(z).set_balance(Balance::RightHeavy);
+                self.get_mut(y).set_balance(Balance::LeftHeavy);
+            }
 
             // update the augmented values of the nodes
             self.update_augmented(z);
@@ -576,7 +817,7 @@ where
 mod tests {
     use super::*;
     use crate::arena::NodeArray;
-    use rand::Rng;
+    use rand::{Rng, rand_core::le, seq::SliceRandom};
 
     #[derive(Copy, Clone, Debug)]
     struct TestU32(u32);
@@ -671,7 +912,7 @@ mod tests {
         let tree = forest.append(13);
         assert!(tree.is_some());
 
-        let root = forest.insert(tree.unwrap(), 1, 2u32.into());
+        let root = forest.insert_element(tree.unwrap(), 1, 2u32.into());
         assert!(root.is_some());
 
         let height = forest.height(tree.unwrap());
@@ -686,7 +927,7 @@ mod tests {
         let tree = forest.append(13);
         assert!(tree.is_some());
 
-        let root = forest.insert(tree.unwrap(), 1, 2u32.into());
+        let root = forest.insert_element(tree.unwrap(), 1, 2u32.into());
         assert!(root.is_some());
 
         let height = forest.height(tree.unwrap());
@@ -699,9 +940,9 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
-        let _ = forest.insert(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 2);
@@ -717,12 +958,12 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
-        let _ = forest.insert(tree, 35, 350u32.into()).unwrap();
-        let _ = forest.insert(tree, 10, 100u32.into()).unwrap();
-        let _ = forest.insert(tree, 25, 250u32.into()).unwrap();
-        let _ = forest.insert(tree, 5, 50u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 35, 350u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 25, 250u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 5, 50u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 3);
@@ -738,9 +979,9 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
-        let _ = forest.insert(tree, 25, 250u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 25, 250u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 2);
@@ -756,12 +997,12 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
-        let _ = forest.insert(tree, 35, 350u32.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
-        let _ = forest.insert(tree, 15, 150u32.into()).unwrap();
-        let _ = forest.insert(tree, 25, 250u32.into()).unwrap();
-        let _ = forest.insert(tree, 23, 230u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 35, 350u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 15, 150u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 25, 250u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 23, 230u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 3);
@@ -777,12 +1018,12 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
-        let _ = forest.insert(tree, 35, 350u32.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
-        let _ = forest.insert(tree, 15, 150u32.into()).unwrap();
-        let _ = forest.insert(tree, 25, 250u32.into()).unwrap();
-        let _ = forest.insert(tree, 27, 270u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 35, 350u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 15, 150u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 25, 250u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 27, 270u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 3);
@@ -798,9 +1039,9 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 10, 100u32.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
-        let _ = forest.insert(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 2);
@@ -816,12 +1057,12 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 10, 100u32.into()).unwrap();
-        let _ = forest.insert(tree, 5, 50u32.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
-        let _ = forest.insert(tree, 15, 150u32.into()).unwrap();
-        let _ = forest.insert(tree, 25, 250u32.into()).unwrap();
-        let _ = forest.insert(tree, 23, 230u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 5, 50u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 15, 150u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 25, 250u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 23, 230u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 3);
@@ -837,9 +1078,9 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 10, 100u32.into()).unwrap();
-        let _ = forest.insert(tree, 20, 200u32.into()).unwrap();
-        let _ = forest.insert(tree, 15, 150u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 15, 150u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 2);
@@ -855,12 +1096,12 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 70, 300u32.into()).unwrap();
-        let _ = forest.insert(tree, 65, 350u32.into()).unwrap();
-        let _ = forest.insert(tree, 80, 200u32.into()).unwrap();
-        let _ = forest.insert(tree, 85, 150u32.into()).unwrap();
-        let _ = forest.insert(tree, 75, 250u32.into()).unwrap();
-        let _ = forest.insert(tree, 77, 230u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 70, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 65, 350u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 80, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 85, 150u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 75, 250u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 77, 230u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 3);
@@ -876,12 +1117,12 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.append(13).unwrap();
-        let _ = forest.insert(tree, 70, 300u32.into()).unwrap();
-        let _ = forest.insert(tree, 65, 350u32.into()).unwrap();
-        let _ = forest.insert(tree, 80, 200u32.into()).unwrap();
-        let _ = forest.insert(tree, 85, 150u32.into()).unwrap();
-        let _ = forest.insert(tree, 75, 250u32.into()).unwrap();
-        let _ = forest.insert(tree, 73, 270u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 70, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 65, 350u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 80, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 85, 150u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 75, 250u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 73, 270u32.into()).unwrap();
 
         let height = forest.height(tree);
         assert_eq!(height, 3);
@@ -892,10 +1133,11 @@ mod tests {
     }
 
     #[test]
-    fn can_augment_sum_of_thousand_nodes_of_fiften_nodes() {
+    fn can_augment_sum_of_fifteen_nodes() {
         let number_of_nodes = 15;
         let number_of_trials = 10000;
 
+        let mut rng = rand::rng();
         let expected_height = avl_max_height(number_of_nodes);
         let expected_sum: u32 = (0..number_of_nodes).sum();
 
@@ -903,11 +1145,12 @@ mod tests {
             let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
             let mut forest = AvlForest::debug(arena);
 
-            let mut rng = rand::rng();
             let tree = forest.append(13).unwrap();
+            let mut numbers: Vec<i16> = (0..number_of_trials).collect();
 
+            numbers.shuffle(&mut rng);
             for i in 0..number_of_nodes {
-                let _ = forest.insert(tree, rng.random(), i).unwrap();
+                let _ = forest.insert_element(tree, numbers[i as usize], i).unwrap();
             }
 
             if forest.height(tree) > expected_height {
@@ -923,10 +1166,11 @@ mod tests {
     }
 
     #[test]
-    fn can_augment_sum_of_thousand_nodes_of_thirty_one_nodes() {
+    fn can_augment_sum_of_thirty_one_nodes() {
         let number_of_nodes = 31;
         let number_of_trials = 10000;
 
+        let mut rng = rand::rng();
         let expected_height = avl_max_height(number_of_nodes);
         let expected_sum: u32 = (0..number_of_nodes).sum();
 
@@ -934,11 +1178,12 @@ mod tests {
             let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
             let mut forest = AvlForest::debug(arena);
 
-            let mut rng = rand::rng();
             let tree = forest.append(13).unwrap();
+            let mut numbers: Vec<i16> = (0..number_of_nodes as i16).collect();
 
+            numbers.shuffle(&mut rng);
             for i in 0..number_of_nodes {
-                let _ = forest.insert(tree, rng.random(), i).unwrap();
+                let _ = forest.insert_element(tree, numbers[i as usize], i).unwrap();
             }
 
             if forest.height(tree) > expected_height {
@@ -954,10 +1199,11 @@ mod tests {
     }
 
     #[test]
-    fn can_augment_sum_of_thousand_nodes_of_sixty_three_nodes() {
+    fn can_augment_sum_of_sixty_three_nodes() {
         let number_of_nodes = 63;
         let number_of_trials = 10000;
 
+        let mut rng = rand::rng();
         let expected_height = avl_max_height(number_of_nodes);
         let expected_sum: u32 = (0..number_of_nodes).sum();
 
@@ -965,11 +1211,12 @@ mod tests {
             let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
             let mut forest = AvlForest::debug(arena);
 
-            let mut rng = rand::rng();
             let tree = forest.append(13).unwrap();
+            let mut numbers: Vec<i16> = (0..number_of_nodes as i16).collect();
 
+            numbers.shuffle(&mut rng);
             for i in 0..number_of_nodes {
-                let _ = forest.insert(tree, rng.random(), i).unwrap();
+                let _ = forest.insert_element(tree, numbers[i as usize], i).unwrap();
             }
 
             if forest.height(tree) > expected_height {
@@ -993,7 +1240,7 @@ mod tests {
         let tree = forest.append(13).unwrap();
 
         for (i, item) in items.iter().enumerate() {
-            let _ = forest.insert(tree, *item, i as u32).unwrap();
+            let _ = forest.insert_element(tree, *item, i as u32).unwrap();
         }
 
         assert_eq!(forest.height(tree), 4);
@@ -1008,7 +1255,7 @@ mod tests {
         let tree = forest.append(13).unwrap();
 
         for (i, key) in items.iter().enumerate() {
-            let _ = forest.insert(tree, *key, i as u32).unwrap();
+            let _ = forest.insert_element(tree, *key, i as u32).unwrap();
         }
 
         assert_eq!(forest.height(tree), 5);
@@ -1023,7 +1270,7 @@ mod tests {
         let tree = forest.append(13).unwrap();
 
         for (i, key) in items.iter().enumerate() {
-            let _ = forest.insert(tree, *key, i as u32).unwrap();
+            let _ = forest.insert_element(tree, *key, i as u32).unwrap();
         }
 
         assert_eq!(forest.height(tree), 5);
@@ -1043,9 +1290,198 @@ mod tests {
         let tree = forest.append(13).unwrap();
 
         for (i, key) in items.iter().enumerate() {
-            let _ = forest.insert(tree, *key, i as u32).unwrap();
+            let _ = forest.insert_element(tree, *key, i as u32).unwrap();
         }
 
         assert_eq!(forest.height(tree), 7);
+    }
+
+    #[test]
+    fn can_remove_from_tree_no_children_no_rotation_left() {
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.append(13).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+
+        forest.remove_element(tree, 10);
+        let height = forest.height(tree);
+        assert_eq!(height, 2);
+
+        let root = forest.root(tree);
+        assert_eq!(forest.value(root), 200);
+    }
+
+    #[test]
+    fn can_remove_from_tree_no_children_no_rotation_right() {
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.append(13).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+
+        forest.remove_element(tree, 30);
+        let height = forest.height(tree);
+        assert_eq!(height, 2);
+
+        let root = forest.root(tree);
+        assert_eq!(forest.value(root), 200);
+    }
+
+    #[test]
+    fn can_remove_from_tree_no_children_no_rotation_root() {
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.append(13).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+
+        forest.remove_element(tree, 20);
+        let height = forest.height(tree);
+        assert_eq!(height, 2);
+
+        let root = forest.root(tree);
+        assert_eq!(forest.value(root), 100);
+    }
+
+    #[test]
+    fn can_remove_from_five_no_children_rr_left_child() {
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.append(13).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 35, 300u32.into()).unwrap();
+
+        // it will trigger a right-right rotation
+        forest.remove_element(tree, 10);
+        let height = forest.height(tree);
+        assert_eq!(height, 2);
+
+        let root = forest.root(tree);
+        assert_eq!(forest.value(root), 300);
+        assert_eq!(forest.augmented(root).0, 800);
+    }
+
+    #[test]
+    fn can_remove_from_five_no_children_ll_right_child() {
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.append(13).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 5, 50u32.into()).unwrap();
+
+        // it will trigger a left-left rotation
+        forest.remove_element(tree, 30);
+        let height = forest.height(tree);
+        assert_eq!(height, 2);
+
+        let root = forest.root(tree);
+        assert_eq!(forest.value(root), 100);
+        assert_eq!(forest.augmented(root).0, 350);
+    }
+
+    #[test]
+    fn can_remove_from_five_no_children_rl_left_child() {
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.append(13).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 25, 250u32.into()).unwrap();
+
+        // it will trigger a right-right rotation
+        forest.remove_element(tree, 10);
+        let height = forest.height(tree);
+        assert_eq!(height, 2);
+
+        let root = forest.root(tree);
+        assert_eq!(forest.value(root), 250);
+        assert_eq!(forest.augmented(root).0, 750);
+    }
+
+    #[test]
+    fn can_remove_from_five_no_children_lr_right_child() {
+        let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.append(13).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 15, 150u32.into()).unwrap();
+
+        // it will trigger a left-left rotation
+        forest.remove_element(tree, 30);
+        let height = forest.height(tree);
+        assert_eq!(height, 2);
+
+        let root = forest.root(tree);
+        assert_eq!(forest.value(root), 150);
+        assert_eq!(forest.augmented(root).0, 450);
+    }
+
+    #[test]
+    fn can_add_eight_nodes_and_remove_one() {
+        let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 200> = NodeArray::new();
+        let mut forest = AvlForest::debug(arena);
+
+        let items: [i16; 8] = [1423, 2813, 1677, 2656, 3781, 4401, 4323, 2503];
+        let tree = forest.append(13).unwrap();
+
+        for (i, item) in items.iter().enumerate() {
+            let _ = forest.insert_element(tree, *item, i as u32).unwrap();
+        }
+
+        assert_eq!(forest.height(tree), 4);
+        forest.remove_element(tree, 1423);
+        assert_eq!(forest.height(tree), 3);
+    }
+
+    #[test]
+    fn can_remove_most_of_nodes() {
+        let number_of_nodes = 127;
+        let number_of_trials = 1000;
+        let number_of_removals = 90;
+
+        let mut rng = rand::rng();
+        let expected_height = avl_max_height(number_of_nodes - number_of_removals);
+
+        for _ in 0..number_of_trials {
+            let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
+            let mut forest = AvlForest::debug(arena);
+
+            let tree = forest.append(13).unwrap();
+            let mut numbers: Vec<i16> = (0..number_of_trials).collect();
+
+            numbers.shuffle(&mut rng);
+            for i in 0..number_of_nodes {
+                let _ = forest.insert_element(tree, numbers[i as usize], i).unwrap();
+            }
+
+            for i in 0..number_of_removals {
+                forest.print(tree);
+                let _ = forest.remove_element(tree, numbers[i as usize]);
+            }
+
+            if forest.height(tree) > expected_height {
+                forest.print(tree);
+                assert_eq!(forest.height(tree), expected_height);
+                assert!(false);
+            }
+        }
     }
 }
