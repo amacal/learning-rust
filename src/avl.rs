@@ -51,6 +51,7 @@ pub trait AvlLogger<K, V> {
     fn right_insert_element(parent: (u32, K), node: (u32, K));
     fn left_remove_element(parent: (u32, K), node: (u32, K));
     fn right_remove_element(parent: (u32, K), node: (u32, K));
+    fn set_balance(_node: (u32, K), _balance: Balance);
 }
 
 pub struct NoLogger {}
@@ -59,24 +60,29 @@ impl<K, V> AvlLogger<K, V> for NoLogger {
     fn right_insert_element(_parent: (u32, K), _node: (u32, K)) {}
     fn left_remove_element(_parent: (u32, K), _node: (u32, K)) {}
     fn right_remove_element(_parent: (u32, K), _node: (u32, K)) {}
+    fn set_balance(_node: (u32, K), _balance: Balance) {}
 }
 
 pub struct DebugLogger {}
 impl<K: Debug, V: Debug> AvlLogger<K, V> for DebugLogger {
     fn left_insert_element(parent: (u32, K), node: (u32, K)) {
-        println!("left insert node idx={}:key={:?} under parent idx={}:key={:?}", node.0, node.1, parent.0, parent.1);
+        println!("inserting left {}|{:?} under {}|{:?}", node.0, node.1, parent.0, parent.1);
     }
 
     fn right_insert_element(parent: (u32, K), node: (u32, K)) {
-        println!("right insert node idx={}:key={:?} under parent idx={}:key={:?}", node.0, node.1, parent.0, parent.1);
+        println!("inserting right {}|{:?} under {}|{:?}", node.0, node.1, parent.0, parent.1);
     }
 
     fn left_remove_element(parent: (u32, K), node: (u32, K)) {
-        println!("left remove node idx={}:key={:?} under parent idx={}:key={:?}", node.0, node.1, parent.0, parent.1);
+        println!("removing left {}|{:?} from {}|{:?}", node.0, node.1, parent.0, parent.1);
     }
 
     fn right_remove_element(parent: (u32, K), node: (u32, K)) {
-        println!("right remove node idx={}:key={:?} under parent idx={}:key={:?}", node.0, node.1, parent.0, parent.1);
+        println!("removing right {}|{:?} from {}|{:?}", node.0, node.1, parent.0, parent.1);
+    }
+
+    fn set_balance(node: (u32, K), balance: Balance) {
+        println!("setting balance {}|{:?} to {:?}", node.0, node.1, balance);
     }
 }
 
@@ -293,10 +299,11 @@ where
 
         let idx = parent;
         let parent = unsafe { self.get_ref(idx) };
+        let pkey = parent.get_key();
 
         unsafe {
             if key < parent.get_key() {
-                L::left_insert_element((idx, parent.get_key()), (node, key));
+                L::left_insert_element((idx, pkey), (node, key));
                 let left = self.insert_recursive(parent.get_left(), node, key);
                 let (left, grew) = (left & !GREW_BIT, left & GREW_BIT);
 
@@ -309,12 +316,12 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::Equal => {
-                        println!("Setting balance to Less for node {:?}", idx);
+                        L::set_balance((idx, pkey), Balance::LeftHeavy);
                         self.get_mut(idx).set_balance(Balance::LeftHeavy);
                         return idx | GREW_BIT;
                     }
                     Balance::RightHeavy => {
-                        println!("Setting balance to Equal for node {:?}", idx);
+                        L::set_balance((idx, pkey), Balance::Equal);
                         self.get_mut(idx).set_balance(Balance::Equal);
                     }
                     Balance::LeftHeavy => match self.get_ref(left).get_balance() {
@@ -335,7 +342,7 @@ where
 
         unsafe {
             if key > parent.get_key() {
-                L::right_insert_element((idx, parent.get_key()), (node, key));
+                L::right_insert_element((idx, pkey), (node, key));
                 let right = self.insert_recursive(parent.get_right(), node, key);
                 let (right, grew) = (right & !GREW_BIT, right & GREW_BIT);
 
@@ -348,12 +355,12 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::Equal => {
-                        println!("Setting balance to Greater for node {:?}", idx);
+                        L::set_balance((idx, pkey), Balance::RightHeavy);
                         self.get_mut(idx).set_balance(Balance::RightHeavy);
                         return idx | GREW_BIT;
                     }
                     Balance::LeftHeavy => {
-                        println!("Setting balance to Equal for node {:?}", idx);
+                        L::set_balance((idx, pkey), Balance::Equal);
                         self.get_mut(idx).set_balance(Balance::Equal);
                     }
                     Balance::RightHeavy => match self.get_ref(right).get_balance() {
@@ -402,10 +409,11 @@ where
 
         let idx = parent;
         let parent = unsafe { self.get_ref(idx) };
+        let pkey = parent.get_key();
 
         unsafe {
             if key < parent.get_key() {
-                L::left_remove_element((idx, parent.get_key()), (parent.get_left(), key));
+                L::left_remove_element((idx, pkey), (parent.get_left(), key));
                 let left = self.remove_recursive(parent.get_left(), key);
                 let (left, shrank) = (left & !SHRANK_BIT, left & SHRANK_BIT);
 
@@ -418,12 +426,12 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::LeftHeavy => {
-                        println!("Setting balance to Equal for node {:?}", idx);
+                        L::set_balance((idx, pkey), Balance::Equal);
                         self.get_mut(idx).set_balance(Balance::Equal);
                         return idx | SHRANK_BIT;
                     }
                     Balance::Equal => {
-                        println!("Setting balance to RightHeavy for node {:?}", idx);
+                        L::set_balance((idx, pkey), Balance::RightHeavy);
                         self.get_mut(idx).set_balance(Balance::RightHeavy);
                     }
                     Balance::RightHeavy => {
@@ -451,7 +459,7 @@ where
 
         unsafe {
             if key > parent.get_key() {
-                L::right_remove_element((idx, parent.get_key()), (parent.get_right(), key));
+                L::right_remove_element((idx, pkey), (parent.get_right(), key));
                 let right = self.remove_recursive(parent.get_right(), key);
                 let (right, shrank) = (right & !SHRANK_BIT, right & SHRANK_BIT);
 
@@ -464,12 +472,12 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::RightHeavy => {
-                        println!("Setting balance to Equal for node {:?}", idx);
+                        L::set_balance((idx, pkey), Balance::RightHeavy);
                         self.get_mut(idx).set_balance(Balance::Equal);
                         return idx | SHRANK_BIT;
                     }
                     Balance::Equal => {
-                        println!("Setting balance to LeftHeavy for node {:?}", idx);
+                        L::set_balance((idx, pkey), Balance::LeftHeavy);
                         self.get_mut(idx).set_balance(Balance::LeftHeavy);
                     }
                     Balance::LeftHeavy => {
@@ -543,12 +551,12 @@ where
 
             match self.get_ref(idx).get_balance() {
                 Balance::LeftHeavy => {
-                    println!("Setting balance to Equal for node {:?}", idx);
+                    L::set_balance((idx, pkey), Balance::LeftHeavy);
                     self.get_mut(idx).set_balance(Balance::Equal);
                     return idx | SHRANK_BIT; // we shrank the tree
                 }
                 Balance::Equal => {
-                    println!("Setting balance to RightHeavy for node {:?}", idx);
+                    L::set_balance((idx, pkey), Balance::RightHeavy);
                     self.get_mut(idx).set_balance(Balance::RightHeavy);
                     return idx; // didn't shrink
                 }
