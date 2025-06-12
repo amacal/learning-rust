@@ -14,7 +14,7 @@ fn main() {
     let arena: NodeArray<AvlNode<i32, i32, i32, i32>, 2_000_000_000> = NodeArray::new();
     let mut forest = AvlForest::debug(arena);
 
-    let root = forest.append(13).unwrap();
+    let root = forest.insert_tree(13).unwrap();
     let _ = forest.insert_element(root, 10, 100).unwrap();
     let _ = forest.insert_element(root, 20, 200).unwrap();
     let _ = forest.insert_element(root, 5, 50).unwrap();

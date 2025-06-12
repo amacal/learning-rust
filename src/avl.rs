@@ -257,7 +257,7 @@ where
     for<'a> &'a N: Into<&'a AvlNode<T, K, V, G>>,
     for<'a> &'a mut N: Into<&'a mut AvlNode<T, K, V, G>>,
 {
-    pub fn append(&mut self, value: T) -> Option<u32> {
+    pub fn insert_tree(&mut self, value: T) -> Option<u32> {
         // return the index of the newly inserted node as the root of the tree
         self.arena.insert(N::from(Node::tree(value)))
     }
@@ -785,26 +785,27 @@ where
         unsafe { self.print_recursive(self.root(tree), 0) };
     }
 
-    unsafe fn print_recursive(&self, node: u32, depth: usize) {
+    unsafe fn print_recursive(&self, idx: u32, depth: usize) {
         // indent by depth
         for _ in 0..depth {
             print!("  ");
         }
 
-        if node == 0 {
+        if idx == 0 {
             println!("- nil");
             return;
         }
 
-        let node_ref = unsafe { self.get_ref(node) };
-        let key = node_ref.get_key();
-        let value = node_ref.get_value();
-        let aug = node_ref.get_augmented();
-        let balance = node_ref.get_balance();
-        let left = node_ref.get_left();
-        let right = node_ref.get_right();
+        let node = unsafe { self.get_ref(idx) };
+        let key = node.get_key();
+        let value = node.get_value();
+        let augmented = node.get_augmented();
+        let balance = node.get_balance();
 
-        println!("- key: {:?}, val: {:?}, aug: {:?}, bal: {:?}, idx: {}", key, value, aug, balance, node);
+        println!("- idx={}; key={:?}; val={:?}|{:?}; {:?}", idx, key, value, augmented, balance);
+
+        let left = node.get_left();
+        let right = node.get_right();
 
         unsafe {
             self.print_recursive(left, depth + 1);
@@ -817,7 +818,7 @@ where
 mod tests {
     use super::*;
     use crate::arena::NodeArray;
-    use rand::{Rng, rand_core::le, seq::SliceRandom};
+    use rand::seq::SliceRandom;
 
     #[derive(Copy, Clone, Debug)]
     struct TestU32(u32);
@@ -909,7 +910,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13);
+        let tree = forest.insert_tree(13);
         assert!(tree.is_some());
 
         let root = forest.insert_element(tree.unwrap(), 1, 2u32.into());
@@ -924,7 +925,7 @@ mod tests {
         let arena: NodeArray<Foreign, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13);
+        let tree = forest.insert_tree(13);
         assert!(tree.is_some());
 
         let root = forest.insert_element(tree.unwrap(), 1, 2u32.into());
@@ -939,7 +940,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
@@ -957,7 +958,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 35, 350u32.into()).unwrap();
@@ -978,7 +979,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 25, 250u32.into()).unwrap();
@@ -996,7 +997,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 35, 350u32.into()).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
@@ -1017,7 +1018,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 35, 350u32.into()).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
@@ -1038,7 +1039,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
@@ -1056,7 +1057,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
         let _ = forest.insert_element(tree, 5, 50u32.into()).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
@@ -1077,7 +1078,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 15, 150u32.into()).unwrap();
@@ -1095,7 +1096,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 70, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 65, 350u32.into()).unwrap();
         let _ = forest.insert_element(tree, 80, 200u32.into()).unwrap();
@@ -1116,7 +1117,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 70, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 65, 350u32.into()).unwrap();
         let _ = forest.insert_element(tree, 80, 200u32.into()).unwrap();
@@ -1145,7 +1146,7 @@ mod tests {
             let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
             let mut forest = AvlForest::debug(arena);
 
-            let tree = forest.append(13).unwrap();
+            let tree = forest.insert_tree(13).unwrap();
             let mut numbers: Vec<i16> = (0..number_of_trials).collect();
 
             numbers.shuffle(&mut rng);
@@ -1178,7 +1179,7 @@ mod tests {
             let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
             let mut forest = AvlForest::debug(arena);
 
-            let tree = forest.append(13).unwrap();
+            let tree = forest.insert_tree(13).unwrap();
             let mut numbers: Vec<i16> = (0..number_of_nodes as i16).collect();
 
             numbers.shuffle(&mut rng);
@@ -1211,7 +1212,7 @@ mod tests {
             let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
             let mut forest = AvlForest::debug(arena);
 
-            let tree = forest.append(13).unwrap();
+            let tree = forest.insert_tree(13).unwrap();
             let mut numbers: Vec<i16> = (0..number_of_nodes as i16).collect();
 
             numbers.shuffle(&mut rng);
@@ -1237,7 +1238,7 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let items: [i16; 7] = [17032, -22888, 30521, -27236, 20409, -11128, -4109];
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
 
         for (i, item) in items.iter().enumerate() {
             let _ = forest.insert_element(tree, *item, i as u32).unwrap();
@@ -1252,7 +1253,7 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let items: [i16; 15] = [12887, -17025, -17760, 25232, 1731, 28198, 16485, -29386, -2389, 14664, -12411, 5699, -4286, 27501, 19256];
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
 
         for (i, key) in items.iter().enumerate() {
             let _ = forest.insert_element(tree, *key, i as u32).unwrap();
@@ -1267,7 +1268,7 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let items: [i16; 15] = [-24585, 9045, -17767, 17675, -8874, 21324, -27870, 22546, -28679, -15606, 29562, 2519, -17342, 1152, 19778];
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
 
         for (i, key) in items.iter().enumerate() {
             let _ = forest.insert_element(tree, *key, i as u32).unwrap();
@@ -1287,7 +1288,7 @@ mod tests {
             4338, 11945, 7138, 6652, 5824, 6792, 11045, 8269, 7687, 9642, 11527, 20798, 18044, 14157, 13864, 17397, 18502, 19930, 24152, 20938, 23705, 32355,
             30116, 32608, 32765,
         ];
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
 
         for (i, key) in items.iter().enumerate() {
             let _ = forest.insert_element(tree, *key, i as u32).unwrap();
@@ -1301,7 +1302,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
@@ -1319,7 +1320,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
@@ -1337,7 +1338,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
@@ -1355,7 +1356,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
@@ -1376,7 +1377,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
@@ -1397,7 +1398,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
@@ -1418,7 +1419,7 @@ mod tests {
         let arena: NodeArray<AvlNode<i32, i32, u32, TestU32>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
         let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
         let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
         let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
@@ -1440,7 +1441,7 @@ mod tests {
         let mut forest = AvlForest::debug(arena);
 
         let items: [i16; 8] = [1423, 2813, 1677, 2656, 3781, 4401, 4323, 2503];
-        let tree = forest.append(13).unwrap();
+        let tree = forest.insert_tree(13).unwrap();
 
         for (i, item) in items.iter().enumerate() {
             let _ = forest.insert_element(tree, *item, i as u32).unwrap();
@@ -1464,7 +1465,7 @@ mod tests {
             let arena: NodeArray<AvlNode<i32, i16, u32, TestU32>, 2000000> = NodeArray::new();
             let mut forest = AvlForest::debug(arena);
 
-            let tree = forest.append(13).unwrap();
+            let tree = forest.insert_tree(13).unwrap();
             let mut numbers: Vec<i16> = (0..number_of_trials).collect();
 
             numbers.shuffle(&mut rng);
