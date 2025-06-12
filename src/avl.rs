@@ -472,7 +472,7 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::RightHeavy => {
-                        L::set_balance((idx, pkey), Balance::RightHeavy);
+                        L::set_balance((idx, pkey), Balance::Equal);
                         self.get_mut(idx).set_balance(Balance::Equal);
                         return idx | SHRANK_BIT;
                     }
@@ -551,7 +551,7 @@ where
 
             match self.get_ref(idx).get_balance() {
                 Balance::LeftHeavy => {
-                    L::set_balance((idx, pkey), Balance::LeftHeavy);
+                    L::set_balance((idx, pkey), Balance::Equal);
                     self.get_mut(idx).set_balance(Balance::Equal);
                     return idx | SHRANK_BIT; // we shrank the tree
                 }
