@@ -100,42 +100,36 @@ impl<T: Copy, K: Copy, V: Copy, G: Copy> AvlLike<T, K, V, G> for AvlNode<T, K, V
 }
 
 pub trait AvlLogger<K, V> {
-    fn left_insert_element(parent: (u32, K), node: (u32, K));
-    fn right_insert_element(parent: (u32, K), node: (u32, K));
-    fn left_remove_element(parent: (u32, K), node: (u32, K));
-    fn right_remove_element(parent: (u32, K), node: (u32, K));
-    fn set_balance(_node: (u32, K), _balance: Balance);
+    fn on_insert(parent: (u32, K), node: (u32, K));
+    fn on_remove(parent: (u32, K), node: (u32, K));
+    fn on_rotate(node: (u32, K));
+    fn on_rebalance(node: (u32, K));
 }
 
 pub struct NoLogger {}
 impl<K, V> AvlLogger<K, V> for NoLogger {
-    fn left_insert_element(_parent: (u32, K), _node: (u32, K)) {}
-    fn right_insert_element(_parent: (u32, K), _node: (u32, K)) {}
-    fn left_remove_element(_parent: (u32, K), _node: (u32, K)) {}
-    fn right_remove_element(_parent: (u32, K), _node: (u32, K)) {}
-    fn set_balance(_node: (u32, K), _balance: Balance) {}
+    fn on_insert(_parent: (u32, K), _node: (u32, K)) {}
+    fn on_remove(_parent: (u32, K), _node: (u32, K)) {}
+    fn on_rotate(_node: (u32, K)) {}
+    fn on_rebalance(_node: (u32, K)) {}
 }
 
 pub struct DebugLogger {}
 impl<K: Debug, V: Debug> AvlLogger<K, V> for DebugLogger {
-    fn left_insert_element(parent: (u32, K), node: (u32, K)) {
-        println!("inserting left {}|{:?} under {}|{:?}", node.0, node.1, parent.0, parent.1);
+    fn on_insert(parent: (u32, K), node: (u32, K)) {
+        println!("inserting {}|{:?} under {}|{:?}", node.0, node.1, parent.0, parent.1);
     }
 
-    fn right_insert_element(parent: (u32, K), node: (u32, K)) {
-        println!("inserting right {}|{:?} under {}|{:?}", node.0, node.1, parent.0, parent.1);
+    fn on_remove(parent: (u32, K), node: (u32, K)) {
+        println!("removing {}|{:?} from {}|{:?}", node.0, node.1, parent.0, parent.1);
     }
 
-    fn left_remove_element(parent: (u32, K), node: (u32, K)) {
-        println!("removing left {}|{:?} from {}|{:?}", node.0, node.1, parent.0, parent.1);
+    fn on_rotate(node: (u32, K)) {
+        println!("rotating {}|{:?}", node.0, node.1);
     }
 
-    fn right_remove_element(parent: (u32, K), node: (u32, K)) {
-        println!("removing right {}|{:?} from {}|{:?}", node.0, node.1, parent.0, parent.1);
-    }
-
-    fn set_balance(node: (u32, K), balance: Balance) {
-        println!("setting balance {}|{:?} to {:?}", node.0, node.1, balance);
+    fn on_rebalance(node: (u32, K)) {
+        println!("rebalancing {}|{:?}", node.0, node.1);
     }
 }
 
@@ -357,7 +351,7 @@ where
 
         unsafe {
             if key < parent.get_key() {
-                L::left_insert_element((idx, pkey), (node, key));
+                L::on_insert((idx, pkey), (node, key));
                 let left = self.insert_recursive(parent.get_left(), node, key);
                 let (left, grew) = (left & !GREW_BIT, left & GREW_BIT);
 
@@ -370,21 +364,21 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::Equal => {
-                        L::set_balance((idx, pkey), Balance::LeftHeavy);
+                        L::on_rebalance((idx, pkey));
                         self.get_mut(idx).set_balance(Balance::LeftHeavy);
                         return idx | GREW_BIT;
                     }
                     Balance::RightHeavy => {
-                        L::set_balance((idx, pkey), Balance::Equal);
+                        L::on_rebalance((idx, pkey));
                         self.get_mut(idx).set_balance(Balance::Equal);
                     }
                     Balance::LeftHeavy => match self.get_ref(left).get_balance() {
                         Balance::LeftHeavy => {
-                            // println!("Rotating left-left case at node {:?}", idx);
+                            L::on_rotate((idx, pkey));
                             return self.rotate_ll(idx, true); // didn't grow
                         }
                         Balance::Equal | Balance::RightHeavy => {
-                            // println!("Rotating left-right case at node {:?}", idx);
+                            L::on_rotate((idx, pkey));
                             return self.rotate_lr(idx); // didn't grow
                         }
                     },
@@ -396,7 +390,7 @@ where
 
         unsafe {
             if key > parent.get_key() {
-                L::right_insert_element((idx, pkey), (node, key));
+                L::on_insert((idx, pkey), (node, key));
                 let right = self.insert_recursive(parent.get_right(), node, key);
                 let (right, grew) = (right & !GREW_BIT, right & GREW_BIT);
 
@@ -409,21 +403,21 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::Equal => {
-                        L::set_balance((idx, pkey), Balance::RightHeavy);
+                        L::on_rebalance((idx, pkey));
                         self.get_mut(idx).set_balance(Balance::RightHeavy);
                         return idx | GREW_BIT;
                     }
                     Balance::LeftHeavy => {
-                        L::set_balance((idx, pkey), Balance::Equal);
+                        L::on_rebalance((idx, pkey));
                         self.get_mut(idx).set_balance(Balance::Equal);
                     }
                     Balance::RightHeavy => match self.get_ref(right).get_balance() {
                         Balance::RightHeavy => {
-                            // println!("Rotating right-right case at node {:?}", idx);
+                            L::on_rotate((idx, pkey));
                             return self.rotate_rr(idx, true); // didn't grow
                         }
                         Balance::Equal | Balance::LeftHeavy => {
-                            // println!("Rotating right-left case at node {:?}", idx);
+                            L::on_rotate((idx, pkey));
                             return self.rotate_rl(idx); // didn't grow
                         }
                     },
@@ -467,7 +461,7 @@ where
 
         unsafe {
             if key < parent.get_key() {
-                L::left_remove_element((idx, pkey), (parent.get_left(), key));
+                L::on_remove((idx, pkey), (parent.get_left(), key));
                 let left = self.remove_recursive(parent.get_left(), key);
                 let (left, shrank) = (left & !SHRANK_BIT, left & SHRANK_BIT);
 
@@ -480,27 +474,27 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::LeftHeavy => {
-                        L::set_balance((idx, pkey), Balance::Equal);
+                        L::on_rebalance((idx, pkey));
                         self.get_mut(idx).set_balance(Balance::Equal);
                         return idx | SHRANK_BIT;
                     }
                     Balance::Equal => {
-                        L::set_balance((idx, pkey), Balance::RightHeavy);
+                        L::on_rebalance((idx, pkey));
                         self.get_mut(idx).set_balance(Balance::RightHeavy);
                     }
                     Balance::RightHeavy => {
                         let right = self.get_ref(idx).get_right();
                         match self.get_ref(right).get_balance() {
                             Balance::Equal => {
-                                // println!("Rotating right-right case at node {:?}", idx);
+                                L::on_rotate((idx, pkey));
                                 return self.rotate_rr(idx, false); // didn't shrink
                             }
                             Balance::RightHeavy => {
-                                // println!("Rotating right-right case at node {:?}", idx);
+                                L::on_rotate((idx, pkey));
                                 return self.rotate_rr(idx, true) | SHRANK_BIT;
                             }
                             Balance::LeftHeavy => {
-                                // println!("Rotating right-left case at node {:?}", idx);
+                                L::on_rotate((idx, pkey));
                                 return self.rotate_rl(idx) | SHRANK_BIT;
                             }
                         }
@@ -513,7 +507,7 @@ where
 
         unsafe {
             if key > parent.get_key() {
-                L::right_remove_element((idx, pkey), (parent.get_right(), key));
+                L::on_remove((idx, pkey), (parent.get_right(), key));
                 let right = self.remove_recursive(parent.get_right(), key);
                 let (right, shrank) = (right & !SHRANK_BIT, right & SHRANK_BIT);
 
@@ -526,27 +520,27 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::RightHeavy => {
-                        L::set_balance((idx, pkey), Balance::Equal);
+                        L::on_rebalance((idx, pkey));
                         self.get_mut(idx).set_balance(Balance::Equal);
                         return idx | SHRANK_BIT;
                     }
                     Balance::Equal => {
-                        L::set_balance((idx, pkey), Balance::LeftHeavy);
+                        L::on_rebalance((idx, pkey));
                         self.get_mut(idx).set_balance(Balance::LeftHeavy);
                     }
                     Balance::LeftHeavy => {
                         let left = self.get_ref(idx).get_left();
                         match self.get_ref(left).get_balance() {
                             Balance::Equal => {
-                                // println!("Rotating left-left case at node {:?}", idx);
+                                L::on_rotate((idx, pkey));
                                 return self.rotate_ll(idx, false); // didn't shrink
                             }
                             Balance::LeftHeavy => {
-                                // println!("Rotating left-left case at node {:?}", idx);
+                                L::on_rotate((idx, pkey));
                                 return self.rotate_ll(idx, true) | SHRANK_BIT;
                             }
                             Balance::RightHeavy => {
-                                // println!("Rotating left-right case at node {:?}", idx);
+                                L::on_rotate((idx, pkey));
                                 return self.rotate_lr(idx) | SHRANK_BIT;
                             }
                         }
@@ -605,12 +599,12 @@ where
 
             match self.get_ref(idx).get_balance() {
                 Balance::LeftHeavy => {
-                    L::set_balance((idx, pkey), Balance::Equal);
+                    L::on_rebalance((idx, pkey));
                     self.get_mut(idx).set_balance(Balance::Equal);
                     return idx | SHRANK_BIT; // we shrank the tree
                 }
                 Balance::Equal => {
-                    L::set_balance((idx, pkey), Balance::RightHeavy);
+                    L::on_rebalance((idx, pkey));
                     self.get_mut(idx).set_balance(Balance::RightHeavy);
                     return idx; // didn't shrink
                 }
@@ -861,7 +855,7 @@ where
             println!("{:depth$}- nil", "");
 
             if !stack.empty() {
-                (idx, depth)= stack.pop();
+                (idx, depth) = stack.pop();
             }
         }
 
