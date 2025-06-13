@@ -380,11 +380,11 @@ where
                     }
                     Balance::LeftHeavy => match self.get_ref(left).get_balance() {
                         Balance::LeftHeavy => {
-                            println!("Rotating left-left case at node {:?}", idx);
+                            // println!("Rotating left-left case at node {:?}", idx);
                             return self.rotate_ll(idx, true); // didn't grow
                         }
                         Balance::Equal | Balance::RightHeavy => {
-                            println!("Rotating left-right case at node {:?}", idx);
+                            // println!("Rotating left-right case at node {:?}", idx);
                             return self.rotate_lr(idx); // didn't grow
                         }
                     },
@@ -419,11 +419,11 @@ where
                     }
                     Balance::RightHeavy => match self.get_ref(right).get_balance() {
                         Balance::RightHeavy => {
-                            println!("Rotating right-right case at node {:?}", idx);
+                            // println!("Rotating right-right case at node {:?}", idx);
                             return self.rotate_rr(idx, true); // didn't grow
                         }
                         Balance::Equal | Balance::LeftHeavy => {
-                            println!("Rotating right-left case at node {:?}", idx);
+                            // println!("Rotating right-left case at node {:?}", idx);
                             return self.rotate_rl(idx); // didn't grow
                         }
                     },
@@ -492,15 +492,15 @@ where
                         let right = self.get_ref(idx).get_right();
                         match self.get_ref(right).get_balance() {
                             Balance::Equal => {
-                                println!("Rotating right-right case at node {:?}", idx);
+                                // println!("Rotating right-right case at node {:?}", idx);
                                 return self.rotate_rr(idx, false); // didn't shrink
                             }
                             Balance::RightHeavy => {
-                                println!("Rotating right-right case at node {:?}", idx);
+                                // println!("Rotating right-right case at node {:?}", idx);
                                 return self.rotate_rr(idx, true) | SHRANK_BIT;
                             }
                             Balance::LeftHeavy => {
-                                println!("Rotating right-left case at node {:?}", idx);
+                                // println!("Rotating right-left case at node {:?}", idx);
                                 return self.rotate_rl(idx) | SHRANK_BIT;
                             }
                         }
@@ -538,15 +538,15 @@ where
                         let left = self.get_ref(idx).get_left();
                         match self.get_ref(left).get_balance() {
                             Balance::Equal => {
-                                println!("Rotating left-left case at node {:?}", idx);
+                                // println!("Rotating left-left case at node {:?}", idx);
                                 return self.rotate_ll(idx, false); // didn't shrink
                             }
                             Balance::LeftHeavy => {
-                                println!("Rotating left-left case at node {:?}", idx);
+                                // println!("Rotating left-left case at node {:?}", idx);
                                 return self.rotate_ll(idx, true) | SHRANK_BIT;
                             }
                             Balance::RightHeavy => {
-                                println!("Rotating left-right case at node {:?}", idx);
+                                // println!("Rotating left-right case at node {:?}", idx);
                                 return self.rotate_lr(idx) | SHRANK_BIT;
                             }
                         }
@@ -618,15 +618,15 @@ where
                     let right = self.get_ref(idx).get_right();
                     match self.get_ref(right).get_balance() {
                         Balance::Equal => {
-                            println!("Rotating right-right case at node {:?}", idx);
+                            // println!("Rotating right-right case at node {:?}", idx);
                             return self.rotate_rr(idx, false); // didn't shrink
                         }
                         Balance::RightHeavy => {
-                            println!("Rotating right-right case at node {:?}", idx);
+                            // println!("Rotating right-right case at node {:?}", idx);
                             return self.rotate_rr(idx, true) | SHRANK_BIT; // we shrank the tree
                         }
                         Balance::LeftHeavy => {
-                            println!("Rotating right-left case at node {:?}", idx);
+                            // println!("Rotating right-left case at node {:?}", idx);
                             return self.rotate_rl(idx) | SHRANK_BIT; // we shrank the tree
                         }
                     }
@@ -846,38 +846,26 @@ where
         let mut stack = InlineStack::<(u32, usize), 64>::new();
         let (mut idx, mut depth) = (self.root(tree), 0);
 
-        fn intend(depth: usize) {
-            for _ in 0..depth {
-                print!("  ");
-            }
-        }
-
         while idx != 0 || !stack.empty() {
             while idx != 0 {
                 let node = unsafe { self.get_ref(idx) };
+                let (key, val) = (node.get_key(), node.get_value());
+                let (aug, bal) = (node.get_augmented(), node.get_balance());
 
-                let key = node.get_key();
-                let val = node.get_value();
-                let aug = node.get_augmented();
-                let bal = node.get_balance();
-
-                intend(depth);
-                println!("- idx={}; key={:?}; val={:?}|{:?}; {:?}", idx, key, val, aug, bal);
+                println!("{:depth$}- idx={}; key={:?}; val={:?}|{:?}; {:?}", "", idx, key, val, aug, bal);
 
                 stack.push((node.get_right(), depth + 1));
                 (idx, depth) = (node.get_left(), depth + 1);
             }
 
-            intend(depth);
-            println!("- nil");
+            println!("{:depth$}- nil", "");
 
             if !stack.empty() {
                 (idx, depth)= stack.pop();
             }
         }
 
-        intend(depth);
-        println!("- nil");
+        println!("{:depth$}- nil", "");
     }
 }
 
