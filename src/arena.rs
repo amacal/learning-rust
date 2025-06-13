@@ -71,11 +71,11 @@ impl<T: Copy, const U: usize> NodeArray<T, U> {
 
 impl<T: Copy, const U: usize> NodeArena<T> for NodeArray<T, U> {
     unsafe fn get_unchecked(&self, idx: u32) -> &T {
-        return &self.entries.get_unchecked(idx as usize).item.value;
+        return unsafe { &self.entries.get_unchecked(idx as usize).item.value };
     }
 
     unsafe fn get_unchecked_mut(&mut self, idx: u32) -> &mut T {
-        return &mut self.entries.get_unchecked_mut(idx as usize).item.value;
+        return unsafe { &mut self.entries.get_unchecked_mut(idx as usize).item.value };
     }
 
     fn insert(&mut self, value: T) -> Option<u32> {
