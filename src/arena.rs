@@ -3,7 +3,6 @@ use std::{
     mem::{self, MaybeUninit},
 };
 
-#[derive(Copy, Clone)]
 struct Root {
     next: u32,
 }
@@ -19,7 +18,6 @@ struct Item<T: Copy> {
 }
 
 union Node<T: Copy> {
-    root: Root,
     free: Free,
     item: Item<T>,
 }
@@ -39,6 +37,7 @@ pub trait NodeArena<T: Copy> {
 }
 
 pub struct NodeArray<T: Copy, const U: usize> {
+    root: Root,
     counter: u32,
     entries: Box<[Node<T>; U]>,
 }
@@ -56,12 +55,12 @@ impl<T: Copy, const U: usize> NodeArray<T, U> {
             initialized
         };
 
-        entries[0] = Node { root: Root { next: 0 } };
-        NodeArray { entries: entries, counter: 0 }
+        entries[0] = Node { free: Free { next: 0 } };
+        NodeArray { entries: entries, counter: 0, root: Root { next: 0 } }
     }
 
     pub fn capacity(&self) -> usize {
-        self.entries.len() - 1
+        U - 1
     }
 
     pub fn allocated(&self) -> usize {
@@ -70,17 +69,19 @@ impl<T: Copy, const U: usize> NodeArray<T, U> {
 }
 
 impl<T: Copy, const U: usize> NodeArena<T> for NodeArray<T, U> {
+    #[inline(always)]
     unsafe fn get_unchecked(&self, idx: u32) -> &T {
         return unsafe { &self.entries.get_unchecked(idx as usize).item.value };
     }
 
+    #[inline(always)]
     unsafe fn get_unchecked_mut(&mut self, idx: u32) -> &mut T {
         return unsafe { &mut self.entries.get_unchecked_mut(idx as usize).item.value };
     }
 
     fn insert(&mut self, value: T) -> Option<u32> {
         // find the next available index
-        let root = unsafe { self.entries.get_unchecked(0).root.next };
+        let root = self.root.next;
         let next = if root > 0 { root } else { self.counter + 1 };
 
         // check if we have enough capacity
@@ -95,8 +96,7 @@ impl<T: Copy, const U: usize> NodeArena<T> for NodeArray<T, U> {
 
         // if root was used, consumed shift head of the linked list
         if root > 0 {
-            let link = unsafe { self.entries.get_unchecked(next as usize).free.next };
-            unsafe { self.entries.get_unchecked_mut(0).root.next = link };
+            unsafe { self.root.next = self.entries.get_unchecked(next as usize).free.next };
         }
 
         // insert the new value
@@ -107,12 +107,13 @@ impl<T: Copy, const U: usize> NodeArena<T> for NodeArray<T, U> {
         return Some(next);
     }
 
+    #[inline(always)]
     unsafe fn release_unchecked(&mut self, idx: u32) {
         // find the head of the linked list (if available)
-        let next = unsafe { self.entries.get_unchecked_mut(0).root.next };
+        let next = self.root.next;
 
         // change the head of the list
-        unsafe { self.entries.get_unchecked_mut(0).root.next = idx };
+        self.root.next = idx;
 
         // point at the previous head
         unsafe { self.entries.get_unchecked_mut(idx as usize).free.next = next };
@@ -120,18 +121,22 @@ impl<T: Copy, const U: usize> NodeArena<T> for NodeArray<T, U> {
 }
 
 impl<'a, T: Copy, A: NodeArena<T>> NodeArena<T> for &UnsafeCell<A> {
+    #[inline(always)]
     fn insert(&mut self, value: T) -> Option<u32> {
         unsafe { (&mut *self.get()).insert(value) }
     }
 
+    #[inline(always)]
     unsafe fn get_unchecked(&self, idx: u32) -> &T {
         unsafe { (&*self.get()).get_unchecked(idx) }
     }
 
+    #[inline(always)]
     unsafe fn get_unchecked_mut(&mut self, idx: u32) -> &mut T {
         unsafe { (&mut *self.get()).get_unchecked_mut(idx) }
     }
 
+    #[inline(always)]
     unsafe fn release_unchecked(&mut self, idx: u32) {
         unsafe { (&mut *self.get()).release_unchecked(idx) }
     }

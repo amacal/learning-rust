@@ -141,42 +141,52 @@ impl<T: Copy, K: Copy, V: Copy, G: Copy> Node<T, K, V, G> {
         AvlNode(Node { item: Item { key, value, left: 0, right: 0, augment: G::augment(&value, None, None) } })
     }
 
+    #[inline(always)]
     fn tree(value: T) -> AvlNode<T, K, V, G> {
         AvlNode(Node { tree: Tree { root: 0, value } })
     }
 
+    #[inline(always)]
     fn get_root(&self) -> u32 {
         unsafe { self.tree.root }
     }
 
+    #[inline(always)]
     fn set_root(&mut self, root: u32) {
         self.tree.root = root;
     }
 
+    #[inline(always)]
     fn get_key(&self) -> K {
         unsafe { self.item.key }
     }
 
+    #[inline(always)]
     fn set_key(&mut self, key: K) {
         self.item.key = key;
     }
 
+    #[inline(always)]
     fn get_value(&self) -> V {
         unsafe { self.item.value }
     }
 
+    #[inline(always)]
     fn set_value(&mut self, value: V) {
         self.item.value = value;
     }
 
+    #[inline(always)]
     fn get_augmented(&self) -> G {
         unsafe { self.item.augment }
     }
 
+    #[inline(always)]
     fn set_augmented(&mut self, augment: G) {
         self.item.augment = augment;
     }
 
+    #[inline(always)]
     fn get_balance(&self) -> Balance {
         // balance is stored in the left and right fields of the item
         // because each side can only sacrifice one bit for balance
@@ -190,6 +200,7 @@ impl<T: Copy, K: Copy, V: Copy, G: Copy> Node<T, K, V, G> {
         }
     }
 
+    #[inline(always)]
     fn set_balance(&mut self, balance: Balance) {
         // similarly here we store the balance
         // in the left and right fields of the item
@@ -211,18 +222,22 @@ impl<T: Copy, K: Copy, V: Copy, G: Copy> Node<T, K, V, G> {
         }
     }
 
+    #[inline(always)]
     fn get_left(&self) -> u32 {
         unsafe { self.item.left & !BALANCE_BIT }
     }
 
+    #[inline(always)]
     fn set_left(&mut self, left: u32) {
         unsafe { self.item.left = left | self.item.left & BALANCE_BIT };
     }
 
+    #[inline(always)]
     fn get_right(&self) -> u32 {
         unsafe { self.item.right & !BALANCE_BIT }
     }
 
+    #[inline(always)]
     fn set_right(&mut self, right: u32) {
         unsafe { self.item.right = right | self.item.right & BALANCE_BIT };
     }
@@ -256,6 +271,7 @@ where
     A: NodeArena<N>,
     L: AvlLogger<K, V>,
 {
+    #[inline(always)]
     unsafe fn get_ref(&self, node: u32) -> &Node<T, K, V, G> {
         let node: &N = unsafe { self.arena.get_unchecked(node) };
         let avl: &AvlNode<T, K, V, G> = node.as_ref();
@@ -263,6 +279,7 @@ where
         return &avl.0;
     }
 
+    #[inline(always)]
     unsafe fn get_mut(&mut self, node: u32) -> &mut Node<T, K, V, G> {
         let node: &mut N = unsafe { self.arena.get_unchecked_mut(node) };
         let avl: &mut AvlNode<T, K, V, G> = node.as_mut();
@@ -270,14 +287,17 @@ where
         return &mut avl.0;
     }
 
+    #[inline(always)]
     pub fn root(&self, tree: u32) -> u32 {
         unsafe { self.get_ref(tree).get_root() }
     }
 
+    #[inline(always)]
     pub fn value(&self, node: u32) -> V {
         unsafe { self.get_ref(node).get_value() }
     }
 
+    #[inline(always)]
     pub fn augmented(&self, node: u32) -> G {
         unsafe { self.get_ref(node).get_augmented() }
     }
@@ -311,6 +331,7 @@ where
     A: NodeArena<N>,
     L: AvlLogger<K, V>,
 {
+    #[inline(always)]
     pub fn insert_tree(&mut self, value: T) -> Option<u32> {
         // return the index of the newly inserted node as the root of the tree
         self.arena.insert(N::from_node(Node::tree(value)))
