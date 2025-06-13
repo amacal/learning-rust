@@ -46,6 +46,26 @@ pub trait AvlAugment<V, G> {
     fn augment(value: &V, left: Option<&G>, right: Option<&G>) -> G;
 }
 
+pub trait AvlLike<T: Copy, K: Copy, V: Copy, G: Copy> {
+    fn from_node(node: AvlNode<T, K, V, G>) -> Self;
+    fn as_ref(&self) -> &AvlNode<T, K, V, G>;
+    fn as_mut(&mut self) -> &mut AvlNode<T, K, V, G>;
+}
+
+impl<T: Copy, K: Copy, V: Copy, G: Copy> AvlLike<T, K, V, G> for AvlNode<T, K, V, G> {
+    fn from_node(node: AvlNode<T, K, V, G>) -> Self {
+        node
+    }
+
+    fn as_ref(&self) -> &AvlNode<T, K, V, G> {
+        self
+    }
+
+    fn as_mut(&mut self) -> &mut AvlNode<T, K, V, G> {
+        self
+    }
+}
+
 pub trait AvlLogger<K, V> {
     fn left_insert_element(parent: (u32, K), node: (u32, K));
     fn right_insert_element(parent: (u32, K), node: (u32, K));
@@ -144,6 +164,8 @@ impl<T: Copy, K: Copy, V: Copy, G: Copy> Node<T, K, V, G> {
     }
 
     fn set_balance(&mut self, balance: Balance) {
+        // similarly here we store the balance
+        // in the left and right fields of the item
         unsafe {
             match balance {
                 Balance::Equal => {
@@ -201,23 +223,22 @@ impl<T: Copy, K: Copy + Debug, V: Copy + Debug, G: Copy, N: Copy, A: NodeArena<N
     }
 }
 
-impl<T: Copy, K: Copy, V: Copy, N, G, A: NodeArena<N>, L: AvlLogger<K, V>> AvlForest<T, K, V, G, N, A, L>
+impl<T: Copy, K: Copy, V: Copy, N: Copy, G: Copy, A, L> AvlForest<T, K, V, G, N, A, L>
 where
-    G: Copy,
-    N: Copy + Into<AvlNode<T, K, V, G>>,
-    for<'a> &'a N: Into<&'a AvlNode<T, K, V, G>>,
-    for<'a> &'a mut N: Into<&'a mut AvlNode<T, K, V, G>>,
+    N: AvlLike<T, K, V, G>,
+    A: NodeArena<N>,
+    L: AvlLogger<K, V>,
 {
     unsafe fn get_ref(&self, node: u32) -> &Node<T, K, V, G> {
         let node: &N = unsafe { self.arena.get_unchecked(node) };
-        let avl: &AvlNode<T, K, V, G> = node.into();
+        let avl: &AvlNode<T, K, V, G> = node.as_ref();
 
         return &avl.0;
     }
 
     unsafe fn get_mut(&mut self, node: u32) -> &mut Node<T, K, V, G> {
         let node: &mut N = unsafe { self.arena.get_unchecked_mut(node) };
-        let avl: &mut AvlNode<T, K, V, G> = node.into();
+        let avl: &mut AvlNode<T, K, V, G> = node.as_mut();
 
         return &mut avl.0;
     }
@@ -256,16 +277,16 @@ where
     }
 }
 
-impl<T: Copy, K: Copy, V: Copy, N, G, A: NodeArena<N>, L: AvlLogger<K, V>> AvlForest<T, K, V, G, N, A, L>
+impl<T: Copy, K: Copy, V: Copy, N: Copy, G: Copy, A, L> AvlForest<T, K, V, G, N, A, L>
 where
-    G: Copy + AvlAugment<V, G>,
-    N: Copy + From<AvlNode<T, K, V, G>> + Into<AvlNode<T, K, V, G>>,
-    for<'a> &'a N: Into<&'a AvlNode<T, K, V, G>>,
-    for<'a> &'a mut N: Into<&'a mut AvlNode<T, K, V, G>>,
+    G: AvlAugment<V, G>,
+    N: AvlLike<T, K, V, G>,
+    A: NodeArena<N>,
+    L: AvlLogger<K, V>,
 {
     pub fn insert_tree(&mut self, value: T) -> Option<u32> {
         // return the index of the newly inserted node as the root of the tree
-        self.arena.insert(N::from(Node::tree(value)))
+        self.arena.insert(N::from_node(Node::tree(value)))
     }
 
     pub fn insert_element(&mut self, tree: u32, key: K, value: V) -> Option<u32>
@@ -273,7 +294,7 @@ where
         K: PartialOrd,
     {
         // allocate a new node in the arena
-        let idx = self.arena.insert(N::from(Node::node(key, value)))?;
+        let idx = self.arena.insert(N::from_node(Node::node(key, value)))?;
 
         // find the root of the tree
         let parent = unsafe { self.get_ref(tree).get_root() };
@@ -782,12 +803,11 @@ where
     }
 }
 
-impl<T: Copy + Debug, K: Copy + Debug + PartialOrd, V: Copy + Debug, N, G, A: NodeArena<N>> AvlForest<T, K, V, G, N, A, DebugLogger>
+impl<T: Copy + Debug, K: Copy + Debug + PartialOrd, V: Copy + Debug, N: Copy, G: Copy + Debug, A> AvlForest<T, K, V, G, N, A, DebugLogger>
 where
-    G: Copy + Debug + AvlAugment<V, G>,
-    N: Copy + From<AvlNode<T, K, V, G>> + Into<AvlNode<T, K, V, G>>,
-    for<'a> &'a N: Into<&'a AvlNode<T, K, V, G>>,
-    for<'a> &'a mut N: Into<&'a mut AvlNode<T, K, V, G>>,
+    G: Debug,
+    N: AvlLike<T, K, V, G>,
+    A: NodeArena<N>,
 {
     pub fn print(&self, tree: u32) {
         unsafe { self.print_recursive(self.root(tree), 0) };
@@ -857,26 +877,16 @@ mod tests {
         avl: AvlNode<i32, i32, u32, TestU32>,
     }
 
-    impl From<AvlNode<i32, i32, u32, TestU32>> for Foreign {
-        fn from(node: AvlNode<i32, i32, u32, TestU32>) -> Self {
+    impl AvlLike<i32, i32, u32, TestU32> for Foreign {
+        fn from_node(node: AvlNode<i32, i32, u32, TestU32>) -> Self {
             Foreign { avl: node }
         }
-    }
 
-    impl Into<AvlNode<i32, i32, u32, TestU32>> for Foreign {
-        fn into(self) -> AvlNode<i32, i32, u32, TestU32> {
-            unsafe { self.avl }
-        }
-    }
-
-    impl<'a> Into<&'a AvlNode<i32, i32, u32, TestU32>> for &'a Foreign {
-        fn into(self) -> &'a AvlNode<i32, i32, u32, TestU32> {
+        fn as_ref(&self) -> &AvlNode<i32, i32, u32, TestU32> {
             unsafe { &self.avl }
         }
-    }
 
-    impl<'a> Into<&'a mut AvlNode<i32, i32, u32, TestU32>> for &'a mut Foreign {
-        fn into(self) -> &'a mut AvlNode<i32, i32, u32, TestU32> {
+        fn as_mut(&mut self) -> &mut AvlNode<i32, i32, u32, TestU32> {
             unsafe { &mut self.avl }
         }
     }
