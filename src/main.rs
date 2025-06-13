@@ -18,7 +18,6 @@ fn main() {
     let _ = forest.insert_element(root, 10, 100).unwrap();
     let _ = forest.insert_element(root, 20, 200).unwrap();
     let _ = forest.insert_element(root, 5, 50).unwrap();
-    let _ = forest.remove_element(root, 5);
 
     forest.print(root);
 

@@ -11,6 +11,39 @@ const SHRANK_BIT: u32 = 0x80000000;
 // Indicates the balance factor of the node
 const BALANCE_BIT: u32 = 0x80000000;
 
+struct InlineStack<T, const U: usize> {
+    items: [T; U],
+    index: usize,
+}
+
+impl<T: Copy + Default, const U: usize> InlineStack<T, U> {
+    fn new() -> Self {
+        InlineStack { items: [T::default(); U], index: 0 }
+    }
+
+    fn empty(&self) -> bool {
+        self.index == 0
+    }
+
+    fn depth(&self) -> usize {
+        self.index
+    }
+
+    fn push(&mut self, value: T) {
+        unsafe {
+            *self.items.get_unchecked_mut(self.index) = value;
+            self.index += 1;
+        }
+    }
+
+    fn pop(&mut self) -> T {
+        unsafe {
+            self.index -= 1;
+            *self.items.get_unchecked(self.index)
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Balance {
     LeftHeavy,
@@ -810,35 +843,41 @@ where
     A: NodeArena<N>,
 {
     pub fn print(&self, tree: u32) {
-        unsafe { self.print_recursive(self.root(tree), 0) };
-    }
+        let mut stack = InlineStack::<(u32, usize), 64>::new();
+        let (mut idx, mut depth) = (self.root(tree), 0);
 
-    unsafe fn print_recursive(&self, idx: u32, depth: usize) {
-        // indent by depth
-        for _ in 0..depth {
-            print!("  ");
+        fn intend(depth: usize) {
+            for _ in 0..depth {
+                print!("  ");
+            }
         }
 
-        if idx == 0 {
+        while idx != 0 || !stack.empty() {
+            while idx != 0 {
+                let node = unsafe { self.get_ref(idx) };
+
+                let key = node.get_key();
+                let val = node.get_value();
+                let aug = node.get_augmented();
+                let bal = node.get_balance();
+
+                intend(depth);
+                println!("- idx={}; key={:?}; val={:?}|{:?}; {:?}", idx, key, val, aug, bal);
+
+                stack.push((node.get_right(), depth + 1));
+                (idx, depth) = (node.get_left(), depth + 1);
+            }
+
+            intend(depth);
             println!("- nil");
-            return;
+
+            if !stack.empty() {
+                (idx, depth)= stack.pop();
+            }
         }
 
-        let node = unsafe { self.get_ref(idx) };
-        let key = node.get_key();
-        let value = node.get_value();
-        let augmented = node.get_augmented();
-        let balance = node.get_balance();
-
-        println!("- idx={}; key={:?}; val={:?}|{:?}; {:?}", idx, key, value, augmented, balance);
-
-        let left = node.get_left();
-        let right = node.get_right();
-
-        unsafe {
-            self.print_recursive(left, depth + 1);
-            self.print_recursive(right, depth + 1);
-        }
+        intend(depth);
+        println!("- nil");
     }
 }
 
