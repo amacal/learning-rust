@@ -5,3 +5,8 @@ edition = "2024"
 
 [dependencies]
 rand = { version = "0.9.1", features = ["std"] }
+criterion = { version = "0.6.0" }
+
+[[bench]]
+name = "insert"
+harness = false

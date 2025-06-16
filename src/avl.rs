@@ -75,8 +75,22 @@ union Node<T: Copy, K: Copy, V: Copy, G: Copy> {
 #[derive(Copy, Clone)]
 pub struct AvlNode<T: Copy, K: Copy, V: Copy, G: Copy>(Node<T, K, V, G>);
 
-pub trait AvlAugment<V, G> {
-    fn augment(value: &V, left: Option<&G>, right: Option<&G>) -> G;
+pub trait AvlAugment<K, V, G> {
+    fn augment(key: &K, value: &V, left: Option<&G>, right: Option<&G>) -> G;
+}
+
+impl<K, V> AvlAugment<K, V, ()> for () {
+    fn augment(_: &K, _: &V, _: Option<&()>, _: Option<&()>) -> () {
+        ()
+    }
+}
+
+pub trait AvlSearch<K: Copy, G: Copy> {
+    // extract ranges from the augmented value
+    fn extract(value: &G) -> (K, K);
+
+    // appends augmeneted value to the result
+    fn append(&mut self, value: &G);
 }
 
 pub trait AvlLike<T: Copy, K: Copy, V: Copy, G: Copy> {
@@ -86,14 +100,17 @@ pub trait AvlLike<T: Copy, K: Copy, V: Copy, G: Copy> {
 }
 
 impl<T: Copy, K: Copy, V: Copy, G: Copy> AvlLike<T, K, V, G> for AvlNode<T, K, V, G> {
+    #[inline(always)]
     fn from_node(node: AvlNode<T, K, V, G>) -> Self {
         node
     }
 
+    #[inline(always)]
     fn as_ref(&self) -> &AvlNode<T, K, V, G> {
         self
     }
 
+    #[inline(always)]
     fn as_mut(&mut self) -> &mut AvlNode<T, K, V, G> {
         self
     }
@@ -103,7 +120,7 @@ pub trait AvlLogger<K, V> {
     fn on_insert(parent: (u32, K), node: (u32, K));
     fn on_remove(parent: (u32, K), node: (u32, K));
     fn on_rotate(node: (u32, K));
-    fn on_rebalance(node: (u32, K));
+    fn on_rebalance(node: (u32, K), balance: Balance);
 }
 
 pub struct NoLogger {}
@@ -111,7 +128,7 @@ impl<K, V> AvlLogger<K, V> for NoLogger {
     fn on_insert(_parent: (u32, K), _node: (u32, K)) {}
     fn on_remove(_parent: (u32, K), _node: (u32, K)) {}
     fn on_rotate(_node: (u32, K)) {}
-    fn on_rebalance(_node: (u32, K)) {}
+    fn on_rebalance(_node: (u32, K), _balance: Balance) {}
 }
 
 pub struct DebugLogger {}
@@ -128,17 +145,17 @@ impl<K: Debug, V: Debug> AvlLogger<K, V> for DebugLogger {
         println!("rotating {}|{:?}", node.0, node.1);
     }
 
-    fn on_rebalance(node: (u32, K)) {
-        println!("rebalancing {}|{:?}", node.0, node.1);
+    fn on_rebalance(node: (u32, K), balance: Balance) {
+        println!("rebalancing {}|{:?} to {:?}", node.0, node.1, balance);
     }
 }
 
 impl<T: Copy, K: Copy, V: Copy, G: Copy> Node<T, K, V, G> {
     fn node(key: K, value: V) -> AvlNode<T, K, V, G>
     where
-        G: AvlAugment<V, G>,
+        G: AvlAugment<K, V, G>,
     {
-        AvlNode(Node { item: Item { key, value, left: 0, right: 0, augment: G::augment(&value, None, None) } })
+        AvlNode(Node { item: Item { key, value, left: 0, right: 0, augment: G::augment(&key, &value, None, None) } })
     }
 
     #[inline(always)]
@@ -326,7 +343,58 @@ where
 
 impl<T: Copy, K: Copy, V: Copy, N: Copy, G: Copy, A, L> AvlForest<T, K, V, G, N, A, L>
 where
-    G: AvlAugment<V, G>,
+    G: AvlAugment<K, V, G>,
+    N: AvlLike<T, K, V, G>,
+    A: NodeArena<N>,
+    L: AvlLogger<K, V>,
+{
+    pub fn search<S>(&self, tree: u32, search: &mut S, from: K, to: K)
+    where
+        K: PartialOrd,
+        S: AvlSearch<K, G>,
+    {
+        self.search_recursive(self.root(tree), search, from, to);
+    }
+
+    fn search_recursive<S>(&self, idx: u32, search: &mut S, from: K, to: K)
+    where
+        K: PartialOrd,
+        S: AvlSearch<K, G>,
+    {
+        if idx == 0 {
+            return;
+        }
+
+        let node = unsafe { self.get_ref(idx) };
+        let key = node.get_key();
+        let augment = node.get_augmented();
+        let range = S::extract(&augment);
+
+        // if the range is outside the search bounds, skip this node
+        if range.1 < from || range.0 > to {
+            return;
+        }
+
+        // if the range is fully inside the search bounds, append the augment
+        if range.0 >= from && range.1 <= to {
+            search.append(&augment);
+            return;
+        }
+
+        // if the range is exactly the key of the node, append the augment
+        if from <= key && key <= to {
+            search.append(&G::augment(&key, &node.get_value(), None, None));
+        }
+
+        // partially inside the range, visit both branches
+        self.search_recursive(node.get_left(), search, from, to);
+        self.search_recursive(node.get_right(), search, from, to);
+    }
+}
+
+impl<T: Copy, K: Copy, V: Copy, N: Copy, G: Copy, A, L> AvlForest<T, K, V, G, N, A, L>
+where
+    G: AvlAugment<K, V, G>,
     N: AvlLike<T, K, V, G>,
     A: NodeArena<N>,
     L: AvlLogger<K, V>,
@@ -371,7 +439,7 @@ where
         let pkey = parent.get_key();
 
         unsafe {
-            if key < parent.get_key() {
+            if key < pkey {
                 L::on_insert((idx, pkey), (node, key));
                 let left = self.insert_recursive(parent.get_left(), node, key);
                 let (left, grew) = (left & !GREW_BIT, left & GREW_BIT);
@@ -385,12 +453,12 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::Equal => {
-                        L::on_rebalance((idx, pkey));
+                        L::on_rebalance((idx, pkey), Balance::LeftHeavy);
                         self.get_mut(idx).set_balance(Balance::LeftHeavy);
                         return idx | GREW_BIT;
                     }
                     Balance::RightHeavy => {
-                        L::on_rebalance((idx, pkey));
+                        L::on_rebalance((idx, pkey), Balance::Equal);
                         self.get_mut(idx).set_balance(Balance::Equal);
                     }
                     Balance::LeftHeavy => match self.get_ref(left).get_balance() {
@@ -398,9 +466,12 @@ where
                             L::on_rotate((idx, pkey));
                             return self.rotate_ll(idx, true); // didn't grow
                         }
-                        Balance::Equal | Balance::RightHeavy => {
+                        Balance::RightHeavy => {
                             L::on_rotate((idx, pkey));
                             return self.rotate_lr(idx); // didn't grow
+                        }
+                        Balance::Equal => {
+                            // won't happen, because grow cannot lead to equal balance
                         }
                     },
                 }
@@ -410,7 +481,7 @@ where
         }
 
         unsafe {
-            if key > parent.get_key() {
+            if key > pkey {
                 L::on_insert((idx, pkey), (node, key));
                 let right = self.insert_recursive(parent.get_right(), node, key);
                 let (right, grew) = (right & !GREW_BIT, right & GREW_BIT);
@@ -424,12 +495,12 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::Equal => {
-                        L::on_rebalance((idx, pkey));
+                        L::on_rebalance((idx, pkey), Balance::RightHeavy);
                         self.get_mut(idx).set_balance(Balance::RightHeavy);
                         return idx | GREW_BIT;
                     }
                     Balance::LeftHeavy => {
-                        L::on_rebalance((idx, pkey));
+                        L::on_rebalance((idx, pkey), Balance::Equal);
                         self.get_mut(idx).set_balance(Balance::Equal);
                     }
                     Balance::RightHeavy => match self.get_ref(right).get_balance() {
@@ -437,9 +508,12 @@ where
                             L::on_rotate((idx, pkey));
                             return self.rotate_rr(idx, true); // didn't grow
                         }
-                        Balance::Equal | Balance::LeftHeavy => {
+                        Balance::LeftHeavy => {
                             L::on_rotate((idx, pkey));
                             return self.rotate_rl(idx); // didn't grow
+                        }
+                        Balance::Equal => {
+                            // won't happen, because grow cannot lead to equal balance
                         }
                     },
                 }
@@ -481,7 +555,7 @@ where
         let pkey = parent.get_key();
 
         unsafe {
-            if key < parent.get_key() {
+            if key < pkey {
                 L::on_remove((idx, pkey), (parent.get_left(), key));
                 let left = self.remove_recursive(parent.get_left(), key);
                 let (left, shrank) = (left & !SHRANK_BIT, left & SHRANK_BIT);
@@ -495,12 +569,12 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::LeftHeavy => {
-                        L::on_rebalance((idx, pkey));
+                        L::on_rebalance((idx, pkey), Balance::Equal);
                         self.get_mut(idx).set_balance(Balance::Equal);
                         return idx | SHRANK_BIT;
                     }
                     Balance::Equal => {
-                        L::on_rebalance((idx, pkey));
+                        L::on_rebalance((idx, pkey), Balance::LeftHeavy);
                         self.get_mut(idx).set_balance(Balance::RightHeavy);
                     }
                     Balance::RightHeavy => {
@@ -527,7 +601,7 @@ where
         }
 
         unsafe {
-            if key > parent.get_key() {
+            if key > pkey {
                 L::on_remove((idx, pkey), (parent.get_right(), key));
                 let right = self.remove_recursive(parent.get_right(), key);
                 let (right, shrank) = (right & !SHRANK_BIT, right & SHRANK_BIT);
@@ -541,12 +615,12 @@ where
 
                 match self.get_ref(idx).get_balance() {
                     Balance::RightHeavy => {
-                        L::on_rebalance((idx, pkey));
+                        L::on_rebalance((idx, pkey), Balance::RightHeavy);
                         self.get_mut(idx).set_balance(Balance::Equal);
                         return idx | SHRANK_BIT;
                     }
                     Balance::Equal => {
-                        L::on_rebalance((idx, pkey));
+                        L::on_rebalance((idx, pkey), Balance::Equal);
                         self.get_mut(idx).set_balance(Balance::LeftHeavy);
                     }
                     Balance::LeftHeavy => {
@@ -620,12 +694,12 @@ where
 
             match self.get_ref(idx).get_balance() {
                 Balance::LeftHeavy => {
-                    L::on_rebalance((idx, pkey));
+                    L::on_rebalance((idx, pkey), Balance::LeftHeavy);
                     self.get_mut(idx).set_balance(Balance::Equal);
                     return idx | SHRANK_BIT; // we shrank the tree
                 }
                 Balance::Equal => {
-                    L::on_rebalance((idx, pkey));
+                    L::on_rebalance((idx, pkey), Balance::Equal);
                     self.get_mut(idx).set_balance(Balance::RightHeavy);
                     return idx; // didn't shrink
                 }
@@ -659,21 +733,38 @@ where
         let left = if left == 0 { None } else { Some(unsafe { self.get_ref(left).get_augmented() }) };
         let right = if right == 0 { None } else { Some(unsafe { self.get_ref(right).get_augmented() }) };
 
-        // now we can get the value of the current node and augment it
+        // now we can get the key, value of the current node and augment it
+        let key = unsafe { self.get_ref(node).get_key() };
         let value = unsafe { self.get_ref(node).get_value() };
-        let augmented = G::augment(&value, left.as_ref(), right.as_ref());
+        let augmented = G::augment(&key, &value, left.as_ref(), right.as_ref());
 
         // and finally we can set the augmented value of the current node
         unsafe { self.get_mut(node).set_augmented(augmented) };
     }
 
-    // Rotate left-left case:
+    // Rotate left-left case (grew at x):
     //
-    //           z (-2)                 y (+1/0)
-    //          / \                    / \
-    //  (-1/0) y   b (?)    =>    (0) x   z (-1/0)
-    //        / \                        / \
-    //   (0) x   a (?)              (?) a   b (?)
+    //         [h+2] z (-1)                  [h+3] z (-2)                 [h+2] y (0)
+    //              / \                           / \                          / \
+    //   [h+1] (0) y   b [h]    =>    [h+2] (-1) y   b [h]    =>    [h+1] (0) x   z (0) [h+1]
+    //            / \                           / \                              / \
+    //       [h] x   a [h]               [h+1] x   a [h]                    [h] a   b [h]
+    //
+    // Rotate left-left case (shrank at b and y's balance was 0):
+    //
+    //         [h+2] z (-1)                 [h+2] z (-2)              [h+2] y (+1)
+    //              / \                          / \                       / \
+    //   [h+1] (0) y   b [h]    =>    [h+1] (0) y   b [h-1]    =>     [h] x   z (-1) [h+1]
+    //            / \                          / \                           / \
+    //       [h] x   a [h]                [h] x   a [h]                 [h] a   b [h-1]
+    //
+    // Rotate left-left case (shrank b and y's balance was -1):
+    //
+    //          [h+2] z (-1)                  [h+2] z (-2)              [h+1] y (0)
+    //               / \                           / \                       / \
+    //   [h+1] (-1) y   b [h]    =>    [h+1] (-1) y   b [h-1]    =>     [h] x   z (0) [h]
+    //             / \                           / \                           / \
+    //        [h] x   a [h-1]               [h] x   a [h-1]             [h-1] a   b [h-1]
     //
     fn rotate_ll(&mut self, z: u32, zero: bool) -> u32 {
         unsafe {
@@ -703,15 +794,27 @@ where
         }
     }
 
-    // Rotate left-right case:
+    // Rotate left-right case (grew at x and y's balance was 0):
+    // - notice that the balance of y or z depends on the balance of x
     //
-    //            z (-2)                    x (0)
-    //           / \                       / \
-    //     (+1) y   d (?)    =>    (-1/0) y   z (+1/0)
-    //         / \                      / \   / \
-    //    (?) c   x (?)                c  a   b  d
-    //           / \
-    //      (?) a   b (?)
+    //         [h+2] z (-1)                 [h+3] z (-2)                  [h+2] x (0)
+    //              / \                          / \                           / \
+    //   [h+1] (0) y   d [h]    =>   [h+2] (+1) y   d [h]    =>    [h+1] (?) y   z (?) [h+1]
+    //            / \                          / \                         / \   / \
+    //       [h] c   x [h]                [h] c   x (?) (h+1)         [h] c  a   b  d [h]
+    //              / \                          / \
+    //             a   b                    [h] a   b [h]
+    //
+    // Rotate left-right case (shrank at d and y's balance was +1):
+    // - notice that the balance of y or z depends on the balance of x
+    //
+    //         [h+2] z (-1)                 [h+2] z (-2)                    [h+1] x (0)
+    //              / \                          / \                             / \
+    //  [h+1] (+1) y   d [h]    =>   [h+1] (+1) y   d [h-1]    =>      [h] (?) y   z (?) [h]
+    //            / \                          / \                            / \   / \
+    //     [h-1] c   x [h]              [h-1] c   x (?) [h]            [h-1] c  a   b  d [h-1]
+    //              / \                          / \
+    //             a   b                        a   b
     //
     unsafe fn rotate_lr(&mut self, z: u32) -> u32 {
         unsafe {
@@ -760,11 +863,17 @@ where
 
     // Rotate right-right case:
     //
-    //          z (+2)                   y (0/-1)
+    //          z (+2)                   y (0)
     //         / \                      / \
-    //    (?) b   y (+1/0)  =>  (+1/0) z   x (0)
+    //    (?) b   y (+1)    =>     (0) z   x (?)
     //           / \                  / \
-    //      (?) a   x (0)        (?) b   a (?)
+    //      (?) a   x (?)        (?) b   a (?)
+    //
+    //          z (+2)                   y (-1)
+    //         / \                      / \
+    //    (?) b   y (0)     =>    (+1) z   x (?)
+    //           / \                  / \
+    //      (?) a   x (?)        (?) b   a (?)
     //
     fn rotate_rr(&mut self, z: u32, zero: bool) -> u32 {
         unsafe {
@@ -798,8 +907,8 @@ where
     // Rotate right-left case:
     //
     //            z (+2)                    x (0)
-    //     (?) d / \                       / \
-    //              y (-1)    =>   (-1/0) z   y (+1/0)
+    //           / \                       / \
+    //      (?) d   y (-1)    =>   (-1/0) z   y (+1/0)
     //             / \                   /\   /\
     //        (?) x   c (?)             d  a b  c
     //           / \
@@ -886,6 +995,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::cmp;
+
     use super::*;
     use crate::arena::NodeArray;
     use rand::seq::SliceRandom;
@@ -893,8 +1004,8 @@ mod tests {
     #[derive(Copy, Clone, Debug)]
     struct TestU32(u32);
 
-    impl AvlAugment<u32, TestU32> for TestU32 {
-        fn augment(value: &u32, left: Option<&TestU32>, right: Option<&TestU32>) -> TestU32 {
+    impl<T> AvlAugment<T, u32, TestU32> for TestU32 {
+        fn augment(_key: &T, value: &u32, left: Option<&TestU32>, right: Option<&TestU32>) -> TestU32 {
             let left = left.map_or(0, |l| l.0);
             let right = right.map_or(0, |r| r.0);
 
@@ -902,15 +1013,75 @@ mod tests {
         }
     }
 
-    impl Default for TestU32 {
-        fn default() -> Self {
-            TestU32(0)
+    #[derive(Copy, Clone, Debug)]
+    struct MinMaxCount {
+        min: u32,
+        max: u32,
+        sum: u64,
+        count: u64,
+    }
+
+    impl AvlAugment<u32, u32, MinMaxCount> for MinMaxCount {
+        fn augment(key: &u32, value: &u32, left: Option<&MinMaxCount>, right: Option<&MinMaxCount>) -> MinMaxCount {
+            let min = match (left, right) {
+                (Some(left), Some(right)) => cmp::min(left.min, right.min),
+                (Some(left), None) => left.min,
+                (None, Some(right)) => right.min,
+                (None, None) => *key,
+            };
+
+            let max = match (left, right) {
+                (Some(left), Some(right)) => cmp::max(left.max, right.max),
+                (Some(left), None) => left.max,
+                (None, Some(right)) => right.max,
+                (None, None) => *key,
+            };
+
+            let count = match (left, right) {
+                (Some(left), Some(right)) => 1 + left.count + right.count,
+                (Some(left), None) => left.count,
+                (None, Some(right)) => right.count,
+                (None, None) => 1,
+            };
+
+            let sum = match (left, right) {
+                (Some(left), Some(right)) => *value as u64 + left.sum + right.sum,
+                (Some(left), None) => *value as u64 + left.sum,
+                (None, Some(right)) => *value as u64 + right.sum,
+                (None, None) => *value as u64,
+            };
+
+            return MinMaxCount { min, max, count, sum };
         }
     }
 
-    impl From<u32> for TestU32 {
-        fn from(value: u32) -> Self {
-            TestU32(value)
+    struct RangeSearch {
+        sum: u64,
+        count: u64,
+    }
+
+    impl RangeSearch {
+        fn new() -> Self {
+            RangeSearch { sum: 0, count: 0 }
+        }
+
+        fn sum(&self) -> u64 {
+            self.sum
+        }
+
+        fn count(&self) -> u64 {
+            self.count
+        }
+    }
+
+    impl AvlSearch<u32, MinMaxCount> for RangeSearch {
+        fn extract(augmented: &MinMaxCount) -> (u32, u32) {
+            (augmented.min, augmented.max)
+        }
+
+        fn append(&mut self, value: &MinMaxCount) {
+            self.sum += value.sum;
+            self.count += value.count;
         }
     }
 
@@ -1544,5 +1715,73 @@ mod tests {
                 assert!(false);
             }
         }
+    }
+
+    #[test]
+    fn can_search_fully_matched_tree() {
+        let arena: NodeArray<AvlNode<(), u32, u32, MinMaxCount>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.insert_tree(()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+
+        let mut search = RangeSearch::new();
+        forest.search(tree, &mut search, 10, 30);
+
+        assert_eq!(search.sum(), 600);
+        assert_eq!(search.count(), 3);
+    }
+
+    #[test]
+    fn can_search_partial_left_matched_tree() {
+        let arena: NodeArray<AvlNode<(), u32, u32, MinMaxCount>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.insert_tree(()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+
+        let mut search = RangeSearch::new();
+        forest.search(tree, &mut search, 10, 20);
+
+        assert_eq!(search.sum(), 300);
+        assert_eq!(search.count(), 2);
+    }
+
+    #[test]
+    fn can_search_partial_right_matched_tree() {
+        let arena: NodeArray<AvlNode<(), u32, u32, MinMaxCount>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.insert_tree(()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+
+        let mut search = RangeSearch::new();
+        forest.search(tree, &mut search, 20, 30);
+
+        assert_eq!(search.sum(), 500);
+        assert_eq!(search.count(), 2);
+    }
+
+    #[test]
+    fn can_search_partial_node_matched_tree() {
+        let arena: NodeArray<AvlNode<(), u32, u32, MinMaxCount>, 10> = NodeArray::new();
+        let mut forest = AvlForest::new(arena);
+
+        let tree = forest.insert_tree(()).unwrap();
+        let _ = forest.insert_element(tree, 20, 200u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 30, 300u32.into()).unwrap();
+        let _ = forest.insert_element(tree, 10, 100u32.into()).unwrap();
+
+        let mut search = RangeSearch::new();
+        forest.search(tree, &mut search, 19, 21);
+
+        assert_eq!(search.sum(), 200);
+        assert_eq!(search.count(), 1);
     }
 }

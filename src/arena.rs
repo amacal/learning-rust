@@ -3,10 +3,6 @@ use std::{
     mem::{self, MaybeUninit},
 };
 
-struct Root {
-    next: u32,
-}
-
 #[derive(Copy, Clone)]
 struct Free {
     next: u32,
@@ -37,7 +33,7 @@ pub trait NodeArena<T: Copy> {
 }
 
 pub struct NodeArray<T: Copy, const U: usize> {
-    root: Root,
+    free: u32,
     counter: u32,
     entries: Box<[Node<T>; U]>,
 }
@@ -56,7 +52,7 @@ impl<T: Copy, const U: usize> NodeArray<T, U> {
         };
 
         entries[0] = Node { free: Free { next: 0 } };
-        NodeArray { entries: entries, counter: 0, root: Root { next: 0 } }
+        NodeArray { entries: entries, counter: 0, free: 0 }
     }
 
     pub fn capacity(&self) -> usize {
@@ -81,8 +77,8 @@ impl<T: Copy, const U: usize> NodeArena<T> for NodeArray<T, U> {
 
     fn insert(&mut self, value: T) -> Option<u32> {
         // find the next available index
-        let root = self.root.next;
-        let next = if root > 0 { root } else { self.counter + 1 };
+        let free = self.free;
+        let next = if free > 0 { free } else { self.counter + 1 };
 
         // check if we have enough capacity
         if next as usize >= self.entries.len() {
@@ -90,13 +86,13 @@ impl<T: Copy, const U: usize> NodeArena<T> for NodeArray<T, U> {
         }
 
         // if counter was used, increment it
-        if root == 0 {
+        if free == 0 {
             self.counter += 1;
         }
 
-        // if root was used, consumed shift head of the linked list
-        if root > 0 {
-            unsafe { self.root.next = self.entries.get_unchecked(next as usize).free.next };
+        // if free was used, consumed shift head of the linked list
+        if free > 0 {
+            unsafe { self.free = self.entries.get_unchecked(next as usize).free.next };
         }
 
         // insert the new value
@@ -110,10 +106,10 @@ impl<T: Copy, const U: usize> NodeArena<T> for NodeArray<T, U> {
     #[inline(always)]
     unsafe fn release_unchecked(&mut self, idx: u32) {
         // find the head of the linked list (if available)
-        let next = self.root.next;
+        let next = self.free;
 
         // change the head of the list
-        self.root.next = idx;
+        self.free = idx;
 
         // point at the previous head
         unsafe { self.entries.get_unchecked_mut(idx as usize).free.next = next };
