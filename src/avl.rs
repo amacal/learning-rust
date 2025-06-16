@@ -1024,23 +1024,23 @@ mod tests {
     impl AvlAugment<u32, u32, MinMaxCount> for MinMaxCount {
         fn augment(key: &u32, value: &u32, left: Option<&MinMaxCount>, right: Option<&MinMaxCount>) -> MinMaxCount {
             let min = match (left, right) {
-                (Some(left), Some(right)) => cmp::min(left.min, right.min),
-                (Some(left), None) => left.min,
-                (None, Some(right)) => right.min,
+                (Some(left), Some(right)) => cmp::min(*key, cmp::min(left.min, right.min)),
+                (Some(left), None) => cmp::min(left.min, *key),
+                (None, Some(right)) => cmp::min(right.min, *key),
                 (None, None) => *key,
             };
 
             let max = match (left, right) {
-                (Some(left), Some(right)) => cmp::max(left.max, right.max),
-                (Some(left), None) => left.max,
-                (None, Some(right)) => right.max,
+                (Some(left), Some(right)) => cmp::max(*key, cmp::max(left.max, right.max)),
+                (Some(left), None) => cmp::max(left.max, *key),
+                (None, Some(right)) => cmp::max(right.max, *key),
                 (None, None) => *key,
             };
 
             let count = match (left, right) {
                 (Some(left), Some(right)) => 1 + left.count + right.count,
-                (Some(left), None) => left.count,
-                (None, Some(right)) => right.count,
+                (Some(left), None) => 1 + left.count,
+                (None, Some(right)) => 1 + right.count,
                 (None, None) => 1,
             };
 
