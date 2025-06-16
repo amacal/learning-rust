@@ -707,15 +707,15 @@ where
                     let right = self.get_ref(idx).get_right();
                     match self.get_ref(right).get_balance() {
                         Balance::Equal => {
-                            // println!("Rotating right-right case at node {:?}", idx);
+                            L::on_rotate((idx, pkey));
                             return self.rotate_rr(idx, false); // didn't shrink
                         }
                         Balance::RightHeavy => {
-                            // println!("Rotating right-right case at node {:?}", idx);
+                            L::on_rotate((idx, pkey));
                             return self.rotate_rr(idx, true) | SHRANK_BIT; // we shrank the tree
                         }
                         Balance::LeftHeavy => {
-                            // println!("Rotating right-left case at node {:?}", idx);
+                            L::on_rotate((idx, pkey));
                             return self.rotate_rl(idx) | SHRANK_BIT; // we shrank the tree
                         }
                     }
