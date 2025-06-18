@@ -73,8 +73,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use core::num;
-
     use rand::seq::SliceRandom;
 
     use crate::arena::NodeArray;
@@ -166,12 +164,23 @@ mod tests {
         let mut numbers: Vec<i32> = (0..number_of_trials).collect();
 
         numbers.shuffle(&mut rng);
-        for i in 0..100 {
-            forest.insert_element(tree, numbers[i], i as u32).unwrap();
+        for (idx, key) in numbers.iter().enumerate() {
+            forest.insert_element(tree, *key, idx as u32).unwrap();
         }
 
         let root = forest.root(tree);
         let (lt, mid, rt) = forest.split(root, 17);
 
+        for node in forest.inorder(lt) {
+            assert!(node.0.get_key() < 17);
+        }
+
+        for node in forest.inorder(mid) {
+            assert!(node.0.get_key() == 17);
+        }
+
+        for node in forest.inorder(rt) {
+            assert!(node.0.get_key() > 17);
+        }
     }
 }

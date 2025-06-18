@@ -1,3 +1,4 @@
+mod inorder;
 mod merge;
 
 use super::arena::NodeArena;
@@ -327,6 +328,11 @@ where
     #[inline(always)]
     pub fn root(&self, tree: u32) -> u32 {
         unsafe { self.get_ref(tree).get_root() }
+    }
+
+    #[inline(always)]
+    pub fn key(&self, node: u32) -> K {
+        unsafe { self.get_ref(node).get_key() }
     }
 
     #[inline(always)]
