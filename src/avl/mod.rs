@@ -1,3 +1,5 @@
+mod merge;
+
 use super::arena::NodeArena;
 
 use std::{fmt::Debug, marker::PhantomData};
@@ -458,10 +460,12 @@ where
 
         unsafe {
             if key < pkey {
+                // insert recursively into the left subtree
                 L::on_insert((idx, pkey), (node, key));
                 let left = self.insert_recursive(parent.get_left(), node, key);
                 let (left, grew) = (left & !GREW_BIT, left & GREW_BIT);
 
+                // update affected node
                 self.get_mut(idx).set_left(left);
                 self.update_augmented(idx);
 
@@ -475,10 +479,12 @@ where
 
         unsafe {
             if key > pkey {
+                // insert recursively into the right subtree
                 L::on_insert((idx, pkey), (node, key));
                 let right = self.insert_recursive(parent.get_right(), node, key);
                 let (right, grew) = (right & !GREW_BIT, right & GREW_BIT);
 
+                // update affected node
                 self.get_mut(idx).set_right(right);
                 self.update_augmented(idx);
 
