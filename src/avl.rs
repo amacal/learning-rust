@@ -76,6 +76,7 @@ union Node<T: Copy, K: Copy, V: Copy, G: Copy> {
 pub struct AvlNode<T: Copy, K: Copy, V: Copy, G: Copy>(Node<T, K, V, G>);
 
 pub trait AvlAugment<K, V, G> {
+    // augment the value based on the key, value and both children
     fn augment(key: &K, value: &V, left: Option<&G>, right: Option<&G>) -> G;
 }
 
@@ -83,6 +84,11 @@ impl<K, V> AvlAugment<K, V, ()> for () {
     fn augment(_: &K, _: &V, _: Option<&()>, _: Option<&()>) -> () {
         ()
     }
+}
+
+pub trait AvlHeight {
+    // provides the height of the tree
+    fn height(&self) -> u8;
 }
 
 pub trait AvlSearch<K: Copy, G: Copy> {
@@ -94,8 +100,13 @@ pub trait AvlSearch<K: Copy, G: Copy> {
 }
 
 pub trait AvlLike<T: Copy, K: Copy, V: Copy, G: Copy> {
+    // wraps avl-node into trait struct
     fn from_node(node: AvlNode<T, K, V, G>) -> Self;
+
+    // extracts reference to the avl-node
     fn as_ref(&self) -> &AvlNode<T, K, V, G>;
+
+    // extracts mutable reference to the avl-node
     fn as_mut(&mut self) -> &mut AvlNode<T, K, V, G>;
 }
 
@@ -117,9 +128,16 @@ impl<T: Copy, K: Copy, V: Copy, G: Copy> AvlLike<T, K, V, G> for AvlNode<T, K, V
 }
 
 pub trait AvlLogger<K, V> {
+    // called when a node is inserted
     fn on_insert(parent: (u32, K), node: (u32, K));
+
+    // called when a node is removed
     fn on_remove(parent: (u32, K), node: (u32, K));
+
+    // called when a node is rotated
     fn on_rotate(node: (u32, K));
+
+    // called when a node is rebalanced
     fn on_rebalance(node: (u32, K), balance: Balance);
 }
 
@@ -447,36 +465,11 @@ where
                 self.get_mut(idx).set_left(left);
                 self.update_augmented(idx);
 
-                if grew == 0 {
-                    return idx;
-                }
-
-                match self.get_ref(idx).get_balance() {
-                    Balance::Equal => {
-                        L::on_rebalance((idx, pkey), Balance::LeftHeavy);
-                        self.get_mut(idx).set_balance(Balance::LeftHeavy);
-                        return idx | GREW_BIT;
-                    }
-                    Balance::RightHeavy => {
-                        L::on_rebalance((idx, pkey), Balance::Equal);
-                        self.get_mut(idx).set_balance(Balance::Equal);
-                    }
-                    Balance::LeftHeavy => match self.get_ref(left).get_balance() {
-                        Balance::LeftHeavy => {
-                            L::on_rotate((idx, pkey));
-                            return self.rotate_ll(idx, true); // didn't grow
-                        }
-                        Balance::RightHeavy => {
-                            L::on_rotate((idx, pkey));
-                            return self.rotate_lr(idx); // didn't grow
-                        }
-                        Balance::Equal => {
-                            // won't happen, because grow cannot lead to equal balance
-                        }
-                    },
-                }
-
-                return idx; // didn't grow
+                return if grew > 0 {
+                    self.insert_rebalance_left(idx, pkey, left)
+                } else {
+                    idx // didn't grow
+                };
             }
         }
 
@@ -489,42 +482,79 @@ where
                 self.get_mut(idx).set_right(right);
                 self.update_augmented(idx);
 
-                if grew == 0 {
-                    return idx;
-                }
-
-                match self.get_ref(idx).get_balance() {
-                    Balance::Equal => {
-                        L::on_rebalance((idx, pkey), Balance::RightHeavy);
-                        self.get_mut(idx).set_balance(Balance::RightHeavy);
-                        return idx | GREW_BIT;
-                    }
-                    Balance::LeftHeavy => {
-                        L::on_rebalance((idx, pkey), Balance::Equal);
-                        self.get_mut(idx).set_balance(Balance::Equal);
-                    }
-                    Balance::RightHeavy => match self.get_ref(right).get_balance() {
-                        Balance::RightHeavy => {
-                            L::on_rotate((idx, pkey));
-                            return self.rotate_rr(idx, true); // didn't grow
-                        }
-                        Balance::LeftHeavy => {
-                            L::on_rotate((idx, pkey));
-                            return self.rotate_rl(idx); // didn't grow
-                        }
-                        Balance::Equal => {
-                            // won't happen, because grow cannot lead to equal balance
-                        }
-                    },
-                }
-
-                return idx; // didn't grow
+                return if grew > 0 {
+                    self.insert_rebalance_right(idx, pkey, right)
+                } else {
+                    idx // didn't grow
+                };
             }
         }
 
         // we do knowing, but disposing already allocated node
         unsafe { self.arena.release_unchecked(node) };
         return idx;
+    }
+
+    unsafe fn insert_rebalance_left(&mut self, idx: u32, pkey: K, left: u32) -> u32 {
+        unsafe {
+            match self.get_ref(idx).get_balance() {
+                Balance::Equal => {
+                    L::on_rebalance((idx, pkey), Balance::LeftHeavy);
+                    self.get_mut(idx).set_balance(Balance::LeftHeavy);
+                    return idx | GREW_BIT;
+                }
+                Balance::RightHeavy => {
+                    L::on_rebalance((idx, pkey), Balance::Equal);
+                    self.get_mut(idx).set_balance(Balance::Equal);
+                }
+                Balance::LeftHeavy => match self.get_ref(left).get_balance() {
+                    Balance::LeftHeavy => {
+                        L::on_rotate((idx, pkey));
+                        return self.rotate_ll(idx, true); // didn't grow
+                    }
+                    Balance::RightHeavy => {
+                        L::on_rotate((idx, pkey));
+                        return self.rotate_lr(idx); // didn't grow
+                    }
+                    Balance::Equal => {
+                        // won't happen, because grow cannot lead to equal balance
+                    }
+                },
+            }
+        }
+
+        return idx; // didn't grow
+    }
+
+    unsafe fn insert_rebalance_right(&mut self, idx: u32, pkey: K, right: u32) -> u32 {
+        unsafe {
+            match self.get_ref(idx).get_balance() {
+                Balance::Equal => {
+                    L::on_rebalance((idx, pkey), Balance::RightHeavy);
+                    self.get_mut(idx).set_balance(Balance::RightHeavy);
+                    return idx | GREW_BIT;
+                }
+                Balance::LeftHeavy => {
+                    L::on_rebalance((idx, pkey), Balance::Equal);
+                    self.get_mut(idx).set_balance(Balance::Equal);
+                }
+                Balance::RightHeavy => match self.get_ref(right).get_balance() {
+                    Balance::RightHeavy => {
+                        L::on_rotate((idx, pkey));
+                        return self.rotate_rr(idx, true); // didn't grow
+                    }
+                    Balance::LeftHeavy => {
+                        L::on_rotate((idx, pkey));
+                        return self.rotate_rl(idx); // didn't grow
+                    }
+                    Balance::Equal => {
+                        // won't happen, because grow cannot lead to equal balance
+                    }
+                },
+            }
+        }
+
+        return idx; // didn't grow
     }
 
     pub fn remove_element(&mut self, tree: u32, key: K)
@@ -563,40 +593,11 @@ where
                 self.get_mut(idx).set_left(left);
                 self.update_augmented(idx);
 
-                if shrank == 0 {
-                    return idx;
-                }
-
-                match self.get_ref(idx).get_balance() {
-                    Balance::LeftHeavy => {
-                        L::on_rebalance((idx, pkey), Balance::Equal);
-                        self.get_mut(idx).set_balance(Balance::Equal);
-                        return idx | SHRANK_BIT;
-                    }
-                    Balance::Equal => {
-                        L::on_rebalance((idx, pkey), Balance::LeftHeavy);
-                        self.get_mut(idx).set_balance(Balance::RightHeavy);
-                    }
-                    Balance::RightHeavy => {
-                        let right = self.get_ref(idx).get_right();
-                        match self.get_ref(right).get_balance() {
-                            Balance::Equal => {
-                                L::on_rotate((idx, pkey));
-                                return self.rotate_rr(idx, false); // didn't shrink
-                            }
-                            Balance::RightHeavy => {
-                                L::on_rotate((idx, pkey));
-                                return self.rotate_rr(idx, true) | SHRANK_BIT;
-                            }
-                            Balance::LeftHeavy => {
-                                L::on_rotate((idx, pkey));
-                                return self.rotate_rl(idx) | SHRANK_BIT;
-                            }
-                        }
-                    }
-                }
-
-                return idx;
+                return if shrank > 0 {
+                    self.remove_rebalance_left(idx, pkey)
+                } else {
+                    idx // didn't shrink
+                };
             }
         }
 
@@ -609,40 +610,11 @@ where
                 self.get_mut(idx).set_right(right);
                 self.update_augmented(idx);
 
-                if shrank == 0 {
-                    return idx;
-                }
-
-                match self.get_ref(idx).get_balance() {
-                    Balance::RightHeavy => {
-                        L::on_rebalance((idx, pkey), Balance::RightHeavy);
-                        self.get_mut(idx).set_balance(Balance::Equal);
-                        return idx | SHRANK_BIT;
-                    }
-                    Balance::Equal => {
-                        L::on_rebalance((idx, pkey), Balance::Equal);
-                        self.get_mut(idx).set_balance(Balance::LeftHeavy);
-                    }
-                    Balance::LeftHeavy => {
-                        let left = self.get_ref(idx).get_left();
-                        match self.get_ref(left).get_balance() {
-                            Balance::Equal => {
-                                L::on_rotate((idx, pkey));
-                                return self.rotate_ll(idx, false); // didn't shrink
-                            }
-                            Balance::LeftHeavy => {
-                                L::on_rotate((idx, pkey));
-                                return self.rotate_ll(idx, true) | SHRANK_BIT;
-                            }
-                            Balance::RightHeavy => {
-                                L::on_rotate((idx, pkey));
-                                return self.rotate_lr(idx) | SHRANK_BIT;
-                            }
-                        }
-                    }
-                }
-
-                return idx;
+                return if shrank > 0 {
+                    self.remove_rebalance_right(idx, pkey)
+                } else {
+                    idx // didn't shrink
+                };
             }
         }
 
@@ -688,20 +660,25 @@ where
             self.get_mut(idx).set_left(left);
             self.update_augmented(idx);
 
-            if shrank == 0 {
-                return idx; // didn't shrink
-            }
+            return if shrank > 0 {
+                self.remove_rebalance_left(idx, pkey)
+            } else {
+                idx // didn't shrink
+            };
+        }
+    }
 
+    unsafe fn remove_rebalance_left(&mut self, idx: u32, pkey: K) -> u32 {
+        unsafe {
             match self.get_ref(idx).get_balance() {
                 Balance::LeftHeavy => {
-                    L::on_rebalance((idx, pkey), Balance::LeftHeavy);
+                    L::on_rebalance((idx, pkey), Balance::Equal);
                     self.get_mut(idx).set_balance(Balance::Equal);
-                    return idx | SHRANK_BIT; // we shrank the tree
+                    return idx | SHRANK_BIT;
                 }
                 Balance::Equal => {
-                    L::on_rebalance((idx, pkey), Balance::Equal);
+                    L::on_rebalance((idx, pkey), Balance::LeftHeavy);
                     self.get_mut(idx).set_balance(Balance::RightHeavy);
-                    return idx; // didn't shrink
                 }
                 Balance::RightHeavy => {
                     let right = self.get_ref(idx).get_right();
@@ -712,16 +689,53 @@ where
                         }
                         Balance::RightHeavy => {
                             L::on_rotate((idx, pkey));
-                            return self.rotate_rr(idx, true) | SHRANK_BIT; // we shrank the tree
+                            return self.rotate_rr(idx, true) | SHRANK_BIT;
                         }
                         Balance::LeftHeavy => {
                             L::on_rotate((idx, pkey));
-                            return self.rotate_rl(idx) | SHRANK_BIT; // we shrank the tree
+                            return self.rotate_rl(idx) | SHRANK_BIT;
                         }
                     }
                 }
             }
         }
+
+        return idx;
+    }
+
+    unsafe fn remove_rebalance_right(&mut self, idx: u32, pkey: K) -> u32 {
+        unsafe {
+            match self.get_ref(idx).get_balance() {
+                Balance::RightHeavy => {
+                    L::on_rebalance((idx, pkey), Balance::RightHeavy);
+                    self.get_mut(idx).set_balance(Balance::Equal);
+                    return idx | SHRANK_BIT;
+                }
+                Balance::Equal => {
+                    L::on_rebalance((idx, pkey), Balance::Equal);
+                    self.get_mut(idx).set_balance(Balance::LeftHeavy);
+                }
+                Balance::LeftHeavy => {
+                    let left = self.get_ref(idx).get_left();
+                    match self.get_ref(left).get_balance() {
+                        Balance::Equal => {
+                            L::on_rotate((idx, pkey));
+                            return self.rotate_ll(idx, false); // didn't shrink
+                        }
+                        Balance::LeftHeavy => {
+                            L::on_rotate((idx, pkey));
+                            return self.rotate_ll(idx, true) | SHRANK_BIT;
+                        }
+                        Balance::RightHeavy => {
+                            L::on_rotate((idx, pkey));
+                            return self.rotate_lr(idx) | SHRANK_BIT;
+                        }
+                    }
+                }
+            }
+        }
+
+        return idx;
     }
 
     unsafe fn update_augmented(&mut self, node: u32) {
