@@ -170,19 +170,19 @@ mod tests {
             forest.insert_element(tree, *key, idx as u32).unwrap();
         }
 
-        let root = forest.root(tree);
-        let (lt, mid, rt) = forest.split(root, 17);
+        let (pivot, root) = (17, forest.root(tree));
+        let (lt, mid, rt) = forest.split(root, pivot);
 
-        for node in forest.inorder(lt) {
-            assert!(node.0 < 17);
+        for (key, _, _) in forest.inorder(lt) {
+            assert!(key < pivot);
         }
 
-        for node in forest.inorder(mid) {
-            assert!(node.0 == 17);
+        for (key, _, _) in forest.inorder(mid) {
+            assert!(key == pivot);
         }
 
-        for node in forest.inorder(rt) {
-            assert!(node.0 > 17);
+        for (key, _, _) in forest.inorder(rt) {
+            assert!(key > pivot);
         }
     }
 }
