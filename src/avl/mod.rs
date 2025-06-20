@@ -1,5 +1,8 @@
+mod inline;
 mod inorder;
 mod merge;
+
+use crate::avl::inline::InlineStack;
 
 use super::arena::NodeArena;
 
@@ -13,39 +16,6 @@ const SHRANK_BIT: u32 = 0x80000000;
 
 // Indicates the balance factor of the node
 const BALANCE_BIT: u32 = 0x80000000;
-
-struct InlineStack<T, const U: usize> {
-    items: [T; U],
-    index: usize,
-}
-
-impl<T: Copy + Default, const U: usize> InlineStack<T, U> {
-    fn new() -> Self {
-        InlineStack { items: [T::default(); U], index: 0 }
-    }
-
-    fn empty(&self) -> bool {
-        self.index == 0
-    }
-
-    fn depth(&self) -> usize {
-        self.index
-    }
-
-    fn push(&mut self, value: T) {
-        unsafe {
-            *self.items.get_unchecked_mut(self.index) = value;
-            self.index += 1;
-        }
-    }
-
-    fn pop(&mut self) -> T {
-        unsafe {
-            self.index -= 1;
-            *self.items.get_unchecked(self.index)
-        }
-    }
-}
 
 #[derive(Debug)]
 pub enum Balance {
@@ -323,6 +293,14 @@ where
         let avl: &mut AvlNode<T, K, V, G> = node.as_mut();
 
         return &mut avl.0;
+    }
+
+    #[inline(always)]
+    unsafe fn get_node(&self, node: u32) -> &AvlNode<T, K, V, G> {
+        let node: &N = unsafe { self.arena.get_unchecked(node) };
+        let avl: &AvlNode<T, K, V, G> = node.as_ref();
+
+        return &avl;
     }
 
     #[inline(always)]

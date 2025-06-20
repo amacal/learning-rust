@@ -14,7 +14,9 @@ where
         0
     }
 
-    pub fn split(&mut self, idx: u32, key: K) -> (u32, u32, u32)
+    // splits the tree at the given index by the key
+    // it doesn't preserve the AVL tree properties
+    fn split(&mut self, idx: u32, key: K) -> (u32, u32, u32)
     where
         K: PartialOrd,
     {
@@ -172,15 +174,15 @@ mod tests {
         let (lt, mid, rt) = forest.split(root, 17);
 
         for node in forest.inorder(lt) {
-            assert!(node.0.get_key() < 17);
+            assert!(node.0 < 17);
         }
 
         for node in forest.inorder(mid) {
-            assert!(node.0.get_key() == 17);
+            assert!(node.0 == 17);
         }
 
         for node in forest.inorder(rt) {
-            assert!(node.0.get_key() > 17);
+            assert!(node.0 > 17);
         }
     }
 }
