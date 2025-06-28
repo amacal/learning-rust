@@ -19,16 +19,19 @@ union Node<T: Copy> {
 }
 
 pub trait NodeArena<T: Copy> {
-    /// inserts a new value into the arena and returns its index
+    // inserts a new value into the arena and returns its index
     fn insert(&mut self, value: T) -> Option<u32>;
 
-    /// retrieves an immutable value from the arena by its index
+    // inserts a new value into the arena without checking for capacity
+    unsafe fn insert_unchecked(&mut self, value: T) -> u32;
+
+    // retrieves an immutable value from the arena by its index
     unsafe fn get_unchecked(&self, idx: u32) -> &T;
 
-    /// retrieves a mutable value from the arena by its index
+    // retrieves a mutable value from the arena by its index
     unsafe fn get_unchecked_mut(&mut self, idx: u32) -> &mut T;
 
-    /// releases a value from the arena by its index, allowing it to be reused
+    // releases a value from the arena by its index, allowing it to be reused
     unsafe fn release_unchecked(&mut self, idx: u32);
 }
 
@@ -103,6 +106,21 @@ impl<T: Copy, const U: usize> NodeArena<T> for NodeArray<T, U> {
         return Some(next);
     }
 
+    unsafe fn insert_unchecked(&mut self, value: T) -> u32 {
+        // assume free is always available
+        let next = self.free;
+
+        // consume the head of the linked list
+        unsafe { self.free = self.entries.get_unchecked(next as usize).free.next };
+
+        // insert the new value
+        unsafe {
+            self.entries.get_unchecked_mut(next as usize).item.value = value;
+        }
+
+        return next;
+    }
+
     #[inline(always)]
     unsafe fn release_unchecked(&mut self, idx: u32) {
         // find the head of the linked list (if available)
@@ -120,6 +138,11 @@ impl<'a, T: Copy, A: NodeArena<T>> NodeArena<T> for &UnsafeCell<A> {
     #[inline(always)]
     fn insert(&mut self, value: T) -> Option<u32> {
         unsafe { (&mut *self.get()).insert(value) }
+    }
+
+    #[inline(always)]
+    unsafe fn insert_unchecked(&mut self, value: T) -> u32 {
+        unsafe { (&mut *self.get()).insert_unchecked(value) }
     }
 
     #[inline(always)]

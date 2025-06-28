@@ -12,7 +12,7 @@ use std::{fmt::Debug, marker::PhantomData};
 const GREW_BIT: u32 = 0x80000000;
 
 // Indicates that the tree shrank by one node
-const SHRANK_BIT: u32 = 0x80000000;
+pub const SHRANK_BIT: u32 = 0x80000000;
 
 // Indicates the balance factor of the node
 const BALANCE_BIT: u32 = 0x80000000;
@@ -973,6 +973,32 @@ where
     pub fn print(&self, tree: u32) {
         let mut stack = InlineStack::<(u32, usize), 64>::new();
         let (mut idx, mut depth) = (self.root(tree), 0);
+
+        while idx != 0 || !stack.empty() {
+            while idx != 0 {
+                let node = unsafe { self.get_ref(idx) };
+                let (key, val) = (node.get_key(), node.get_value());
+                let (aug, bal) = (node.get_augmented(), node.get_balance());
+
+                println!("{:depth$}- idx={}; key={:?}; val={:?}|{:?}; {:?}", "", idx, key, val, aug, bal);
+
+                stack.push((node.get_right(), depth + 1));
+                (idx, depth) = (node.get_left(), depth + 1);
+            }
+
+            println!("{:depth$}- nil", "");
+
+            if !stack.empty() {
+                (idx, depth) = stack.pop();
+            }
+        }
+
+        println!("{:depth$}- nil", "");
+    }
+
+    pub fn print_node(&self, node: u32) {
+        let mut stack = InlineStack::<(u32, usize), 64>::new();
+        let (mut idx, mut depth) = (node, 0);
 
         while idx != 0 || !stack.empty() {
             while idx != 0 {

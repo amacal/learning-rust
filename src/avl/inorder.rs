@@ -1,6 +1,6 @@
 use crate::arena::NodeArena;
 use crate::avl::inline::InlineStack;
-use crate::avl::{AvlForest, AvlLike, AvlLogger, AvlNode};
+use crate::avl::{AvlForest, AvlLike, AvlLogger};
 
 struct InorderIterator<'a, T: Copy, K: Copy, V: Copy, G: Copy, N: Copy, A, L>
 where
@@ -27,6 +27,7 @@ where
         InorderIterator { forest, path, idx: 0 }
     }
 
+    // records the leftmost path from the given index to the leftmost leaf
     fn leftmost(forest: &AvlForest<T, K, V, G, N, A, L>, path: &mut InlineStack<u32, 64>, idx: u32) {
         let mut idx = idx;
 
@@ -40,6 +41,7 @@ where
         }
     }
 
+    // extracts the key, value, and augmented data from the node at the given index
     #[inline(always)]
     fn node(&self, idx: u32) -> (K, V, G) {
         let node = unsafe { self.forest.get_node(idx) };
@@ -56,6 +58,7 @@ where
     type Item = (K, V, G);
 
     fn next(&mut self) -> Option<Self::Item> {
+        // no more nodes to traverse
         if self.path.empty() {
             return None;
         }
