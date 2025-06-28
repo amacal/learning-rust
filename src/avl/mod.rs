@@ -59,11 +59,6 @@ impl<K, V> AvlAugment<K, V, ()> for () {
     }
 }
 
-pub trait AvlHeight {
-    // provides the height of the tree
-    fn height(&self) -> u8;
-}
-
 pub trait AvlSearch<K: Copy, G: Copy> {
     // extract ranges from the augmented value
     fn extract(value: &G) -> (K, K);

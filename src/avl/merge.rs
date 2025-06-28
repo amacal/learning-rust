@@ -1,10 +1,21 @@
 use std::fmt::Debug;
 
 use crate::arena::NodeArena;
-use crate::avl::{AvlAugment, AvlForest, AvlHeight, AvlLike, AvlLogger, Balance, GREW_BIT};
+use crate::avl::{AvlAugment, AvlForest, AvlLike, AvlLogger, Balance, GREW_BIT};
+
+pub trait AvlHeight {
+    // provides the height of the tree
+    fn height(&self) -> u8;
+}
+
+pub trait AvlMerge<K: Copy, V: Copy> {
+    // merges two values on key conflict
+    fn merge(key: &K, left: &V, right: &V) -> V;
+}
 
 impl<T: Copy, K: Copy + Debug, V: Copy, N: Copy, G: Copy, A, L> AvlForest<T, K, V, G, N, A, L>
 where
+    V: AvlMerge<K, V>,
     G: AvlAugment<K, V, G> + AvlHeight,
     N: AvlLike<T, K, V, G>,
     A: NodeArena<N>,
@@ -184,13 +195,17 @@ mod tests {
     use rand::seq::SliceRandom;
 
     use crate::arena::NodeArray;
-    use crate::avl::{AvlAugment, AvlForest, AvlHeight, AvlNode};
+    use crate::avl::merge::{AvlHeight, AvlMerge};
+    use crate::avl::{AvlAugment, AvlForest, AvlNode};
 
     #[derive(Copy, Clone, Debug, PartialEq)]
     struct AugmentInTest(u8);
 
-    impl<T> AvlAugment<T, u32, AugmentInTest> for AugmentInTest {
-        fn augment(_key: &T, _value: &u32, left: Option<&AugmentInTest>, right: Option<&AugmentInTest>) -> AugmentInTest {
+    #[derive(Copy, Clone, Debug)]
+    struct ValueInTest(u32);
+
+    impl<T> AvlAugment<T, ValueInTest, AugmentInTest> for AugmentInTest {
+        fn augment(_key: &T, _value: &ValueInTest, left: Option<&AugmentInTest>, right: Option<&AugmentInTest>) -> AugmentInTest {
             let left = left.map_or(0, |l| l.0);
             let right = right.map_or(0, |r| r.0);
 
@@ -204,19 +219,31 @@ mod tests {
         }
     }
 
+    impl AvlMerge<i32, ValueInTest> for ValueInTest {
+        fn merge(_key: &i32, left: &ValueInTest, right: &ValueInTest) -> ValueInTest {
+            ValueInTest(std::cmp::max(left.0, right.0))
+        }
+    }
+
+    impl From<u32> for ValueInTest {
+        fn from(value: u32) -> Self {
+            ValueInTest(value)
+        }
+    }
+
     #[test]
     fn can_join_two_nodes() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
-        let n10 = forest.insert_element(t1, 10, 100).unwrap();
+        let n10 = forest.insert_element(t1, 10, 100.into()).unwrap();
 
         let t2 = forest.insert_tree(()).unwrap();
-        let n20 = forest.insert_element(t2, 20, 200).unwrap();
+        let n20 = forest.insert_element(t2, 20, 200.into()).unwrap();
 
-        let t3  = forest.insert_tree(()).unwrap();
-        let n15 = forest.insert_element(t3, 15, 150).unwrap();
+        let t3 = forest.insert_tree(()).unwrap();
+        let n15 = forest.insert_element(t3, 15, 150.into()).unwrap();
 
         let joined = forest.join_recursive(n10, n15, n20);
         let iter = forest.inorder(joined);
@@ -229,18 +256,18 @@ mod tests {
 
     #[test]
     fn can_join_three_nodes() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
-        let n10 = forest.insert_element(t1, 10, 100).unwrap();
-        let _n15 = forest.insert_element(t1, 15, 150).unwrap();
+        let n10 = forest.insert_element(t1, 10, 100.into()).unwrap();
+        let _n15 = forest.insert_element(t1, 15, 150.into()).unwrap();
 
         let t2 = forest.insert_tree(()).unwrap();
-        let n20 = forest.insert_element(t2, 20, 200).unwrap();
+        let n20 = forest.insert_element(t2, 20, 200.into()).unwrap();
 
         let t3 = forest.insert_tree(()).unwrap();
-        let n17 = forest.insert_element(t3, 17, 170).unwrap();
+        let n17 = forest.insert_element(t3, 17, 170.into()).unwrap();
 
         let joined = forest.join_recursive(n10, n17, n20);
         let iter = forest.inorder(joined);
@@ -253,20 +280,20 @@ mod tests {
 
     #[test]
     fn can_join_five_nodes() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 20> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 20> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
-        let _n10 = forest.insert_element(t1, 10, 100).unwrap();
-        let _n15 = forest.insert_element(t1, 15, 150).unwrap();
-        let _n13 = forest.insert_element(t1, 13, 130).unwrap();
-        let _n17 = forest.insert_element(t1, 17, 170).unwrap();
+        let _n10 = forest.insert_element(t1, 10, 100.into()).unwrap();
+        let _n15 = forest.insert_element(t1, 15, 150.into()).unwrap();
+        let _n13 = forest.insert_element(t1, 13, 130.into()).unwrap();
+        let _n17 = forest.insert_element(t1, 17, 170.into()).unwrap();
 
         let t2 = forest.insert_tree(()).unwrap();
-        let _n20 = forest.insert_element(t2, 20, 200).unwrap();
+        let _n20 = forest.insert_element(t2, 20, 200.into()).unwrap();
 
         let t3 = forest.insert_tree(()).unwrap();
-        let n19 = forest.insert_element(t3, 19, 190).unwrap();
+        let n19 = forest.insert_element(t3, 19, 190.into()).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
@@ -282,22 +309,22 @@ mod tests {
 
     #[test]
     fn can_join_seven_nodes() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 20> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 20> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
-        let _n10 = forest.insert_element(t1, 10, 100).unwrap();
-        let _n15 = forest.insert_element(t1, 15, 150).unwrap();
-        let _n13 = forest.insert_element(t1, 13, 130).unwrap();
-        let _n17 = forest.insert_element(t1, 17, 170).unwrap();
-        let _n16 = forest.insert_element(t1, 16, 160).unwrap();
-        let _n18 = forest.insert_element(t1, 18, 180).unwrap();
+        let _n10 = forest.insert_element(t1, 10, 100.into()).unwrap();
+        let _n15 = forest.insert_element(t1, 15, 150.into()).unwrap();
+        let _n13 = forest.insert_element(t1, 13, 130.into()).unwrap();
+        let _n17 = forest.insert_element(t1, 17, 170.into()).unwrap();
+        let _n16 = forest.insert_element(t1, 16, 160.into()).unwrap();
+        let _n18 = forest.insert_element(t1, 18, 180.into()).unwrap();
 
         let t2 = forest.insert_tree(()).unwrap();
-        let _n20 = forest.insert_element(t2, 20, 200).unwrap();
+        let _n20 = forest.insert_element(t2, 20, 200.into()).unwrap();
 
         let t3 = forest.insert_tree(()).unwrap();
-        let n19 = forest.insert_element(t3, 19, 190).unwrap();
+        let n19 = forest.insert_element(t3, 19, 190.into()).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
@@ -313,21 +340,21 @@ mod tests {
 
     #[test]
     fn can_join_1004_nodes_left_heavy() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10000> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
         for i in 0..1000 {
-            forest.insert_element(t1, i, i as u32 * 10).unwrap();
+            forest.insert_element(t1, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t2 = forest.insert_tree(()).unwrap();
         for i in 1001..1004 {
-            forest.insert_element(t2, i, i as u32 * 10).unwrap();
+            forest.insert_element(t2, i,ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t3 = forest.insert_tree(()).unwrap();
-        let n1000 = forest.insert_element(t3, 1000, 10000).unwrap();
+        let n1000 = forest.insert_element(t3, 1000, 10000.into()).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
@@ -343,21 +370,21 @@ mod tests {
 
     #[test]
     fn can_join_1003_nodes_right_heavy() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10000> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
         for i in 0..3 {
-            forest.insert_element(t1, i, i as u32 * 10).unwrap();
+            forest.insert_element(t1, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t2 = forest.insert_tree(()).unwrap();
         for i in 4..1004 {
-            forest.insert_element(t2, i, i as u32 * 10).unwrap();
+            forest.insert_element(t2, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t3 = forest.insert_tree(()).unwrap();
-        let n3 = forest.insert_element(t3, 3, 30).unwrap();
+        let n3 = forest.insert_element(t3, 3, 30.into()).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
@@ -373,21 +400,21 @@ mod tests {
 
     #[test]
     fn can_join_10004_nodes_left_heavy() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 20000> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 20000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
         for i in 0..10000 {
-            forest.insert_element(t1, i, i as u32 * 10).unwrap();
+            forest.insert_element(t1, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t2 = forest.insert_tree(()).unwrap();
         for i in 10001..10004 {
-            forest.insert_element(t2, i, i as u32 * 10).unwrap();
+            forest.insert_element(t2, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t3 = forest.insert_tree(()).unwrap();
-        let n10000 = forest.insert_element(t3, 10000, 100000).unwrap();
+        let n10000 = forest.insert_element(t3, 10000, 100000.into()).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
@@ -403,21 +430,21 @@ mod tests {
 
     #[test]
     fn can_join_10004_nodes_right_heavy() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 20000> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 20000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
         for i in 0..3 {
-            forest.insert_element(t1, i, i as u32 * 10).unwrap();
+            forest.insert_element(t1, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t2 = forest.insert_tree(()).unwrap();
         for i in 4..10004 {
-            forest.insert_element(t2, i, i as u32 * 10).unwrap();
+            forest.insert_element(t2, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t3 = forest.insert_tree(()).unwrap();
-        let n3 = forest.insert_element(t3, 3, 30).unwrap();
+        let n3 = forest.insert_element(t3, 3, 30.into()).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
@@ -433,21 +460,21 @@ mod tests {
 
     #[test]
     fn can_join_1010_nodes_left_heavy() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10000> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
         for i in 0..1000 {
-            forest.insert_element(t1, i, i as u32 * 10).unwrap();
+            forest.insert_element(t1, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t2 = forest.insert_tree(()).unwrap();
         for i in 1001..1010 {
-            forest.insert_element(t2, i, i as u32 * 10).unwrap();
+            forest.insert_element(t2, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t3 = forest.insert_tree(()).unwrap();
-        let n1000 = forest.insert_element(t3, 1000, 10000).unwrap();
+        let n1000 = forest.insert_element(t3, 1000, 10000.into()).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
@@ -463,21 +490,21 @@ mod tests {
 
     #[test]
     fn can_join_1010_nodes_right_heavy() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10000> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
         for i in 0..3 {
-            forest.insert_element(t1, i, i as u32 * 10).unwrap();
+            forest.insert_element(t1, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t2 = forest.insert_tree(()).unwrap();
         for i in 4..1010 {
-            forest.insert_element(t2, i, i as u32 * 10).unwrap();
+            forest.insert_element(t2, i, ValueInTest(i as u32 * 10)).unwrap();
         }
 
         let t3 = forest.insert_tree(()).unwrap();
-        let n3 = forest.insert_element(t3, 3, 30).unwrap();
+        let n3 = forest.insert_element(t3, 3, 30.into()).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
@@ -493,13 +520,13 @@ mod tests {
 
     #[test]
     fn can_split_avl_three_nodes_in_the_middle() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.insert_tree(()).unwrap();
-        let n20 = forest.insert_element(tree, 20, 200).unwrap();
-        let _n30 = forest.insert_element(tree, 30, 300).unwrap();
-        let _n10 = forest.insert_element(tree, 10, 100).unwrap();
+        let n20 = forest.insert_element(tree, 20, 200.into()).unwrap();
+        let _n30 = forest.insert_element(tree, 30, 300.into()).unwrap();
+        let _n10 = forest.insert_element(tree, 10, 100.into()).unwrap();
 
         let (lt, mid, rt) = forest.split_recursive(n20, 20);
 
@@ -519,13 +546,13 @@ mod tests {
 
     #[test]
     fn can_split_avl_three_nodes_in_the_left() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.insert_tree(()).unwrap();
-        let n20 = forest.insert_element(tree, 20, 200).unwrap();
-        let _n30 = forest.insert_element(tree, 30, 300).unwrap();
-        let _n10 = forest.insert_element(tree, 10, 100).unwrap();
+        let n20 = forest.insert_element(tree, 20, 200.into()).unwrap();
+        let _n30 = forest.insert_element(tree, 30, 300.into()).unwrap();
+        let _n10 = forest.insert_element(tree, 10, 100.into()).unwrap();
 
         let (lt, mid, rt) = forest.split_recursive(n20, 15);
 
@@ -545,13 +572,13 @@ mod tests {
 
     #[test]
     fn can_split_avl_three_nodes_in_the_left_outside() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let tree = forest.insert_tree(()).unwrap();
-        let n20 = forest.insert_element(tree, 20, 200).unwrap();
-        let _n30 = forest.insert_element(tree, 30, 300).unwrap();
-        let _n10 = forest.insert_element(tree, 10, 100).unwrap();
+        let n20 = forest.insert_element(tree, 20, 200.into()).unwrap();
+        let _n30 = forest.insert_element(tree, 30, 300.into()).unwrap();
+        let _n10 = forest.insert_element(tree, 10, 100.into()).unwrap();
 
         let (lt, mid, rt) = forest.split_recursive(n20, 0);
 
@@ -571,13 +598,13 @@ mod tests {
 
     #[test]
     fn can_split_avl_three_nodes_in_the_right_exact() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let tree = forest.insert_tree(()).unwrap();
-        let n20 = forest.insert_element(tree, 20, 200).unwrap();
-        let _n30 = forest.insert_element(tree, 30, 300).unwrap();
-        let _n10 = forest.insert_element(tree, 10, 100).unwrap();
+        let n20 = forest.insert_element(tree, 20, 200.into()).unwrap();
+        let _n30 = forest.insert_element(tree, 30, 300.into()).unwrap();
+        let _n10 = forest.insert_element(tree, 10, 100.into()).unwrap();
 
         let (lt, mid, rt) = forest.split_recursive(n20, 30);
 
@@ -597,15 +624,15 @@ mod tests {
 
     #[test]
     fn can_split_avl_five_nodes_in_the_left() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10> = NodeArray::new();
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.insert_tree(()).unwrap();
-        let _n20 = forest.insert_element(tree, 20, 200).unwrap();
-        let _n30 = forest.insert_element(tree, 30, 300).unwrap();
-        let _n10 = forest.insert_element(tree, 10, 100).unwrap();
-        let _n15 = forest.insert_element(tree, 15, 150).unwrap();
-        let _n1 = forest.insert_element(tree, 5, 50).unwrap();
+        let _n20 = forest.insert_element(tree, 20, 200.into()).unwrap();
+        let _n30 = forest.insert_element(tree, 30, 300.into()).unwrap();
+        let _n10 = forest.insert_element(tree, 10, 100.into()).unwrap();
+        let _n15 = forest.insert_element(tree, 15, 150.into()).unwrap();
+        let _n1 = forest.insert_element(tree, 5, 50.into()).unwrap();
 
         let root = forest.root(tree);
         let (lt, mid, rt) = forest.split_recursive(root, 12);
@@ -626,15 +653,15 @@ mod tests {
 
     #[test]
     fn can_split_avl_five_nodes_in_the_right() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 10> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let tree = forest.insert_tree(()).unwrap();
-        let n20 = forest.insert_element(tree, 20, 200).unwrap();
-        let n30 = forest.insert_element(tree, 30, 300).unwrap();
-        let _n10 = forest.insert_element(tree, 10, 100).unwrap();
-        let _n15 = forest.insert_element(tree, 15, 150).unwrap();
-        let _n1 = forest.insert_element(tree, 5, 50).unwrap();
+        let _n20 = forest.insert_element(tree, 20, 200.into()).unwrap();
+        let _n30 = forest.insert_element(tree, 30, 300.into()).unwrap();
+        let _n10 = forest.insert_element(tree, 10, 100.into()).unwrap();
+        let _n15 = forest.insert_element(tree, 15, 150.into()).unwrap();
+        let _n1 = forest.insert_element(tree, 5, 50.into()).unwrap();
 
         let root = forest.root(tree);
         let (lt, mid, rt) = forest.split_recursive(root, 25);
@@ -655,7 +682,7 @@ mod tests {
 
     #[test]
     fn can_split_avl_hundreds_nodes() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 2000> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, ValueInTest, AugmentInTest>, 2000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let number_of_elements = 1000;
@@ -666,7 +693,7 @@ mod tests {
 
         numbers.shuffle(&mut rng);
         for (idx, key) in numbers.iter().enumerate() {
-            forest.insert_element(tree, *key, idx as u32).unwrap();
+            forest.insert_element(tree, *key, ValueInTest(idx as u32)).unwrap();
         }
 
         let (pivot, root) = (734, forest.root(tree));
@@ -683,6 +710,6 @@ mod tests {
 
         assert_eq!(lkeys, (0..pivot).collect::<Vec<i32>>());
         assert_eq!(mkeys, vec![pivot]);
-        assert_eq!(rkeys, (pivot+1..number_of_elements).collect::<Vec<i32>>());
+        assert_eq!(rkeys, (pivot + 1..number_of_elements).collect::<Vec<i32>>());
     }
 }
