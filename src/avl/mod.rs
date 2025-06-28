@@ -249,6 +249,19 @@ impl<T: Copy, K: Copy, V: Copy, G: Copy> Node<T, K, V, G> {
     fn set_right(&mut self, right: u32) {
         unsafe { self.item.right = right | self.item.right & BALANCE_BIT };
     }
+
+    #[inline(always)]
+    fn clear(&mut self)
+    where
+        G: AvlAugment<K, V, G>,
+    {
+        self.item.left = 0;
+        self.item.right = 0;
+
+        unsafe {
+            self.item.augment = G::augment(&self.item.key, &self.item.value, None, None);
+        }
+    }
 }
 
 pub struct AvlForest<T: Copy, K: Copy, V: Copy, G: Copy, N: Copy, A: NodeArena<N>, L: AvlLogger<K, V>> {

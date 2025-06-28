@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use crate::arena::NodeArena;
-use crate::avl::{AvlAugment, AvlForest, AvlHeight, AvlLike, AvlLogger, Balance, Node, SHRANK_BIT};
+use crate::avl::{AvlAugment, AvlForest, AvlHeight, AvlLike, AvlLogger, Balance, GREW_BIT};
 
 impl<T: Copy, K: Copy + Debug, V: Copy, N: Copy, G: Copy, A, L> AvlForest<T, K, V, G, N, A, L>
 where
@@ -17,36 +17,34 @@ where
     }
 
     // joins two disjoint nodes and returns a node
-    // left elements must be less than right elements
-    fn join_recursive(&mut self, left: u32, right: u32) -> u32
+    // left elements < mid element < right elements
+    fn join_recursive(&mut self, left: u32, mid: u32, right: u32) -> u32
     where
         K: PartialOrd,
     {
-        let mut left = left;
-
         unsafe {
-            // we need to find the rightmost node in the left subtree
-            let mut rightmost = left;
-            while self.get_ref(rightmost).get_right() > 0 {
-                rightmost = self.get_ref(rightmost).get_right();
+            // base left case
+            if left == 0 {
+                self.get_mut(mid).clear();
+
+                let key = self.get_ref(mid).get_key();
+                return self.insert_recursive(right, mid, key) & !GREW_BIT;
             }
 
-            // we can replace the current node with the rightmost node
-            let key = self.get_ref(rightmost).get_key();
-            let value = self.get_ref(rightmost).get_value();
+            // base right case
+            if right == 0 {
+                self.get_mut(mid).clear();
 
-            // remove the rightmost node from the left subtree
-            left = self.remove_recursive(left, key);
-
-            // allocate a new node in the arena, in the just released slot
-            let idx = self.arena.insert_unchecked(N::from_node(Node::node(key, value)));
+                let key = self.get_ref(mid).get_key();
+                return self.insert_recursive(left, mid, key) & !GREW_BIT;
+            }
 
             // set the left and right children of the new node
-            self.get_mut(idx).set_left(left);
-            self.get_mut(idx).set_right(right);
+            self.get_mut(mid).set_left(left);
+            self.get_mut(mid).set_right(right);
 
             // rebalance the new node
-            return self.rebalance_recursive(idx);
+            return self.rebalance_recursive(mid);
         }
     }
 
@@ -130,8 +128,7 @@ where
     }
 
     // splits the tree at the given index by the key
-    // it doesn't preserve the AVL tree properties
-    fn split(&mut self, idx: u32, key: K) -> (u32, u32, u32)
+    fn split_recursive(&mut self, idx: u32, key: K) -> (u32, u32, u32)
     where
         K: PartialOrd,
     {
@@ -141,113 +138,32 @@ where
         }
 
         // get the node at the current index
-        let node = unsafe { self.get_ref(idx) };
-        let (mut idx, pkey) = (idx, node.get_key());
-        println!("Splitting at idx = {}, key = {:?}, pkey = {:?}", idx, key, pkey);
+        let (left, right, pkey) = {
+            let node = unsafe { self.get_ref(idx) };
+            (node.get_left(), node.get_right(), node.get_key())
+        };
 
-        if key < pkey {
-            unsafe {
-                // split recursively into the left subtree
-                let left = node.get_left();
-                let (lt, mid, rt) = self.split(left, key);
-                println!("Left Split: key={:?}, left = {}, mid = {}, right = {}", pkey, lt, mid, rt);
+        if pkey > key {
+            // split recursively into the left subtree
+            println!("split_recursive: idx={}, key={:?}, pkey={:?}", idx, key, pkey);
+            let (lt, mid, rt) = self.split_recursive(left, key);
 
-                // update affected node
-                self.get_mut(idx).set_left(rt);
-                self.update_augmented(idx);
-
-                let left = self.get_ref(idx).get_left();
-                let left: i16 = if left == 0 { 0 } else { self.get_ref(left).get_augmented().height().into() };
-
-                let right = self.get_ref(idx).get_right();
-                let right: i16 = if right == 0 { 0 } else { self.get_ref(right).get_augmented().height().into() };
-
-                match right - left {
-                    0 => {
-                        L::on_rebalance((idx, pkey), Balance::Equal);
-                        self.get_mut(idx).set_balance(Balance::Equal);
-                    }
-                    1 => {
-                        L::on_rebalance((idx, pkey), Balance::RightHeavy);
-                        self.get_mut(idx).set_balance(Balance::RightHeavy);
-                    }
-                    -1 => {
-                        L::on_rebalance((idx, pkey), Balance::LeftHeavy);
-                        self.get_mut(idx).set_balance(Balance::LeftHeavy);
-                    }
-                    2 => {
-                        let right = self.get_ref(idx).get_right();
-                        let balance = self.get_ref(right).get_balance();
-
-                        match balance {
-                            Balance::LeftHeavy => {
-                                L::on_rotate((idx, pkey));
-                                idx = self.rotate_ll(idx, true);
-                            }
-                            Balance::RightHeavy => {
-                                L::on_rotate((idx, pkey));
-                                idx = self.rotate_lr(idx);
-                            }
-                            Balance::Equal => {
-                                // won't happen, because grow cannot lead to equal balance
-                                println!("wont happen");
-                            }
-                        }
-                    }
-                    _ => println!("Invalid balance state"),
-                }
-
-                println!("Left split: key={:?}, left height = {}, right height = {}", pkey, left, right);
-                return (lt, mid, idx);
-            }
+            // join two disjoint right sides
+            println!("join_recursive: lt={}, mid={}, rt={}, right={}", lt, mid, rt, right);
+            return (lt, mid, self.join_recursive(rt, idx, right));
         }
 
-        if key > pkey {
-            unsafe {
-                // split recursively into the right subtree
-                let right = node.get_right();
-                let (lt, mid, rt) = self.split(right, key);
-                println!("Right Split: key={:?}, left = {}, mid = {}, right = {}", pkey, lt, mid, rt);
+        if pkey < key {
+            // split recursively into the right subtree
+            println!("split_recursive: idx={}, key={:?}, pkey={:?}", idx, key, pkey);
+            let (lt, mid, rt) = self.split_recursive(right, key);
 
-                // update affected node
-                self.get_mut(idx).set_right(lt);
-                self.update_augmented(idx);
-
-                let left = self.get_ref(idx).get_left();
-                let left: i16 = if left == 0 { 0 } else { self.get_ref(left).get_augmented().height().into() };
-
-                let right = self.get_ref(idx).get_right();
-                let right: i16 = if right == 0 { 0 } else { self.get_ref(right).get_augmented().height().into() };
-
-                match right - left {
-                    0 => {
-                        L::on_rebalance((idx, pkey), Balance::Equal);
-                        self.get_mut(idx).set_balance(Balance::Equal);
-                    }
-                    1 => {
-                        L::on_rebalance((idx, pkey), Balance::RightHeavy);
-                        self.get_mut(idx).set_balance(Balance::RightHeavy);
-                    }
-                    -1 => {
-                        L::on_rebalance((idx, pkey), Balance::LeftHeavy);
-                        self.get_mut(idx).set_balance(Balance::LeftHeavy);
-                    }
-                    -2 => {
-                        idx = self.remove_rebalance_right(idx, pkey) & !SHRANK_BIT;
-                    }
-                    _ => println!("Invalid balance state"),
-                }
-
-                println!("Right split: key={:?}, left height = {}, right height = {}", pkey, left, right);
-                return (idx, mid, rt);
-            }
+            // join two disjoint left sides
+            println!("join_recursive: left={}, mid={}, lt={}, idx={}", left, mid, lt, idx);
+            return (self.join_recursive(left, idx, lt), mid, rt);
         }
 
         unsafe {
-            // extract children
-            let left = node.get_left();
-            let right = node.get_right();
-
             // clear the current node
             self.get_mut(idx).set_left(0);
             self.get_mut(idx).set_right(0);
@@ -299,13 +215,16 @@ mod tests {
         let t2 = forest.insert_tree(()).unwrap();
         let n20 = forest.insert_element(t2, 20, 200).unwrap();
 
-        let joined = forest.join_recursive(n10, n20);
+        let t3  = forest.insert_tree(()).unwrap();
+        let n15 = forest.insert_element(t3, 15, 150).unwrap();
+
+        let joined = forest.join_recursive(n10, n15, n20);
         let iter = forest.inorder(joined);
 
         let items: Vec<_> = iter.collect();
         let keys = items.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        assert_eq!(keys, vec![10, 20]);
+        assert_eq!(keys, vec![10, 15, 20]);
     }
 
     #[test]
@@ -320,18 +239,21 @@ mod tests {
         let t2 = forest.insert_tree(()).unwrap();
         let n20 = forest.insert_element(t2, 20, 200).unwrap();
 
-        let joined = forest.join_recursive(n10, n20);
+        let t3 = forest.insert_tree(()).unwrap();
+        let n17 = forest.insert_element(t3, 17, 170).unwrap();
+
+        let joined = forest.join_recursive(n10, n17, n20);
         let iter = forest.inorder(joined);
 
         let items: Vec<_> = iter.collect();
         let keys = items.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        assert_eq!(keys, vec![10, 15, 20]);
+        assert_eq!(keys, vec![10, 15, 17, 20]);
     }
 
     #[test]
     fn can_join_five_nodes() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 20> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
@@ -343,21 +265,24 @@ mod tests {
         let t2 = forest.insert_tree(()).unwrap();
         let _n20 = forest.insert_element(t2, 20, 200).unwrap();
 
+        let t3 = forest.insert_tree(()).unwrap();
+        let n19 = forest.insert_element(t3, 19, 190).unwrap();
+
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
 
-        let joined = forest.join_recursive(r1, r2);
+        let joined = forest.join_recursive(r1, n19, r2);
         let iter = forest.inorder(joined);
 
         let items: Vec<_> = iter.collect();
         let keys = items.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        assert_eq!(keys, vec![10, 13, 15, 17, 20]);
+        assert_eq!(keys, vec![10, 13, 15, 17, 19, 20]);
     }
 
     #[test]
     fn can_join_seven_nodes() {
-        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
+        let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 20> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
         let t1 = forest.insert_tree(()).unwrap();
@@ -371,20 +296,23 @@ mod tests {
         let t2 = forest.insert_tree(()).unwrap();
         let _n20 = forest.insert_element(t2, 20, 200).unwrap();
 
+        let t3 = forest.insert_tree(()).unwrap();
+        let n19 = forest.insert_element(t3, 19, 190).unwrap();
+
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
 
-        let joined = forest.join_recursive(r1, r2);
+        let joined = forest.join_recursive(r1, n19, r2);
         let iter = forest.inorder(joined);
 
         let items: Vec<_> = iter.collect();
         let keys = items.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        assert_eq!(keys, vec![10, 13, 15, 16, 17, 18, 20]);
+        assert_eq!(keys, vec![10, 13, 15, 16, 17, 18, 19, 20]);
     }
 
     #[test]
-    fn can_join_1003_nodes_left_heavy() {
+    fn can_join_1004_nodes_left_heavy() {
         let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
@@ -394,20 +322,23 @@ mod tests {
         }
 
         let t2 = forest.insert_tree(()).unwrap();
-        for i in 1000..1003 {
+        for i in 1001..1004 {
             forest.insert_element(t2, i, i as u32 * 10).unwrap();
         }
+
+        let t3 = forest.insert_tree(()).unwrap();
+        let n1000 = forest.insert_element(t3, 1000, 10000).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
 
-        let joined = forest.join_recursive(r1, r2);
+        let joined = forest.join_recursive(r1, n1000, r2);
         let iter = forest.inorder(joined);
 
         let items: Vec<_> = iter.collect();
         let keys = items.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        assert_eq!(keys, (0..1003).collect::<Vec<i32>>());
+        assert_eq!(keys, (0..1004).collect::<Vec<i32>>());
     }
 
     #[test]
@@ -421,24 +352,27 @@ mod tests {
         }
 
         let t2 = forest.insert_tree(()).unwrap();
-        for i in 3..1003 {
+        for i in 4..1004 {
             forest.insert_element(t2, i, i as u32 * 10).unwrap();
         }
+
+        let t3 = forest.insert_tree(()).unwrap();
+        let n3 = forest.insert_element(t3, 3, 30).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
 
-        let joined = forest.join_recursive(r1, r2);
+        let joined = forest.join_recursive(r1, n3, r2);
         let iter = forest.inorder(joined);
 
         let items: Vec<_> = iter.collect();
         let keys = items.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        assert_eq!(keys, (0..1003).collect::<Vec<i32>>());
+        assert_eq!(keys, (0..1004).collect::<Vec<i32>>());
     }
 
     #[test]
-    fn can_join_10003_nodes_left_heavy() {
+    fn can_join_10004_nodes_left_heavy() {
         let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 20000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
@@ -448,24 +382,27 @@ mod tests {
         }
 
         let t2 = forest.insert_tree(()).unwrap();
-        for i in 10000..10003 {
+        for i in 10001..10004 {
             forest.insert_element(t2, i, i as u32 * 10).unwrap();
         }
+
+        let t3 = forest.insert_tree(()).unwrap();
+        let n10000 = forest.insert_element(t3, 10000, 100000).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
 
-        let joined = forest.join_recursive(r1, r2);
+        let joined = forest.join_recursive(r1, n10000, r2);
         let iter = forest.inorder(joined);
 
         let items: Vec<_> = iter.collect();
         let keys = items.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        assert_eq!(keys, (0..10003).collect::<Vec<i32>>());
+        assert_eq!(keys, (0..10004).collect::<Vec<i32>>());
     }
 
     #[test]
-    fn can_join_10003_nodes_right_heavy() {
+    fn can_join_10004_nodes_right_heavy() {
         let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 20000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
@@ -475,20 +412,23 @@ mod tests {
         }
 
         let t2 = forest.insert_tree(()).unwrap();
-        for i in 3..10003 {
+        for i in 4..10004 {
             forest.insert_element(t2, i, i as u32 * 10).unwrap();
         }
+
+        let t3 = forest.insert_tree(()).unwrap();
+        let n3 = forest.insert_element(t3, 3, 30).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
 
-        let joined = forest.join_recursive(r1, r2);
+        let joined = forest.join_recursive(r1, n3, r2);
         let iter = forest.inorder(joined);
 
         let items: Vec<_> = iter.collect();
         let keys = items.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        assert_eq!(keys, (0..10003).collect::<Vec<i32>>());
+        assert_eq!(keys, (0..10004).collect::<Vec<i32>>());
     }
 
     #[test]
@@ -502,14 +442,17 @@ mod tests {
         }
 
         let t2 = forest.insert_tree(()).unwrap();
-        for i in 1000..1010 {
+        for i in 1001..1010 {
             forest.insert_element(t2, i, i as u32 * 10).unwrap();
         }
+
+        let t3 = forest.insert_tree(()).unwrap();
+        let n1000 = forest.insert_element(t3, 1000, 10000).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
 
-        let joined = forest.join_recursive(r1, r2);
+        let joined = forest.join_recursive(r1, n1000, r2);
         let iter = forest.inorder(joined);
 
         let items: Vec<_> = iter.collect();
@@ -529,14 +472,17 @@ mod tests {
         }
 
         let t2 = forest.insert_tree(()).unwrap();
-        for i in 3..1010 {
+        for i in 4..1010 {
             forest.insert_element(t2, i, i as u32 * 10).unwrap();
         }
+
+        let t3 = forest.insert_tree(()).unwrap();
+        let n3 = forest.insert_element(t3, 3, 30).unwrap();
 
         let r1 = forest.root(t1);
         let r2 = forest.root(t2);
 
-        let joined = forest.join_recursive(r1, r2);
+        let joined = forest.join_recursive(r1, n3, r2);
         let iter = forest.inorder(joined);
 
         let items: Vec<_> = iter.collect();
@@ -552,11 +498,23 @@ mod tests {
 
         let tree = forest.insert_tree(()).unwrap();
         let n20 = forest.insert_element(tree, 20, 200).unwrap();
-        let n30 = forest.insert_element(tree, 30, 300).unwrap();
-        let n10 = forest.insert_element(tree, 10, 100).unwrap();
+        let _n30 = forest.insert_element(tree, 30, 300).unwrap();
+        let _n10 = forest.insert_element(tree, 10, 100).unwrap();
 
-        let (lt, mid, rt) = forest.split(n20, 20);
-        assert_eq!((lt, mid, rt), (n10, n20, n30));
+        let (lt, mid, rt) = forest.split_recursive(n20, 20);
+
+        let litems: Vec<_> = forest.inorder(lt).collect();
+        let lkeys = litems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let mitems: Vec<_> = forest.inorder(mid).collect();
+        let mkeys = mitems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let ritems: Vec<_> = forest.inorder(rt).collect();
+        let rkeys = ritems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        assert_eq!(lkeys, vec![10]);
+        assert_eq!(mkeys, vec![20]);
+        assert_eq!(rkeys, vec![30]);
     }
 
     #[test]
@@ -567,38 +525,74 @@ mod tests {
         let tree = forest.insert_tree(()).unwrap();
         let n20 = forest.insert_element(tree, 20, 200).unwrap();
         let _n30 = forest.insert_element(tree, 30, 300).unwrap();
-        let n10 = forest.insert_element(tree, 10, 100).unwrap();
+        let _n10 = forest.insert_element(tree, 10, 100).unwrap();
 
-        let (lt, mid, rt) = forest.split(n20, 15);
-        assert_eq!((lt, mid, rt), (n10, 0, n20));
+        let (lt, mid, rt) = forest.split_recursive(n20, 15);
+
+        let litems: Vec<_> = forest.inorder(lt).collect();
+        let lkeys = litems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let mitems: Vec<_> = forest.inorder(mid).collect();
+        let mkeys = mitems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let ritems: Vec<_> = forest.inorder(rt).collect();
+        let rkeys = ritems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        assert_eq!(lkeys, vec![10]);
+        assert_eq!(mkeys, vec![]);
+        assert_eq!(rkeys, vec![20, 30]);
     }
 
     #[test]
     fn can_split_avl_three_nodes_in_the_left_outside() {
         let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
-        let mut forest = AvlForest::new(arena);
+        let mut forest = AvlForest::debug(arena);
 
         let tree = forest.insert_tree(()).unwrap();
         let n20 = forest.insert_element(tree, 20, 200).unwrap();
         let _n30 = forest.insert_element(tree, 30, 300).unwrap();
         let _n10 = forest.insert_element(tree, 10, 100).unwrap();
 
-        let (lt, mid, rt) = forest.split(n20, 0);
-        assert_eq!((lt, mid, rt), (0, 0, n20));
+        let (lt, mid, rt) = forest.split_recursive(n20, 0);
+
+        let litems: Vec<_> = forest.inorder(lt).collect();
+        let lkeys = litems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let mitems: Vec<_> = forest.inorder(mid).collect();
+        let mkeys = mitems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let ritems: Vec<_> = forest.inorder(rt).collect();
+        let rkeys = ritems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        assert_eq!(lkeys, vec![]);
+        assert_eq!(mkeys, vec![]);
+        assert_eq!(rkeys, vec![10, 20, 30]);
     }
 
     #[test]
     fn can_split_avl_three_nodes_in_the_right_exact() {
         let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
-        let mut forest = AvlForest::new(arena);
+        let mut forest = AvlForest::debug(arena);
 
         let tree = forest.insert_tree(()).unwrap();
         let n20 = forest.insert_element(tree, 20, 200).unwrap();
-        let n30 = forest.insert_element(tree, 30, 300).unwrap();
+        let _n30 = forest.insert_element(tree, 30, 300).unwrap();
         let _n10 = forest.insert_element(tree, 10, 100).unwrap();
 
-        let (lt, mid, rt) = forest.split(n20, 30);
-        assert_eq!((lt, mid, rt), (n20, n30, 0));
+        let (lt, mid, rt) = forest.split_recursive(n20, 30);
+
+        let litems: Vec<_> = forest.inorder(lt).collect();
+        let lkeys = litems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let mitems: Vec<_> = forest.inorder(mid).collect();
+        let mkeys = mitems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let ritems: Vec<_> = forest.inorder(rt).collect();
+        let rkeys = ritems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        assert_eq!(lkeys, vec![10, 20]);
+        assert_eq!(mkeys, vec![30]);
+        assert_eq!(rkeys, vec![]);
     }
 
     #[test]
@@ -607,19 +601,30 @@ mod tests {
         let mut forest = AvlForest::new(arena);
 
         let tree = forest.insert_tree(()).unwrap();
-        let n20 = forest.insert_element(tree, 20, 200).unwrap();
+        let _n20 = forest.insert_element(tree, 20, 200).unwrap();
         let _n30 = forest.insert_element(tree, 30, 300).unwrap();
-        let n10 = forest.insert_element(tree, 10, 100).unwrap();
+        let _n10 = forest.insert_element(tree, 10, 100).unwrap();
         let _n15 = forest.insert_element(tree, 15, 150).unwrap();
         let _n1 = forest.insert_element(tree, 5, 50).unwrap();
 
         let root = forest.root(tree);
-        let (lt, mid, rt) = forest.split(root, 12);
+        let (lt, mid, rt) = forest.split_recursive(root, 12);
 
-        assert_eq!((lt, mid, rt), (n10, 0, n20));
+        let litems: Vec<_> = forest.inorder(lt).collect();
+        let lkeys = litems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let mitems: Vec<_> = forest.inorder(mid).collect();
+        let mkeys = mitems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let ritems: Vec<_> = forest.inorder(rt).collect();
+        let rkeys = ritems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        assert_eq!(lkeys, vec![5, 10]);
+        assert_eq!(mkeys, vec![]);
+        assert_eq!(rkeys, vec![15, 20, 30]);
     }
 
-    // #[test]
+    #[test]
     fn can_split_avl_five_nodes_in_the_right() {
         let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 10> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
@@ -631,51 +636,53 @@ mod tests {
         let _n15 = forest.insert_element(tree, 15, 150).unwrap();
         let _n1 = forest.insert_element(tree, 5, 50).unwrap();
 
-        forest.print(tree);
         let root = forest.root(tree);
-        let (lt, mid, rt) = forest.split(root, 25);
+        let (lt, mid, rt) = forest.split_recursive(root, 25);
 
-        forest.print_node(lt);
-        assert_eq!((lt, mid, rt), (n20, 0, n30));
-        assert_eq!(unsafe { forest.get_ref(n20).get_augmented().height() }, 3);
-        assert!(false);
+        let litems: Vec<_> = forest.inorder(lt).collect();
+        let lkeys = litems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let mitems: Vec<_> = forest.inorder(mid).collect();
+        let mkeys = mitems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        let ritems: Vec<_> = forest.inorder(rt).collect();
+        let rkeys = ritems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
+
+        assert_eq!(lkeys, vec![5, 10, 15, 20]);
+        assert_eq!(mkeys, vec![]);
+        assert_eq!(rkeys, vec![30]);
     }
 
-    // #[test]
+    #[test]
     fn can_split_avl_hundreds_nodes() {
         let arena: NodeArray<AvlNode<(), i32, u32, AugmentInTest>, 2000> = NodeArray::new();
         let mut forest = AvlForest::debug(arena);
 
-        let number_of_trials = 10;
+        let number_of_elements = 1000;
         let tree = forest.insert_tree(()).unwrap();
 
         let mut rng = rand::rng();
-        let mut numbers: Vec<i32> = (0..number_of_trials).collect();
+        let mut numbers: Vec<i32> = (0..number_of_elements).collect();
 
         numbers.shuffle(&mut rng);
         for (idx, key) in numbers.iter().enumerate() {
             forest.insert_element(tree, *key, idx as u32).unwrap();
         }
 
-        let (pivot, root, mut counter) = (7, forest.root(tree), 0);
-        let (lt, mid, rt) = forest.split(root, pivot);
+        let (pivot, root) = (734, forest.root(tree));
+        let (lt, mid, rt) = forest.split_recursive(root, pivot);
 
-        for (key, _, _) in forest.inorder(lt) {
-            counter += 1;
-            assert!(key < pivot);
-        }
+        let litems: Vec<_> = forest.inorder(lt).collect();
+        let lkeys = litems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        for (key, _, _) in forest.inorder(mid) {
-            counter += 1;
-            assert!(key == pivot);
-        }
+        let mitems: Vec<_> = forest.inorder(mid).collect();
+        let mkeys = mitems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        for (key, _, _) in forest.inorder(rt) {
-            counter += 1;
-            assert!(key > pivot);
-        }
+        let ritems: Vec<_> = forest.inorder(rt).collect();
+        let rkeys = ritems.iter().map(|(k, _, _)| *k).collect::<Vec<_>>();
 
-        assert_eq!(counter, number_of_trials);
-        assert!(false);
+        assert_eq!(lkeys, (0..pivot).collect::<Vec<i32>>());
+        assert_eq!(mkeys, vec![pivot]);
+        assert_eq!(rkeys, (pivot+1..number_of_elements).collect::<Vec<i32>>());
     }
 }
