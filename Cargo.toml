@@ -1,12 +1,16 @@
 [package]
-name = "avl"
+name = "radix"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 rand = { version = "0.9.1", features = ["std"] }
-criterion = { version = "0.6.0" }
+chrono = { version = "0.4.41", features = ["std"] }
 
-[[bench]]
-name = "insert"
-harness = false
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = false
+panic = 'abort'
+incremental = false
